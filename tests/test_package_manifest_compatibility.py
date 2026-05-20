@@ -36,15 +36,31 @@ def _load_packages_module():
     state_module.derive_summary_graph_status = lambda manifest: "pending"
     state_module.derive_summary_status_text = lambda manifest: "ready"
 
-    sys.modules.setdefault("src.web", src_web_pkg)
-    sys.modules.setdefault("src.web.run_ops", src_web_run_ops_pkg)
-    sys.modules.setdefault("src.web.manifest", src_web_manifest_pkg)
-    sys.modules["src.web.manifest.compat"] = compat_module
-    sys.modules["src.web.run_ops.state"] = state_module
+    sentinel = object()
+    backup = {
+        "src.web": sys.modules.get("src.web", sentinel),
+        "src.web.run_ops": sys.modules.get("src.web.run_ops", sentinel),
+        "src.web.manifest": sys.modules.get("src.web.manifest", sentinel),
+        "src.web.manifest.compat": sys.modules.get("src.web.manifest.compat", sentinel),
+        "src.web.run_ops.state": sys.modules.get("src.web.run_ops.state", sentinel),
+    }
 
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    try:
+        sys.modules["src.web"] = src_web_pkg
+        sys.modules["src.web.run_ops"] = src_web_run_ops_pkg
+        sys.modules["src.web.manifest"] = src_web_manifest_pkg
+        sys.modules["src.web.manifest.compat"] = compat_module
+        sys.modules["src.web.run_ops.state"] = state_module
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, original in backup.items():
+            if original is sentinel:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
 
 _packages = _load_packages_module()
