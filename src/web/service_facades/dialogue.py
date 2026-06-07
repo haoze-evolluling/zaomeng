@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.web.service_facades.scene_cards import SceneCardServiceMixin
+import src.web.chat.scene_signals as _scene_signals
 from src.web.chat import (
     build_dialogue_llm_messages,
     build_dialogue_relation_state_messages,
@@ -647,27 +648,27 @@ class DialogueServiceMixin:
                 event["location_hint"] = location_hint
             events.append(event)
 
-        time_hint = self.dialogue._infer_time_hint([{"message": text}])
+        time_hint = _scene_signals.infer_time_hint([{"message": text}])
         if time_hint:
             push("time_change", f"时间推进到{time_hint}", scope="scene", actor=speaker if is_scene_level else "", time_hint=time_hint)
 
-        if any(token in text for token in self.dialogue._ENVIRONMENT_TOKENS):
+        if any(token in text for token in _scene_signals.ENVIRONMENT_TOKENS):
             push("environment_change", text, scope="scene")
-        if any(token in text for token in self.dialogue._ATMOSPHERE_TOKENS):
+        if any(token in text for token in _scene_signals.ATMOSPHERE_TOKENS):
             push("atmosphere_shift", text, scope="scene")
 
-        if any(token in compact for token in self.dialogue._SCENE_ENTER_TOKENS + self.dialogue._SCENE_EXIT_TOKENS):
+        if any(token in compact for token in _scene_signals.SCENE_ENTER_TOKENS + _scene_signals.SCENE_EXIT_TOKENS):
             push("scene_transition", text, scope="scene", location_hint=self._extract_location_hint(text))
 
         for name in participants:
             if name not in text:
                 continue
-            if self.dialogue._contains_leave_signal(text, name):
+            if _scene_signals.contains_leave_signal(text, name):
                 push("cast_exit", f"{name}离场", scope="scene", actor=name)
-            elif self.dialogue._contains_return_signal(text, name):
+            elif _scene_signals.contains_return_signal(text, name):
                 push("cast_enter", f"{name}返场", scope="scene", actor=name)
 
-        if not is_scene_level and any(token in text for token in self.dialogue._ACTION_TOKENS):
+        if not is_scene_level and any(token in text for token in _scene_signals.ACTION_TOKENS):
             push("micro_action", text, scope="character", actor=speaker, target_name=target, should_inline=True)
 
         if any(token in text for token in ("说开了", "到这里", "该换个地方", "该走下一幕", "下一幕", "先到这", "这幕先收住", "可以转到")):
@@ -716,7 +717,7 @@ class DialogueServiceMixin:
             if name not in message:
                 continue
             snapshot = dict(character_snapshots.get(name, {}) or {})
-            if self.dialogue._contains_leave_signal(message, name):
+            if _scene_signals.contains_leave_signal(message, name):
                 snapshot.update(
                     {
                         "mood": str(snapshot.get("mood", "")).strip() or "收住",
@@ -725,7 +726,7 @@ class DialogueServiceMixin:
                         "last_event": message[:220],
                     }
                 )
-            elif self.dialogue._contains_return_signal(message, name):
+            elif _scene_signals.contains_return_signal(message, name):
                 snapshot.update(
                     {
                         "interaction_state": "re-entered",
