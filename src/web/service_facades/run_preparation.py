@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from src.skill_support.prompt_payloads import build_distill_prompt_payload, build_relation_prompt_payload
 from src.utils.file_utils import safe_filename
+from src.web.time_utils import utc_now as _utc_now
 from src.web.pipeline import (
     build_progress_chunking_from_artifacts,
     build_quality_snapshot,
@@ -24,9 +24,6 @@ from src.web.run_ops import (
     prepare_restart_novel_source,
 )
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class RunPreparationMixin:

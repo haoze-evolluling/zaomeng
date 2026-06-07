@@ -4,15 +4,13 @@ import json
 import shutil
 import subprocess
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+from src.web.time_utils import utc_now as _utc_now
 
 
 class UpdateServiceMixin:
@@ -127,7 +125,7 @@ class UpdateServiceMixin:
             checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
         except ValueError:
             return True
-        return datetime.now(UTC) - checked >= timedelta(seconds=self.UPDATE_CHECK_TTL_SECONDS)
+        return datetime.now(timezone.utc) - checked >= timedelta(seconds=self.UPDATE_CHECK_TTL_SECONDS)
 
     def _refresh_update_status_locked(self, *, force: bool = False) -> None:
         if not force and not self._should_refresh_update_status_locked():

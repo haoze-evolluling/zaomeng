@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, ContextManager
 
 from src.core.config import Config
+from src.web.time_utils import utc_now as _utc_now
 from src.web.manifest import load_json_file, write_json_file
 from src.web.pipeline import (
     build_background_run_kwargs,
@@ -170,9 +171,3 @@ class RuntimeSupportMixin:
     @staticmethod
     def _is_model_configured_payload(payload: dict[str, Any]) -> bool:
         return is_model_configured_payload(payload)
-
-
-def _utc_now() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")

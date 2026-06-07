@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from src.web.time_utils import utc_now as _utc_now
 from src.web.run_ops.packages import export_run_package, import_run_package, list_run_packages
 
 
@@ -93,9 +94,3 @@ class PackageServiceMixin:
             if package_path.exists():
                 return package_path
         raise FileNotFoundError(target_id)
-
-
-def _utc_now() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")

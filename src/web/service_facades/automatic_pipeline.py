@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.web.time_utils import utc_now as _utc_now
 from src.web.artifacts import export_relations_source, load_relations_source, materialize_profile_source
 from src.web.pipeline import (
     apply_distill_progress,
@@ -17,12 +18,6 @@ from src.web.pipeline import (
     stage_presence,
     update_manifest_chunk_progress,
 )
-
-
-def _utc_now() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _apply_distill_progress_update(

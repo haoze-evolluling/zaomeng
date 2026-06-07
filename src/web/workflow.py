@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
+
 from src.core.runtime_factory import build_runtime_parts
 from src.web.chat import DialogueService
 from src.web.review import (
@@ -47,12 +48,6 @@ def _resolve_builtin_novels_root(
     if has_explicit_storage_root:
         return storage_root / "builtin_novels"
     return project_root / "builtin_novels"
-
-
-def _utc_now() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class RunStoppedError(Exception):

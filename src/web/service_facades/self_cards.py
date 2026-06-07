@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
+from src.web.time_utils import utc_now as _utc_now
 from src.web.artifacts import load_profile_source, render_profile_md
 from src.web.review import (
     build_random_self_card_messages,
@@ -14,9 +14,6 @@ from src.web.review import (
     delete_self_card_payload,
 )
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class SelfCardServiceMixin:

@@ -2,6 +2,35 @@ from __future__ import annotations
 
 from typing import Any
 
+_DEPS_EXPORTS = {"get_run_service"}
+_ROUTE_EXPORTS = {
+    "ROUTERS",
+    "dialogue_router",
+    "opening_presets_router",
+    "runs_router",
+    "scene_cards_router",
+    "self_cards_router",
+    "settings_router",
+}
+_SCHEMA_EXPORTS = {
+    "BranchDialogueSessionRequest",
+    "CreateDialogueSessionRequest",
+    "CreateRunRequest",
+    "DialogueResponseItem",
+    "IngestCharacterRequest",
+    "IngestDialogueTurnRequest",
+    "IngestRelationRequest",
+    "PrepareDialogueTurnRequest",
+    "RecommendSceneCardRequest",
+    "RestartRunRequest",
+    "SaveModelSettingsRequest",
+    "SaveOpeningPresetRequest",
+    "SavePersonaReviewRequest",
+    "SaveSceneCardRequest",
+    "SaveSelfCardRequest",
+    "SwitchDialogueSceneCardRequest",
+}
+
 __all__ = [
     "ROUTERS",
     "dialogue_router",
@@ -31,58 +60,16 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    if name == "get_run_service":
-        from .deps import get_run_service
+    if name in _DEPS_EXPORTS:
+        from . import deps
 
-        return get_run_service
-    if name in {
-        "ROUTERS",
-        "dialogue_router",
-        "opening_presets_router",
-        "runs_router",
-        "scene_cards_router",
-        "self_cards_router",
-        "settings_router",
-    }:
-        from .routes import (
-            ROUTERS,
-            dialogue_router,
-            opening_presets_router,
-            runs_router,
-            scene_cards_router,
-            self_cards_router,
-            settings_router,
-        )
+        return getattr(deps, name)
+    if name in _ROUTE_EXPORTS:
+        from . import routes
 
-        mapping = {
-            "ROUTERS": ROUTERS,
-            "dialogue_router": dialogue_router,
-            "opening_presets_router": opening_presets_router,
-            "runs_router": runs_router,
-            "scene_cards_router": scene_cards_router,
-            "self_cards_router": self_cards_router,
-            "settings_router": settings_router,
-        }
-        return mapping[name]
-    if name in {
-        "CreateDialogueSessionRequest",
-        "BranchDialogueSessionRequest",
-        "CreateRunRequest",
-        "DialogueResponseItem",
-        "IngestCharacterRequest",
-        "IngestDialogueTurnRequest",
-        "IngestRelationRequest",
-        "PrepareDialogueTurnRequest",
-        "RecommendSceneCardRequest",
-        "RestartRunRequest",
-        "SaveModelSettingsRequest",
-        "SaveOpeningPresetRequest",
-        "SaveSceneCardRequest",
-        "SavePersonaReviewRequest",
-        "SaveSelfCardRequest",
-        "SwitchDialogueSceneCardRequest",
-    }:
-        from . import schemas as _schemas
+        return getattr(routes, name)
+    if name in _SCHEMA_EXPORTS:
+        from . import schemas
 
-        return getattr(_schemas, name)
-    raise AttributeError(f"module 'src.web.api' has no attribute {name!r}")
+        return getattr(schemas, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

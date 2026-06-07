@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class CreateRunRequest(BaseModel):
@@ -11,7 +11,8 @@ class CreateRunRequest(BaseModel):
     max_chars: int = Field(default=50_000, ge=2_000, le=200_000)
     auto_run: bool = Field(default=False)
 
-    @validator("characters")
+    @field_validator("characters")
+    @classmethod
     def _validate_characters(cls, value: list[str]) -> list[str]:
         if not value:
             raise ValueError("characters must not be empty")
@@ -217,7 +218,8 @@ class DialogueResponseItem(BaseModel):
 class IngestDialogueTurnRequest(BaseModel):
     responses: list[DialogueResponseItem] = Field(default_factory=list)
 
-    @validator("responses")
+    @field_validator("responses")
+    @classmethod
     def _validate_responses(cls, value: list[DialogueResponseItem]) -> list[DialogueResponseItem]:
         if not value:
             raise ValueError("responses must not be empty")

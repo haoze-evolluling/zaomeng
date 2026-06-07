@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from src.utils.file_utils import save_markdown_data
+from src.web.time_utils import utc_now as _utc_now
 from src.web.artifacts import (
     export_relations_source,
     load_profile_source,
@@ -38,9 +38,6 @@ from src.web.review import (
     suggest_persona_field_payload,
 )
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class ArtifactServiceMixin:

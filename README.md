@@ -58,11 +58,15 @@ python scripts/install_skill.py --skills-dir <your-skills-root>
 pip install -r requirements.txt
 ```
 
+这会安装完整的开发/测试依赖，包括 pytest/mypy/black/flake8 以及 Web API 测试所需的 `httpx2`。
+
 如果你只是想运行 Web UI 或使用一键安装脚本，通常只需要：
 
 ```bash
 pip install -r requirements.runtime.txt
 ```
+
+运行时依赖会刻意保持更轻，不强制安装测试依赖或 EPUB / token 相关的可选工具。
 
 ### Web UI 🖥️
 
@@ -107,7 +111,7 @@ zaomeng install-skill --skills-dir <your-skills-root>
 ```bash
 git clone https://github.com/wkbin/zaomeng.git
 cd zaomeng
-pip install -r requirements.txt
+pip install -r requirements.runtime.txt
 python scripts/run_webui.py --reload
 ```
 

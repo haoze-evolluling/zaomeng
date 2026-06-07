@@ -21,4 +21,4 @@ def __getattr__(name: str) -> Any:
         from .workflow import WebRunService
 
         return WebRunService
-    raise AttributeError(f"module 'src.web' has no attribute {name!r}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

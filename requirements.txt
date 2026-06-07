@@ -17,5 +17,7 @@ flake8>=6.0.0
 mypy>=1.10.0
 
 # 可选：Web 界面扩展
-fastapi>=0.104.0
+fastapi>=0.104.0,<1.0.0
+httpx2>=2.0.0,<3.0.0
+pydantic>=2.0.0,<3.0.0
 uvicorn>=0.24.0

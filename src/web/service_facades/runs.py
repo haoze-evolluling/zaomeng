@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
+from src.web.time_utils import utc_now as _utc_now
 from src.web.run_ops import (
     build_model_settings_response,
     delete_run_group,
@@ -14,9 +14,6 @@ from src.web.run_ops import (
     stop_run_manifest,
 )
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class RunServiceMixin:

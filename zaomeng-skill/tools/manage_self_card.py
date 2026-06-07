@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -27,7 +27,7 @@ from _skill_support.persona_review import (  # noqa: E402
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _write_output(payload: dict[str, object], output: str) -> None:

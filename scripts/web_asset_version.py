@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -84,7 +84,7 @@ def sync_web_asset_version(repo_root: Path, version: str) -> str:
 
 
 def generate_web_asset_version(*, now: datetime | None = None) -> str:
-    current = now or datetime.now(UTC)
+    current = now or datetime.now(timezone.utc)
     return current.strftime("%Y%m%d%H%M%S")
 
 

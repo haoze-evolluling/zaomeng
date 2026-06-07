@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +46,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> Path:
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def infer_novel_id(novel_path: str | Path, explicit: str = "") -> str:

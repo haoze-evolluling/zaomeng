@@ -26,6 +26,3 @@ def create_app(service: WebRunService | None = None) -> FastAPI:
         app.include_router(router)
 
     return app
-
-
-app = create_app()

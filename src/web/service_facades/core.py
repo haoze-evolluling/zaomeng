@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from src.web.time_utils import utc_now as _utc_now
 from src.web.artifacts import discover_character_cards, discover_relation_graph
 from src.web.chat import load_pending_turn_payload as load_dialogue_pending_turn_payload
 from src.web.manifest import (
@@ -22,9 +22,6 @@ from src.web.manifest import (
 from src.web.pipeline import assert_run_not_stopped, build_progress_chunking_from_artifacts, build_summary_chunking
 from src.web.run_ops import finalize_manifest_timing, format_elapsed_text, is_stop_requested
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class CoreServiceMixin:

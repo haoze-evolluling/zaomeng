@@ -72,10 +72,9 @@ def test_project_structure():
     print("\n=== 测试结果 ===")
     if all_pass:
         print("[OK] 项目结构完整")
-        return True
     else:
         print("[FAIL] 项目结构不完整，请检查缺失的文件/目录")
-        return False
+    assert all_pass
 
 
 def test_imports():
@@ -98,14 +97,13 @@ def test_imports():
         print("[OK] src.core.main 导入成功")
         
         print("[OK] 所有模块导入成功")
-        return True
         
     except ImportError as e:
         print(f"[FAIL] 导入失败: {e}")
-        return False
+        raise
     except Exception as e:
         print(f"[FAIL] 其他错误: {e}")
-        return False
+        raise
 
 
 def main():
@@ -113,16 +111,12 @@ def main():
     print("造梦.skill - 项目测试套件")
     print("=" * 40)
     
-    # 测试项目结构
-    structure_ok = test_project_structure()
-    
-    # 测试模块导入
-    imports_ok = test_imports()
-    
-    print("\n" + "=" * 40)
-    print("最终结果:")
-    
-    if structure_ok and imports_ok:
+    try:
+        test_project_structure()
+        test_imports()
+
+        print("\n" + "=" * 40)
+        print("最终结果:")
         print("[OK] 所有测试通过！项目结构完整。")
         print("\n下一步:")
         print("1. 复制配置文件: cp config.yaml.example config.yaml")
@@ -130,7 +124,9 @@ def main():
         print("3. 安装依赖: pip install -r requirements.txt")
         print("4. 运行项目: python -m src.core.main --help")
         return 0
-    else:
+    except Exception:
+        print("\n" + "=" * 40)
+        print("最终结果:")
         print("[FAIL] 测试失败，请修复问题后重试。")
         return 1
 

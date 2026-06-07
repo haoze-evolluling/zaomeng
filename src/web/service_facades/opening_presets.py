@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
+from src.web.time_utils import utc_now as _utc_now
 from src.web.review import (
     delete_opening_preset_payload,
     list_opening_presets_payload,
@@ -10,9 +10,6 @@ from src.web.review import (
     save_opening_preset_payload,
 )
 
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class OpeningPresetServiceMixin:

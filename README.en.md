@@ -58,11 +58,15 @@ python scripts/install_skill.py --skills-dir <your-skills-root>
 pip install -r requirements.txt
 ```
 
+This installs the full development/test dependency set, including pytest/mypy/black/flake8 and `httpx2` for Web API tests.
+
 If you only want to run the Web UI or use the one-line installer, this is usually enough:
 
 ```bash
 pip install -r requirements.runtime.txt
 ```
+
+The runtime dependency set intentionally stays lighter and does not force test-only dependencies or optional EPUB/token tooling.
 
 ### Web UI 🖥️
 
@@ -107,7 +111,7 @@ If you prefer to clone the repository and run it locally, use:
 ```bash
 git clone https://github.com/wkbin/zaomeng.git
 cd zaomeng
-pip install -r requirements.txt
+pip install -r requirements.runtime.txt
 python scripts/run_webui.py --reload
 ```
 

@@ -48,7 +48,8 @@ def main() -> int:
     except ModuleNotFoundError as exc:
         print(
             "Missing web dependency. Install requirements first with "
-            "`pip install -r requirements.txt`.",
+            "`pip install -r requirements.runtime.txt` for Web UI runtime "
+            "or `pip install -r requirements.txt` for development/test tooling.",
             file=sys.stderr,
         )
         print(str(exc), file=sys.stderr)
@@ -64,7 +65,7 @@ def main() -> int:
             return 1
         static_version = _web_asset_version.read_web_asset_version(PROJECT_ROOT)
         print(f"Starting zaomeng Web UI with static asset version: {static_version}")
-        uvicorn.run("src.web.app:app", host=args.host, port=args.port, reload=True)
+        uvicorn.run("src.web.asgi:app", host=args.host, port=args.port, reload=True)
         return 0
 
     app = create_app(WebRunService(args.storage_root))

@@ -73,7 +73,7 @@ zaomeng-<version>.skill.zip
 - package archive regression checks
 - installable skill workflow checks
 - mypy on the release helper scripts and prompt-first guardrail modules
-- full unit test suite
+- full pytest suite, including unittest-style and pytest-style tests
 
 ## Packaging Output
 
