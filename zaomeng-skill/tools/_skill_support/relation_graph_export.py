@@ -478,6 +478,8 @@ def _render_relation_html(
     for entry in relation_entries:
         tooltip = html.escape(entry["evidence_summary"])
         tone = _type_tone(entry["relationship_type"])
+        conflict_point = html.escape(entry["conflict_point"]) or '<span class="muted">-</span>'
+        typical_interaction = html.escape(entry["typical_interaction"]) or '<span class="muted">-</span>'
         table_rows.append(
             "<tr "
             f"data-type=\"{html.escape(entry['relationship_type'])}\" "
@@ -492,8 +494,8 @@ def _render_relation_html(
             f"<td>{entry['intensity']}</td>"
             f"<td>{html.escape(entry['stability_label'])}</td>"
             f"<td>{html.escape(entry['evolution'])}</td>"
-            f"<td>{html.escape(entry['conflict_point']) or '<span class=\"muted\">-</span>'}</td>"
-            f"<td>{html.escape(entry['typical_interaction']) or '<span class=\"muted\">-</span>'}</td>"
+            f"<td>{conflict_point}</td>"
+            f"<td>{typical_interaction}</td>"
             "</tr>"
         )
     if not table_rows:
