@@ -25,7 +25,19 @@ Thumbs.db
 
 # Local runtime/config artifacts
 config.yaml
-data/
+data/*
+!data/characters/
+!data/relations/
+!data/sessions/
+!data/corrections/
+data/characters/*
+data/relations/*
+data/sessions/*
+data/corrections/*
+!data/characters/.gitkeep
+!data/relations/.gitkeep
+!data/sessions/.gitkeep
+!data/corrections/.gitkeep
 logs/
 outputs/
 clawhub-zaomeng-skill/runtime/data/
