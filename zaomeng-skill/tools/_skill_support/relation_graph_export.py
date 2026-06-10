@@ -588,6 +588,7 @@ def _render_relation_html(
         )
         for _, style in unique_categories
     )
+    category_legend_html = category_legend or '<span class="legend-item">暂无阵营/角色元数据</span>'
     conflict_count = sum(1 for entry in relation_entries if entry["hostility"] >= 6)
     high_trust_count = sum(1 for entry in relation_entries if entry["trust"] >= 7)
     visible_nodes = len(_relation_node_names(relations))
@@ -771,7 +772,7 @@ def _render_relation_html(
         "    <div class=\"grid\">\n"
         "      <div class=\"card\">\n"
         "        <h2>关系网络</h2>\n"
-        f"        <div class=\"legend\">{category_legend or '<span class=\"legend-item\">暂无阵营/角色元数据</span>'}</div>\n"
+        f"        <div class=\"legend\">{category_legend_html}</div>\n"
         "        <div class=\"graph-shell\">\n"
         f"          <div id=\"graph-view\" class=\"mermaid\">{embedded_graph_html}</div>\n"
         "        </div>\n"

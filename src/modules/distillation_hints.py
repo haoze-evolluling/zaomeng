@@ -134,8 +134,10 @@ class DistillationHintsMixin:
         for field in ("distinct_from", "evidence_focus", "avoid_generic"):
             values = [str(item).strip() for item in hint.get(field, []) if str(item).strip()]
             if values:
-                lines.append(f"- {field}: {", ".join(values)}")
+                joined_values = ", ".join(values)
+                lines.append(f"- {field}: {joined_values}")
         notes = [str(item).strip() for item in hint.get("notes", []) if str(item).strip()]
         if notes:
-            lines.append(f"- notes: {", ".join(notes)}")
+            joined_notes = ", ".join(notes)
+            lines.append(f"- notes: {joined_notes}")
         return "\n".join(lines).rstrip() + "\n"
