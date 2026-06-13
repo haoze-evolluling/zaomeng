@@ -301,7 +301,7 @@ class DistillationInferenceMixin:
             "自由": "不给自己和身边人活成任人摆布的棋子",
             "野心": "借势把局面推向更远的位置，而不止是应付眼前",
         }
-        if "执拗" in core_traits and "正义" not in mapping:
+        if "执拗" in core_traits and top_value != "正义":
             return "认准了就要做到底，不愿轻易退回去"
         return mapping.get(top_value, "把事情看透，再把自己真正想守的东西守住")
 
