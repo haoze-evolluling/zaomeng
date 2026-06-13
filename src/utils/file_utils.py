@@ -115,7 +115,7 @@ def decode_escaped_text(value: Optional[str]) -> str:
         return text
     try:
         return bytes(text, "utf-8").decode("unicode_escape").strip()
-    except UnicodeDecodeError:
+    except (UnicodeDecodeError, ValueError):
         return text
 
 
