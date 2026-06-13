@@ -405,7 +405,7 @@ class DistillationRefinementMixin:
         text = str(value or "").strip()
         if not text:
             return []
-        pattern = r"(?:[;；/\n]\s*|锛\?\s*|(?<=[^=])[，,]\s*(?=[^=，,;；/\n]+?=))"
+        pattern = r"(?:[;；/\n]\s*|、\s*|(?<=[^=])[，,]\s*(?=[^=，,;；/\n]+?=))"
         return [item.strip() for item in re.split(pattern, text) if item.strip()]
 
     @staticmethod
