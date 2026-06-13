@@ -68,10 +68,6 @@ class DistillationRefinementMixin:
                     messages[1]["content"],
                     "## Character Hint",
                     self._render_character_hint(str(profile.get("name", "")), character_hint),
-                    "## Peer Contrast",
-                    self._render_peer_profile_contrasts(profile["name"], peer_profiles or {}),
-                    "## Overlap Alerts",
-                    self._render_overlap_report(overlap_report or []),
                 ]
             )
             response = self.llm_client.chat_completion(
