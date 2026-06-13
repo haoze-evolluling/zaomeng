@@ -193,10 +193,21 @@ class RuntimeParts:
             chat_engine=self._chat_engine,
         )
 
+    def shared_infrastructure_overrides(self) -> "RuntimeDependencyOverrides":
+        return RuntimeDependencyOverrides(
+            path_provider=self.path_provider,
+            rulebook=self.rulebook,
+            llm=self.llm,
+            token_counter=self.token_counter,
+            session_store=self.session_store,
+            relation_store=self.relation_store,
+            relation_visualization_exporter=self.relation_visualization_exporter,
+        )
+
     def fork(self, overrides: Optional["RuntimeDependencyOverrides"] = None) -> "RuntimeParts":
         return build_runtime_parts(
             self.config,
-            overrides=self.shared_dependency_overrides().merged_with(overrides),
+            overrides=self.shared_infrastructure_overrides().merged_with(overrides),
         )
 
 

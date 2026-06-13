@@ -457,6 +457,8 @@ class RelationshipExtractor:
             closeness = self._closeness_score(trust, affection)
             conflict = html.escape(str(payload.get("conflict_point", "")))
             interaction = html.escape(str(payload.get("typical_interaction", "")))
+            conflict_html = conflict or '<span class="muted">-</span>'
+            interaction_html = interaction or '<span class="muted">-</span>'
             rows.append(
                 "<tr>"
                 f"<td><span class=\"pair-key\">{html.escape(pair_key)}</span></td>"
@@ -465,8 +467,8 @@ class RelationshipExtractor:
                 f"<td>{self._metric_badge(hostility, 'hostility')}</td>"
                 f"<td>{self._metric_badge(closeness, 'closeness')}</td>"
                 f"<td>{power_gap}</td>"
-                f"<td>{conflict or '<span class=\"muted\">-</span>'}</td>"
-                f"<td>{interaction or '<span class=\"muted\">-</span>'}</td>"
+                f"<td>{conflict_html}</td>"
+                f"<td>{interaction_html}</td>"
                 "</tr>"
             )
         if not rows:
@@ -514,6 +516,7 @@ class RelationshipExtractor:
             )
             for _, style in unique_categories
         )
+        category_legend_html = category_legend or '<span class="legend-item">暂无阵营/角色元数据</span>'
         conflict_count = sum(1 for payload in relations.values() if int(payload.get("hostility", 0)) >= 6)
         runtime_script_tag = (
             f"  <script src=\"{html.escape(mermaid_runtime_filename)}\"></script>\n"
@@ -586,7 +589,7 @@ class RelationshipExtractor:
             "    <div class=\"grid\">\n"
             "      <div class=\"card\">\n"
             "        <h2>关系网络</h2>\n"
-            f"        <div class=\"legend\">{category_legend or '<span class=\"legend-item\">暂无阵营/角色元数据</span>'}</div>\n"
+            f"        <div class=\"legend\">{category_legend_html}</div>\n"
             "        <div class=\"graph-shell\">\n"
             f"          <div class=\"mermaid\">{html.escape(mermaid)}</div>\n"
             "        </div>\n"

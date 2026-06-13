@@ -84,6 +84,17 @@ class HostLLMAdapterTests(unittest.TestCase):
         self.assertTrue(parts.chat_engine._should_use_llm_generation())
         self.assertEqual(parts.llm.get_cost_summary()["provider"], "openclaw-host")
 
+    def test_runtime_parts_fork_rebuilds_cached_components_when_llm_is_overridden(self):
+        original = build_runtime_parts(Config(), overrides=RuntimeDependencyOverrides(llm=HostProvidedLLM(_HostGenerateOnly())))
+        original_chat_engine = original.chat_engine
+        replacement = HostProvidedLLM(_HostGenerateOnly(), provider_name="replacement-host")
+
+        forked = original.fork(RuntimeDependencyOverrides(llm=replacement))
+
+        self.assertIs(forked.llm, replacement)
+        self.assertIsNot(forked.chat_engine, original_chat_engine)
+        self.assertIs(forked.chat_engine.llm, replacement)
+
     def test_cli_from_host_context_reuses_host_llm(self):
         host = _HostGenerateOnly()
         cli = ZaomengCLI.from_host_context(_HostContext(host), config=Config())
