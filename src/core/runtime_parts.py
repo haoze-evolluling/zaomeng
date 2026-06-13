@@ -186,6 +186,11 @@ class RuntimeParts:
             session_store=self.session_store,
             relation_store=self.relation_store,
             relation_visualization_exporter=self.relation_visualization_exporter,
+            reflection=self._reflection,
+            distiller=self._distiller,
+            speaker=self._speaker,
+            extractor=self._extractor,
+            chat_engine=self._chat_engine,
         )
 
     def fork(self, overrides: Optional["RuntimeDependencyOverrides"] = None) -> "RuntimeParts":
