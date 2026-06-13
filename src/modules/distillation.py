@@ -471,5 +471,4 @@ class NovelDistiller(
         size = int(self.config.get("text_processing.chunk_size_tokens", 8000))
         overlap = int(self.config.get("text_processing.chunk_overlap_tokens", 200))
         return self.token_counter.split_by_tokens(text, size, overlap)
-        return self._apply_character_hint(profile, character_hint)
 
