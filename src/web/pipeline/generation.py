@@ -37,6 +37,7 @@ def generate_character_profile_markdown(
             character=character,
             peer_characters=peer_characters,
             progress_hook=progress_hook,
+            fallback_reason="",
         )
     try:
         assert_run_not_stopped(manifest_path, current_character=character)
@@ -172,6 +173,7 @@ def generate_relation_markdown(
             payload=payload,
             characters=characters,
             progress_hook=progress_hook,
+            fallback_reason="",
         )
     try:
         assert_run_not_stopped(manifest_path, message=stop_message)
