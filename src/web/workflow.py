@@ -266,5 +266,5 @@ class WebRunService(
         self._launcher_path_hint = ""
 
     @staticmethod
-    def _build_runtime_parts(config):
-        return build_runtime_parts(config)
+    def _build_runtime_parts(config, **kwargs):
+        return build_runtime_parts(config, **kwargs)
