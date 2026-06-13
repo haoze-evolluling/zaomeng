@@ -245,7 +245,10 @@ class Config:
         """获取路径配置，转换为绝对路径"""
         relative_path = self.get(f"paths.{path_key}")
         if not relative_path:
-            return ""
+            raise ValueError(
+                f"Config path key 'paths.{path_key}' is missing or empty. "
+                f"Ensure your config defines a '{path_key}' entry under 'paths'."
+            )
         
         # 如果是绝对路径，直接返回
         if os.path.isabs(relative_path):
