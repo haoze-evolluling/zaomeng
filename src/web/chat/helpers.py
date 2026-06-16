@@ -880,10 +880,11 @@ def generate_dialogue_responses(
             break
         try:
             responses = parse_responses(content, allowed_speakers)
-            return _normalize_dialogue_responses(
+            normalized = _normalize_dialogue_responses(
                 responses,
                 response_limit=int(dict(payload.get("host_action", {}) or {}).get("response_limit_hint", 0) or 0),
             )
+            return _reorder_plot_push_responses(normalized, payload)
         except ValueError as exc:
             last_error = exc
             if index + 1 < len(attempts):
@@ -922,6 +923,47 @@ def generate_dialogue_suggestion(
                 continue
             raise
     raise ValueError("模型没有返回可用的续写建议。") from last_error
+
+
+def _reorder_plot_push_responses(
+    responses: list[dict[str, str]],
+    payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    """剧情推动 + 扮演时，控制角色不应成为最后一条角色对白。"""
+    mode = str(payload.get("mode", "")).strip()
+    input_block = dict(payload.get("input", {}) or {})
+    message_kind = str(input_block.get("message_kind", "")).strip()
+    controlled = str(input_block.get("controlled_character", "")).strip()
+    if message_kind != "narration" or mode != "act" or not controlled:
+        return responses
+
+    meta_speakers = {"旁白", "场景提示"}
+    characters: list[dict[str, str]] = []
+    meta: list[dict[str, str]] = []
+    for item in responses:
+        speaker = str(item.get("speaker", "")).strip()
+        if speaker in meta_speakers:
+            meta.append(item)
+        else:
+            characters.append(item)
+
+    if len(characters) <= 1:
+        return responses
+
+    last_idx = len(characters) - 1
+    controlled_idx = next(
+        (index for index, item in enumerate(characters) if str(item.get("speaker", "")).strip() == controlled),
+        -1,
+    )
+    if controlled_idx != last_idx:
+        return responses
+
+    controlled_item = characters.pop(last_idx)
+    if len(characters) >= 2:
+        characters.insert(len(characters) - 1, controlled_item)
+    else:
+        characters.insert(0, controlled_item)
+    return characters + meta
 
 
 def _normalize_dialogue_responses(

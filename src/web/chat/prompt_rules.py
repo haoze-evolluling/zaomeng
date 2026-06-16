@@ -12,7 +12,20 @@ def _trim_summary_text(value: str, limit: int) -> str:
     return f"{text[:limit]}..."
 
 
-def _mode_rule(mode: str) -> str:
+def _mode_rule(mode: str, message_kind: str = "dialogue", controlled_character: str = "") -> str:
+    if message_kind == "narration":
+        controlled = str(controlled_character or "").strip()
+        if mode == "act" and controlled:
+            return (
+                f"The user pushed the scene with a director beat, not by speaking as {controlled}. "
+                f"Other cast members must react in character; {controlled} may also react, but must not be the only voice."
+            )
+        if mode == "insert":
+            return (
+                "The user pushed the scene with a director beat, not as their self-insert line. "
+                "The cast should react in character."
+            )
+        return "The user is observing. Characters should continue the scene among themselves."
     if mode == "act":
         return "The user is speaking as one existing character. Other characters should reply to that role naturally."
     if mode == "insert":
@@ -34,13 +47,26 @@ def _speaker_rule(mode: str, session: dict[str, Any], message_kind: str = "dialo
     return "Treat the user message as a scene steering hint. Characters reply in-world."
 
 
-def _response_style_rule(mode: str, message_kind: str = "dialogue") -> str:
+def _response_style_rule(
+    mode: str,
+    message_kind: str = "dialogue",
+    controlled_character: str = "",
+) -> str:
     if message_kind == "narration":
-        return (
+        base = (
             "The cue is scene-driving. Let the cast react with concrete action/emotion changes; "
             "use 场景提示 or 旁白 only for true scene beats such as entrances, exits, environment changes, or transitions; "
             "for small gestures like raising eyes, lowering the head, smiling, pausing, or turning around, fold them into the character's spoken line with short parenthetical action instead of a separate narration line."
         )
+        controlled = str(controlled_character or "").strip()
+        if mode == "act" and controlled:
+            return (
+                f"{base} "
+                f"When the user controls {controlled}, other participants must also speak; "
+                f"do not return only {controlled}'s line. "
+                f"If {controlled} replies, place that line before the other cast members' closing lines, not as the final character reply."
+            )
+        return base
     if mode == "observe":
         return (
             "Prefer 2-4 short in-character replies when the scene is busy, and fewer when it is quiet. "
@@ -237,22 +263,80 @@ def _build_user_suggestion_persona(
     }
 
 
-def _responder_hints(mode: str, participants: list[str], speaker: str) -> list[dict[str, str]]:
+def _responder_hints(
+    mode: str,
+    participants: list[str],
+    speaker: str,
+    message_kind: str = "dialogue",
+    controlled_character: str = "",
+) -> list[dict[str, str]]:
+    controlled = str(controlled_character or "").strip()
+    ordered: list[str] = []
+    seen: set[str] = set()
+    if message_kind == "narration" and mode == "act" and controlled:
+        others: list[str] = []
+        for name in participants:
+            normalized = str(name or "").strip()
+            if not normalized or normalized == controlled or normalized in seen:
+                continue
+            seen.add(normalized)
+            others.append(normalized)
+        if controlled in participants:
+            if len(others) >= 2:
+                ordered = [others[0], controlled, *others[1:]]
+            elif len(others) == 1:
+                ordered = [controlled, others[0]]
+            else:
+                ordered = [controlled]
+    else:
+        for name in participants:
+            normalized = str(name or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+
     hints: list[dict[str, str]] = []
-    for name in participants:
-        if mode == "act" and name == speaker:
+    for name in ordered:
+        if mode == "act" and message_kind != "narration" and name == speaker:
             continue
+        priority = "normal"
+        if message_kind == "narration" and mode == "act" and controlled:
+            priority = "normal" if name == controlled else "high"
+        elif not hints:
+            priority = "high"
         hints.append(
             {
                 "name": name,
                 "should_reply": "yes",
-                "priority": "high" if len(hints) == 0 else "normal",
+                "priority": priority,
             }
         )
     return hints
 
 
-def _host_prompt_brief(mode: str, speaker: str, participants: list[str]) -> str:
+def _host_prompt_brief(
+    mode: str,
+    speaker: str,
+    participants: list[str],
+    message_kind: str = "dialogue",
+    controlled_character: str = "",
+) -> str:
+    if message_kind == "narration":
+        controlled = str(controlled_character or "").strip()
+        if mode == "act" and controlled:
+            others = [str(name).strip() for name in participants if str(name).strip() and str(name).strip() != controlled]
+            other_label = ", ".join(others) if others else "the other participants"
+            return (
+                f"The user sent an in-world scene cue (not a line from {controlled}). "
+                f"Let {other_label} answer in character first; {controlled} may react too but other cast must not be silent."
+            )
+        if mode == "insert":
+            return (
+                f"The user sent a scene cue. Let {', '.join(participants)} react in character, "
+                "with multiple cast voices when the scene is busy."
+            )
+        return f"The user is observing. Let {', '.join(participants)} continue the scene in character and keep the chosen scene moving."
     if mode == "act":
         return f"The user speaks as {speaker}. Let the other participants answer in character."
     if mode == "insert":

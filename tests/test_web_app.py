@@ -10,7 +10,11 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 from src.core.exceptions import LLMRequestError
-from src.web.chat.helpers import compact_dialogue_suggestion_payload, parse_dialogue_suggestion
+from src.web.chat.helpers import (
+    compact_dialogue_suggestion_payload,
+    parse_dialogue_suggestion,
+    _reorder_plot_push_responses,
+)
 from src.web.pipeline import process_relation_graph, update_manifest_chunk_progress
 from src.web.review.persona_completion import collect_persona_web_references
 from src.web.workflow import WebRunService
@@ -6340,6 +6344,85 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             self.assertEqual(pending.get("message_kind"), "narration")
             self.assertEqual(pending.get("speaker"), "场景提示")
             self.assertTrue(2 <= int(pending.get("response_limit_hint", 0)) <= 5)
+
+    def test_prepare_turn_act_narration_prompt_prioritizes_other_cast_over_controlled_character(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            service.save_model_settings(
+                provider="openai-compatible",
+                model="deepseek-chat",
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+            )
+            payload = service.create_run(
+                novel_name="laoshe.txt",
+                novel_content_base64=base64.b64encode("祥子娶了虎妞。".encode("utf-8")).decode("ascii"),
+                characters=["祥子", "虎妞"],
+            )
+            for name in ("祥子", "虎妞"):
+                service.ingest_character_result(
+                    payload["run_id"],
+                    character=name,
+                    content_base64=base64.b64encode(
+                        f"- name: {name}\n- novel_id: laoshe\n- core_identity: 人物\n".encode("utf-8")
+                    ).decode("ascii"),
+                )
+
+            manifest = service._require_manifest(payload["run_id"])
+            session = service.dialogue.create_session(
+                manifest,
+                mode="act",
+                participants=["祥子", "虎妞"],
+                controlled_character="祥子",
+            )
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(payload["run_id"], session["session_id"])
+            )
+            turn_payload = service.dialogue._build_turn_payload(
+                manifest,
+                raw_session,
+                turn_id="turn-act-narration",
+                message="第二天一早，虎妞催祥子出门办事。",
+                message_kind="narration",
+                speaker_override="场景提示",
+            )
+            llm_messages = service._build_dialogue_llm_messages(turn_payload, retry_on_empty=False)
+            system_prompt = llm_messages[0]["content"]
+            hints = turn_payload.get("responder_hints", [])
+
+            self.assertIn("not by speaking as 祥子", system_prompt)
+            self.assertIn("Other cast members must react", system_prompt)
+            self.assertIn("must not be the only voice", system_prompt)
+            self.assertIn("do not return only 祥子's line", system_prompt)
+            self.assertIn("not as the final character reply", system_prompt)
+            self.assertTrue(2 <= int(turn_payload["host_action"]["response_limit_hint"]) <= 4)
+            self.assertEqual(hints[0]["name"], "祥子")
+            self.assertEqual(hints[-1]["name"], "虎妞")
+            self.assertEqual(hints[0]["priority"], "normal")
+            self.assertEqual(hints[1]["priority"], "high")
+
+    def test_reorder_plot_push_responses_moves_controlled_character_before_closing_line(self):
+        payload = {
+            "mode": "act",
+            "input": {
+                "message_kind": "narration",
+                "controlled_character": "祥子",
+            },
+        }
+        responses = [
+            {"speaker": "虎妞", "message": "你先别磨叽。"},
+            {"speaker": "祥子", "message": "我知道了。"},
+        ]
+        reordered = _reorder_plot_push_responses(responses, payload)
+        self.assertEqual([item["speaker"] for item in reordered], ["祥子", "虎妞"])
+
+        three_way = [
+            {"speaker": "虎妞", "message": "走。"},
+            {"speaker": "刘四", "message": "嗯。"},
+            {"speaker": "祥子", "message": "好。"},
+        ]
+        reordered_three = _reorder_plot_push_responses(three_way, payload)
+        self.assertEqual([item["speaker"] for item in reordered_three], ["虎妞", "祥子", "刘四"])
 
     def test_prepare_turn_filters_departed_participants_from_active_pool(self):
         with tempfile.TemporaryDirectory() as tmp:
