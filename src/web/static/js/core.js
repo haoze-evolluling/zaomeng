@@ -394,20 +394,102 @@ function readRecentSessionSnippet(runId, sessionId) {
 
 function applySidebarState() {
   const shell = el("app-shell");
-  if (shell) {
-    shell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
-  }
   const experienceShell = el("experience-shell");
-  if (experienceShell) {
-    experienceShell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
+  const mobile = isMobileShell();
+  const inChat = Boolean(experienceShell?.classList.contains("dialogue-layout"));
+
+  if (mobile) {
+    if (experienceShell) {
+      experienceShell.classList.toggle("mobile-session-drawer-open", mobileSessionDrawerOpen);
+      experienceShell.classList.toggle("sidebar-collapsed", inChat);
+    }
+    if (shell) {
+      shell.classList.toggle("sidebar-collapsed", inChat);
+    }
+  } else {
+    mobileSessionDrawerOpen = false;
+    if (experienceShell) {
+      experienceShell.classList.remove("mobile-session-drawer-open");
+      experienceShell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
+    }
+    if (shell) {
+      shell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
+    }
   }
+
   const button = el("toggle-sidebar-button");
   if (button) {
-    const label = sidebarCollapsed ? "展开侧栏" : "收起侧栏";
+    const label = mobile
+      ? mobileSessionDrawerOpen
+        ? "关闭会话"
+        : "最近会话"
+      : sidebarCollapsed
+        ? "展开侧栏"
+        : "收起侧栏";
     button.textContent = label;
     button.setAttribute("aria-label", label);
     button.title = label;
+    button.classList.toggle("mobile-session-trigger-active", mobile && mobileSessionDrawerOpen);
   }
+}
+
+function isMobileShell() {
+  return window.matchMedia("(max-width: 1180px)").matches;
+}
+
+let mobileSessionDrawerOpen = false;
+
+function syncMobileShellLayout(workflowState = {}) {
+  const pageShell = document.querySelector(".page-shell");
+  const experienceShell = el("experience-shell");
+  const header = document.querySelector(".story-header");
+  const mobile = isMobileShell();
+  const inChat = Boolean(workflowState.hasSession || workflowState.sessionBooting);
+
+  if (pageShell) {
+    pageShell.classList.toggle("mobile-chat-active", mobile && inChat);
+  }
+  if (header) {
+    header.classList.toggle("mobile-chat-active", mobile && inChat);
+    header.classList.toggle("mobile-shell", mobile);
+  }
+  if (experienceShell) {
+    experienceShell.classList.toggle("mobile-shell", mobile);
+  }
+  document.documentElement.classList.toggle("mobile-chat-active", mobile && inChat);
+  document.body.classList.toggle("mobile-chat-active", mobile && inChat);
+
+  applySidebarState();
+}
+
+function closeMobileSessionDrawer() {
+  if (!mobileSessionDrawerOpen) return;
+  mobileSessionDrawerOpen = false;
+  applySidebarState();
+}
+
+function bindMobileShellDismiss() {
+  const experienceShell = el("experience-shell");
+  if (!experienceShell || experienceShell.dataset.mobileDismissBound === "1") return;
+  experienceShell.dataset.mobileDismissBound = "1";
+  experienceShell.addEventListener("click", (event) => {
+    if (!isMobileShell() || !mobileSessionDrawerOpen) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest(".library-rail") || target.closest("#toggle-sidebar-button")) return;
+    mobileSessionDrawerOpen = false;
+    applySidebarState();
+  });
+}
+
+function toggleMobileSessionDrawer() {
+  if (!isMobileShell()) {
+    sidebarCollapsed = !sidebarCollapsed;
+    applySidebarState();
+    return;
+  }
+  mobileSessionDrawerOpen = !mobileSessionDrawerOpen;
+  applySidebarState();
 }
 
 function normalizeNovelTitle(value) {

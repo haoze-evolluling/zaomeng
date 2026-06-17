@@ -3356,6 +3356,10 @@ function bindEvents() {
   bind("dismiss-app-update-button", "click", dismissAppUpdateModal);
   bind("confirm-app-update-button", "click", handleConfirmAppUpdate);
   bind("toggle-sidebar-button", "click", () => {
+    if (typeof toggleMobileSessionDrawer === "function") {
+      toggleMobileSessionDrawer();
+      return;
+    }
     sidebarCollapsed = !sidebarCollapsed;
     applySidebarState();
   });
@@ -3683,6 +3687,15 @@ async function boot() {
   resizeComposer();
   setDialogueMessageKind(currentDialogueMessageKind);
   applySidebarState();
+  bindMobileShellDismiss();
+  if (typeof bindWorkDetailNav === "function") {
+    bindWorkDetailNav();
+  }
+  window.addEventListener("resize", () => {
+    if (typeof syncMobileShellLayout === "function") {
+      syncMobileShellLayout(window.__ZAOMENG_WORKFLOW_STATE__ || {});
+    }
+  });
   initCustomSelect("dialogue-scene-card");
   initCustomSelect("dialogue-self-card");
   try {

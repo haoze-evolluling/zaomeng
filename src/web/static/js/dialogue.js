@@ -1351,6 +1351,9 @@ async function loadRecentSessions() {
           currentDialogueSession = null;
         }
         sessionBooting = true;
+        if (typeof closeMobileSessionDrawer === "function") {
+          closeMobileSessionDrawer();
+        }
         setComposerEnabled(false);
         setSessionBadge("入场中");
         renderSessionBooting(item.mode, item.participants || []);
