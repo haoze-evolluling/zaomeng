@@ -7,7 +7,13 @@
     return;
   }
 
-  const { createApp, computed, onBeforeUnmount, onMounted, ref, watch } = vue;
+  const { createApp, computed, onBeforeUnmount, onMounted, ref, watch, nextTick } = vue;
+
+  function resizeComposerTextarea(node) {
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
+  }
 
   function composerActions() {
     const tools = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
@@ -28,11 +34,6 @@
         snapshot.value = nextSnapshot || {};
       });
 
-      onMounted(() => {
-        stage.classList.add("has-vue-island");
-        host.classList.remove("hidden");
-      });
-
       onBeforeUnmount(() => {
         unsubscribe();
       });
@@ -42,10 +43,18 @@
       const mode = computed(() => String(composer.value.mode || session.value.mode || session.value?.session_card?.mode || "").trim());
       const draft = ref("");
       const draftKind = ref("dialogue");
+      const textareaRef = ref(null);
+      watch(
+        () => composer.value.placeholder,
+        () => {
+          nextTick(() => resizeComposerTextarea(textareaRef.value));
+        }
+      );
       watch(
         () => composer.value.message,
         (nextMessage) => {
           draft.value = String(nextMessage || "");
+          nextTick(() => resizeComposerTextarea(textareaRef.value));
         },
         { immediate: true }
       );
@@ -73,12 +82,23 @@
       const suggestDisabled = computed(() => Boolean(composer.value.suggestDisabled));
       const sendDisabled = computed(() => Boolean(composer.value.sendDisabled));
 
+      onMounted(() => {
+        stage.classList.add("has-vue-island");
+        host.classList.remove("hidden");
+        nextTick(() => resizeComposerTextarea(textareaRef.value));
+      });
+
       function setDraftValue(value, options = {}) {
         draft.value = String(value || "");
         const actions = composerActions();
         if (typeof actions.setDraft === "function") {
           actions.setDraft(draft.value, options);
         }
+        nextTick(() => resizeComposerTextarea(textareaRef.value));
+      }
+
+      function onDraftInput(event) {
+        setDraftValue(event?.target?.value || "");
       }
 
       function setKind(nextKind) {
@@ -123,6 +143,8 @@
         disabled,
         draft,
         draftKind,
+        textareaRef,
+        onDraftInput,
         handleEnter,
         placeholder,
         quickReplies,
@@ -173,11 +195,13 @@
           </div>
 
           <textarea
-            rows="1"
+            ref="textareaRef"
+            class="composer-textarea"
+            rows="2"
             :value="draft"
             :placeholder="placeholder"
             :disabled="disabled"
-            @input="setDraftValue($event.target.value)"
+            @input="onDraftInput"
             @keydown="handleEnter"
           ></textarea>
 

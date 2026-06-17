@@ -170,7 +170,20 @@
       "kind"
       "input"
       "actions";
-    border-radius: 28px;
+    border-radius: 22px;
+    align-items: stretch;
+  }
+
+  .composer-main-vue {
+    border-radius: 22px;
+    align-items: stretch;
+  }
+
+  #dialogue-message,
+  .composer-main-vue textarea,
+  .composer-textarea {
+    min-height: 72px;
+    max-height: 160px;
   }
 
   .composer-actions {

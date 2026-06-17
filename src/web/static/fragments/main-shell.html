@@ -137,7 +137,7 @@
           <button type="button" class="kind-chip active" data-kind="dialogue">台词</button>
           <button type="button" class="kind-chip" data-kind="narration">剧情推动</button>
         </div>
-        <textarea id="dialogue-message" rows="1" placeholder="写一句你想让他们听见的话"></textarea>
+        <textarea id="dialogue-message" rows="2" placeholder="写一句你想让他们听见的话"></textarea>
         <div class="composer-actions">
           <button
             id="suggest-turn-button"
@@ -153,4 +153,14 @@
       </div>
     </div>
   </footer>
+
+  <dialog id="dialogue-send-error-modal" class="dialogue-send-error-modal" aria-labelledby="dialogue-send-error-title">
+    <form method="dialog" class="dialogue-send-error-card">
+      <h3 id="dialogue-send-error-title">发送失败</h3>
+      <p id="dialogue-send-error-text" class="dialogue-send-error-text"></p>
+      <div class="dialogue-send-error-actions">
+        <button type="submit" class="send-button">知道了</button>
+      </div>
+    </form>
+  </dialog>
 </main>

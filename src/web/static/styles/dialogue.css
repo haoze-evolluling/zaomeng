@@ -837,8 +837,8 @@
 
 #dialogue-message {
   grid-area: input;
-  min-height: 28px;
-  max-height: 148px;
+  min-height: 44px;
+  max-height: 160px;
   resize: none;
   overflow: auto;
   scrollbar-width: none;
@@ -903,6 +903,96 @@
 
 .composer-note:empty {
   display: none;
+}
+
+.transcript-item.send-failed .message-bubble {
+  border-color: rgba(196, 92, 72, 0.34);
+}
+
+.transcript-send-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.transcript-item.user .transcript-send-actions,
+.transcript-item.director .transcript-send-actions,
+.transcript-item.scene.send-failed .transcript-send-actions {
+  justify-content: flex-end;
+}
+
+.transcript-action-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(194, 157, 138, 0.34);
+  background: rgba(255, 248, 241, 0.96);
+  color: #a86954;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.transcript-action-button.retry {
+  font-size: 16px;
+}
+
+.transcript-action-button.error {
+  font-weight: 700;
+}
+
+.dialogue-send-error-modal {
+  border: 0;
+  border-radius: 20px;
+  padding: 0;
+  max-width: calc(100vw - 32px);
+  width: min(420px, calc(100vw - 32px));
+  box-shadow: 0 24px 60px rgba(72, 48, 36, 0.22);
+}
+
+.dialogue-send-error-modal::backdrop {
+  background: rgba(34, 24, 18, 0.42);
+}
+
+.dialogue-send-error-card {
+  padding: 18px 18px 16px;
+}
+
+.dialogue-send-error-card h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.dialogue-send-error-text {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.dialogue-send-error-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.composer-main-vue textarea,
+.composer-textarea {
+  grid-area: input;
+  min-height: 44px;
+  max-height: 160px;
+  resize: none;
+  overflow: auto;
+  width: 100%;
+  min-width: 0;
+  display: block;
+  font-size: 14px;
+  line-height: 1.6;
+  border: 0;
+  background: transparent;
+  outline: none;
 }
 
 .observe-quick-hint-row {

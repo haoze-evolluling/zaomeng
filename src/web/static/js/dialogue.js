@@ -719,18 +719,121 @@ document.addEventListener("keydown", (event) => {
   closeDialogueMemoryModal();
 });
 
+function buildOptimisticUserTranscriptEntry(session, message, messageKind = "dialogue") {
+  const mode = session?.mode || session?.session_card?.mode || "observe";
+  const selfInsert = session?.session_card?.self_insert || {};
+  const isNarration = String(messageKind || "").trim() === "narration";
+  const speaker = isNarration
+    ? "场景提示"
+    : mode === "act"
+      ? session?.session_card?.controlled_character || "你"
+      : mode === "insert"
+        ? selfInsert.display_name || "你"
+        : "你";
+  const role = isNarration ? "scene" : mode === "observe" ? "director" : "user";
+  return { speaker, message, role, messageKind: isNarration ? "narration" : "dialogue" };
+}
+
+function buildFailedSendTranscript(session, message, messageKind, errorMessage) {
+  const transcript = stripFailedSendTranscript(Array.isArray(session?.transcript) ? session.transcript : []);
+  const entry = buildOptimisticUserTranscriptEntry(session, message, messageKind);
+  entry.sendState = "failed";
+  entry.errorMessage = String(errorMessage || "").trim() || "发送失败。";
+  transcript.push(entry);
+  return transcript;
+}
+
+function stripFailedSendTranscript(transcript) {
+  return (transcript || []).filter((item) => String(item?.sendState || "").trim() !== "failed");
+}
+
+function showDialogueSendErrorModal(message) {
+  const modal = el("dialogue-send-error-modal");
+  const text = el("dialogue-send-error-text");
+  if (!modal || !text) {
+    window.alert(String(message || "").trim() || "发送失败。");
+    return;
+  }
+  text.textContent = String(message || "").trim() || "发送失败。";
+  if (typeof modal.showModal === "function") {
+    modal.showModal();
+  } else {
+    window.alert(text.textContent);
+  }
+}
+
+function createTranscriptActionButton(className, label, attrs = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `transcript-action-button ${className}`.trim();
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  Object.entries(attrs).forEach(([key, value]) => {
+    if (value == null || value === "") return;
+    button.setAttribute(key, String(value));
+  });
+  return button;
+}
+
+function bindTranscriptSendActions(root) {
+  if (!root || root.dataset.sendActionsBound === "true") return;
+  root.dataset.sendActionsBound = "true";
+  root.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const retryButton = target.closest("[data-transcript-retry]");
+    if (retryButton instanceof HTMLElement) {
+      event.preventDefault();
+      const message = String(retryButton.dataset.message || "").trim();
+      const messageKind = String(retryButton.dataset.messageKind || "dialogue").trim() || "dialogue";
+      if (!message) return;
+      if (typeof window.handleSendTurn === "function") {
+        window.handleSendTurn(message, messageKind);
+      }
+      return;
+    }
+    const errorButton = target.closest("[data-transcript-error]");
+    if (errorButton instanceof HTMLElement) {
+      event.preventDefault();
+      showDialogueSendErrorModal(errorButton.dataset.errorMessage || "");
+    }
+  });
+}
+
 function renderTranscript(items) {
   const root = el("dialogue-transcript");
   if (!root) return;
+  bindTranscriptSendActions(root);
   root.innerHTML = "";
 
   (items || []).forEach((item) => {
     const role = item.role || "character";
     const row = document.createElement("article");
     row.className = `transcript-item ${role}`;
+    if (String(item.sendState || "").trim() === "failed") {
+      row.classList.add("send-failed");
+    }
 
     if (role === "scene" || role === "director" || role === "loading") {
       row.appendChild(createMessageBubble(role, item.message || ""));
+      if (String(item.sendState || "").trim() === "failed" && role !== "loading") {
+        const actions = document.createElement("div");
+        actions.className = "transcript-send-actions";
+        const retryButton = createTranscriptActionButton("retry", "重试发送", {
+          "data-transcript-retry": "true",
+          "data-message": String(item.message || "").trim(),
+          "data-message-kind": String(item.messageKind || "dialogue").trim() || "dialogue",
+        });
+        retryButton.textContent = "↻";
+        const errorButton = createTranscriptActionButton("error", "查看失败原因", {
+          "data-transcript-error": "true",
+          "data-error-message": String(item.errorMessage || "").trim() || "发送失败。",
+        });
+        errorButton.textContent = "!";
+        actions.appendChild(retryButton);
+        actions.appendChild(errorButton);
+        row.appendChild(actions);
+      }
       root.appendChild(row);
       return;
     }
@@ -752,6 +855,34 @@ function renderTranscript(items) {
     }
 
     row.appendChild(inline);
+
+    if (String(item.sendState || "").trim() === "failed") {
+      const actions = document.createElement("div");
+      actions.className = "transcript-send-actions";
+      const retryButton = createTranscriptActionButton(
+        "retry",
+        "重试发送",
+        {
+          "data-transcript-retry": "true",
+          "data-message": String(item.message || "").trim(),
+          "data-message-kind": String(item.messageKind || "dialogue").trim() || "dialogue",
+        }
+      );
+      retryButton.textContent = "↻";
+      const errorButton = createTranscriptActionButton(
+        "error",
+        "查看失败原因",
+        {
+          "data-transcript-error": "true",
+          "data-error-message": String(item.errorMessage || "").trim() || "发送失败。",
+        }
+      );
+      errorButton.textContent = "!";
+      actions.appendChild(retryButton);
+      actions.appendChild(errorButton);
+      row.appendChild(actions);
+    }
+
     root.appendChild(row);
   });
 
@@ -823,19 +954,8 @@ function ensureRunReadyForDialogue(run, options = {}) {
 }
 
 function buildOptimisticTranscript(session, message, messageKind = "dialogue") {
-  const transcript = Array.isArray(session?.transcript) ? [...session.transcript] : [];
-  const mode = session?.mode || session?.session_card?.mode || "observe";
-  const selfInsert = session?.session_card?.self_insert || {};
-  const isNarration = String(messageKind || "").trim() === "narration";
-  const speaker = isNarration
-    ? "场景提示"
-    : mode === "act"
-      ? session?.session_card?.controlled_character || "你"
-      : mode === "insert"
-        ? selfInsert.display_name || "你"
-        : "你";
-  const role = isNarration ? "scene" : mode === "observe" ? "director" : "user";
-  transcript.push({ speaker, message, role });
+  const transcript = stripFailedSendTranscript(Array.isArray(session?.transcript) ? session.transcript : []);
+  transcript.push(buildOptimisticUserTranscriptEntry(session, message, messageKind));
   transcript.push({ speaker: "", message: "正在生成回复...", role: "loading" });
   return transcript;
 }
@@ -1213,6 +1333,9 @@ window.runDetailActionsForDialogue = runDetailActionsForDialogue;
 window.renderRunFallbackForDialogue = renderRunFallbackForDialogue;
 window.ensureRunReadyForDialogue = ensureRunReadyForDialogue;
 window.buildOptimisticTranscript = buildOptimisticTranscript;
+window.buildFailedSendTranscript = buildFailedSendTranscript;
+window.stripFailedSendTranscript = stripFailedSendTranscript;
+window.showDialogueSendErrorModal = showDialogueSendErrorModal;
 window.latestSessionSnippetFromTranscript = latestSessionSnippetFromTranscript;
 window.renderDialogueSession = renderDialogueSession;
 window.loadRecentSessions = loadRecentSessions;

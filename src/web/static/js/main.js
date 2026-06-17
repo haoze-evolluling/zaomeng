@@ -2682,6 +2682,7 @@ const DIALOGUE_SUGGESTION_WAITING = "正在生成中...";
 const DIALOGUE_SUGGESTION_BUSY_LABEL = "…";
 const DIALOGUE_RETRY_FEEDBACK_DELAY_MS = 8000;
 const DIALOGUE_SEND_RETRY_MESSAGE = "这次响应稍慢，正在等待声源返回...";
+let composerDraftSnapshot = "";
 const DIALOGUE_SUGGEST_RETRY_MESSAGE = "这次生成稍慢，正在等待结果返回...";
 let currentDialogueSceneRecommendationCacheKey = "";
 let currentDialogueSceneRecommendationCachePayload = null;
@@ -3016,16 +3017,25 @@ function setComposerWaiting(waiting, message = "") {
   const suggestButton = el("suggest-turn-button");
   if (!area) return;
   if (waiting) {
-    area.value = message || DIALOGUE_PLACEHOLDER_WAITING;
+    if (!composerDraftSnapshot) {
+      composerDraftSnapshot = String(area.value || "");
+    }
     area.disabled = true;
+    area.placeholder = message || DIALOGUE_PLACEHOLDER_WAITING;
     if (sendButton) sendButton.disabled = true;
     if (suggestButton) suggestButton.disabled = true;
   } else {
     area.disabled = false;
     if (sendButton) sendButton.disabled = false;
     if (suggestButton) suggestButton.disabled = false;
-    area.value = message || "";
     updateDialogueMessagePlaceholder();
+    if (message) {
+      area.value = message;
+      composerDraftSnapshot = "";
+    } else if (composerDraftSnapshot) {
+      area.value = composerDraftSnapshot;
+      composerDraftSnapshot = "";
+    }
   }
   setQuickRepliesEnabled(!waiting);
   setObserveAutoUiState();
@@ -3125,7 +3135,15 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
     return false;
   }
 
-  const sessionSnapshot = currentDialogueSession ? JSON.parse(JSON.stringify(currentDialogueSession)) : null;
+  const sessionSnapshot = currentDialogueSession
+    ? JSON.parse(
+        JSON.stringify({
+          ...currentDialogueSession,
+          transcript: window.stripFailedSendTranscript(currentDialogueSession.transcript),
+        })
+      )
+    : null;
+  composerDraftSnapshot = message;
   const retryFeedbackTimer = window.setTimeout(() => {
     setComposerWaiting(true, DIALOGUE_SEND_RETRY_MESSAGE);
   }, DIALOGUE_RETRY_FEEDBACK_DELAY_MS);
@@ -3134,7 +3152,7 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
   if (currentDialogueSession && !silentOptimistic) {
     currentDialogueSession = {
       ...currentDialogueSession,
-      transcript: buildOptimisticTranscript(currentDialogueSession, message, messageKind),
+      transcript: window.buildOptimisticTranscript(currentDialogueSession, message, messageKind),
     };
     renderDialogueTranscript(currentDialogueSession);
     if (typeof UI_BRIDGE_TOOLS?.syncLegacyUiState === "function") {
@@ -3167,33 +3185,34 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
       )
     );
     window.clearTimeout(retryFeedbackTimer);
+    composerDraftSnapshot = "";
     setComposerWaiting(false, "");
+    setComposerDraft("", { publish: true });
     return true;
   } catch (error) {
     window.clearTimeout(retryFeedbackTimer);
-    if (sessionSnapshot) {
+    const errorText = String(error?.message || "").trim() || "这句话暂时没有送达。";
+    if (sessionSnapshot && !silentOptimistic) {
+      const failedSession = {
+        ...sessionSnapshot,
+        transcript: window.buildFailedSendTranscript(sessionSnapshot, message, messageKind, errorText),
+      };
+      currentDialogueSession = failedSession;
+      renderDialogueTranscript(failedSession);
       if (typeof UI_BRIDGE_TOOLS?.syncLegacyUiState === "function") {
-        UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-restore-local", {
+        UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-failed", {
           currentDialogueSessionId,
-          currentDialogueSession: sessionSnapshot,
-        });
-      } else {
-        currentDialogueSession = sessionSnapshot;
-      }
-      renderDialogueTranscript(sessionSnapshot);
-      if (typeof UI_BRIDGE_TOOLS?.syncLegacyUiState === "function") {
-        UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-restore", {
-          currentDialogueSessionId,
-          currentDialogueSession: sessionSnapshot,
+          currentDialogueSession: failedSession,
         });
       } else if (typeof publishLegacyUiState === "function") {
-        publishLegacyUiState("dialogue-session-restore", {
+        publishLegacyUiState("dialogue-session-failed", {
           currentDialogueSessionId,
-          currentDialogueSession: sessionSnapshot,
+          currentDialogueSession: failedSession,
         });
       }
     }
-    setComposerWaiting(false, error.message || "这句话暂时没有送达。");
+    setComposerWaiting(false, "");
+    setComposerDraft(composerDraftSnapshot || message, { publish: true });
     return false;
   }
 }
