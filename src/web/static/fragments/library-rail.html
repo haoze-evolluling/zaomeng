@@ -13,7 +13,15 @@
         <p class="eyebrow">最近篇章</p>
         <h2>最近会话</h2>
       </div>
-      <button id="new-dialogue-session-button" type="button" class="ghost-button">新开一局</button>
+      <div class="section-head-actions">
+        <button id="sidebar-session-select-button" type="button" class="ghost-button">选择</button>
+        <button id="new-dialogue-session-button" type="button" class="ghost-button">新开一局</button>
+      </div>
+    </div>
+    <div id="sidebar-session-toolbar" class="session-select-toolbar hidden" hidden>
+      <button id="sidebar-session-select-all-button" type="button" class="ghost-button">全选</button>
+      <button id="sidebar-session-delete-selected-button" type="button" class="ghost-button session-delete-selected-button" disabled>删除所选</button>
+      <button id="sidebar-session-cancel-select-button" type="button" class="ghost-button">取消</button>
     </div>
     <div id="sidebar-session-list" class="session-list"></div>
   </section>

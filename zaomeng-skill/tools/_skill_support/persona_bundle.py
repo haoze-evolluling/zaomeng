@@ -344,10 +344,10 @@ def normalize_profile(profile: Dict[str, Any], *, source_hint: Path | None = Non
     }
 
     if source_hint is not None:
-        if not normalized.get("name"):
-            normalized["name"] = source_hint.parent.name if source_hint.name.startswith("PROFILE") else source_hint.stem
-        if not normalized.get("novel_id") and len(source_hint.parts) >= 2:
-            normalized["novel_id"] = source_hint.parent.parent.name if source_hint.name.startswith("PROFILE") else ""
+        if not normalized.get("name") and source_hint.name.startswith("PROFILE"):
+            normalized["name"] = source_hint.parent.name
+        if not normalized.get("novel_id") and source_hint.name.startswith("PROFILE") and len(source_hint.parts) >= 2:
+            normalized["novel_id"] = source_hint.parent.parent.name
         if not normalized.get("source_path"):
             normalized["source_path"] = ""
 
@@ -422,12 +422,17 @@ def load_existing_persona_bundle(persona_dir: str | Path) -> dict[str, Any]:
     return normalize_profile(merged, source_hint=root / "PROFILE.generated.md")
 
 
+def merge_persona_profiles(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    return _merge_normalized_profiles(base, incoming)
+
+
 def materialize_persona_bundle(
     persona_dir: str | Path,
     profile: Dict[str, Any],
     *,
     default_nav_load_order: Iterable[str] = DEFAULT_NAV_LOAD_ORDER,
     persona_file_catalog: Dict[str, Dict[str, Any]] = PERSONA_FILE_CATALOG,
+    sync_editable: bool = False,
 ) -> Path:
     target_dir = ensure_dir(persona_dir)
     profile = normalize_profile(profile)
@@ -435,7 +440,7 @@ def materialize_persona_bundle(
     profile_content = render_profile_md(profile)
     (target_dir / "PROFILE.generated.md").write_text(profile_content, encoding="utf-8")
     editable_profile = target_dir / "PROFILE.md"
-    if not editable_profile.exists():
+    if sync_editable or not editable_profile.exists():
         editable_profile.write_text(profile_content, encoding="utf-8")
 
     bundle = {
@@ -460,7 +465,7 @@ def materialize_persona_bundle(
         generated = target_dir / f"{base_name}.generated.md"
         generated.write_text(content, encoding="utf-8")
         editable = target_dir / f"{base_name}.md"
-        if not editable.exists():
+        if sync_editable or not editable.exists():
             editable.write_text(content, encoding="utf-8")
 
     refresh_persona_navigation(
@@ -483,10 +488,17 @@ def _merge_normalized_profiles(base: dict[str, Any], incoming: dict[str, Any]) -
         return dict(incoming)
 
     merged = dict(base)
+    identity_locked = {key: str(merged.get(key, "")).strip() for key in ("name", "novel_id", "source_path")}
     for key in SCALAR_FIELDS:
+        if key in identity_locked and identity_locked[key]:
+            continue
         value = str(incoming.get(key, "")).strip()
-        if value:
-            merged[key] = value
+        if not value:
+            continue
+        existing_value = str(merged.get(key, "")).strip()
+        if _is_weak_profile_scalar(value) and existing_value and not _is_weak_profile_scalar(existing_value):
+            continue
+        merged[key] = value
     for key in LIST_FIELDS:
         values = split_scalar_list(incoming.get(key, []))
         if not values:
@@ -554,6 +566,18 @@ def _merge_normalized_profiles(base: dict[str, Any], incoming: dict[str, Any]) -
         }
     merged["arc_confidence"] = max(_coerce_int(merged.get("arc_confidence", 0)), _coerce_int(incoming.get("arc_confidence", 0)))
     return merged
+
+
+def _is_weak_profile_scalar(value: Any) -> bool:
+    text = re.sub(r"\s+", "", str(value or "").strip())
+    return text in {
+        "证据不足",
+        "资料不足",
+        "信息不足",
+        "暂无资料",
+        "暂缺",
+        "待补充",
+    }
 
 
 def _merge_unique(base: list[str], incoming: list[str]) -> list[str]:

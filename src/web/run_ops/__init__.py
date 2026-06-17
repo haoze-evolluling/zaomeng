@@ -4,7 +4,7 @@ from .creation import (
     build_initial_run_manifest,
     ensure_run_workspace,
 )
-from .library import delete_run_group, list_recent_sessions, list_runs
+from .library import delete_run_group, delete_sessions, list_recent_sessions, list_runs
 from .model_settings import build_model_settings_response, normalize_model_settings, validate_model_settings
 from .packages import (
     PACKAGE_SUFFIX,
@@ -46,6 +46,7 @@ __all__ = [
     "classify_requested_characters",
     "decode_base64_text",
     "delete_run_group",
+    "delete_sessions",
     "ensure_run_workspace",
     "estimate_text_length",
     "export_run_package",

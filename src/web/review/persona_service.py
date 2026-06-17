@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from src.web.artifacts.ingest import load_persona_bundle
+
 
 def _normalize_review_source(fields: dict[str, Any]) -> str:
     return str(fields.get("review_source", "") or "").strip()
@@ -61,9 +63,17 @@ def get_persona_review_payload(
     read_persona_review_fields: Callable[[dict[str, Any]], dict[str, str]],
 ) -> dict[str, Any]:
     editable_path, generated_path, source_path = resolve_persona_review_source(persona_dir)
-    if not source_path.exists():
-        raise FileNotFoundError(character)
-    profile = load_profile_source(source_path)
+    if persona_dir.exists():
+        try:
+            profile = load_persona_bundle(persona_dir)
+        except FileNotFoundError:
+            profile = None
+    else:
+        profile = None
+    if profile is None:
+        if not source_path.exists():
+            raise FileNotFoundError(character)
+        profile = load_profile_source(source_path)
     return {
         "run_id": run_id,
         "character": str(profile.get("name", "")).strip() or character,

@@ -97,6 +97,15 @@ class SuggestPersonaFieldRequest(BaseModel):
     field: str = Field(..., min_length=1)
 
 
+class SessionRef(BaseModel):
+    run_id: str = Field(..., min_length=1)
+    session_id: str = Field(..., min_length=1)
+
+
+class DeleteSessionsRequest(BaseModel):
+    items: list[SessionRef] = Field(..., min_length=1)
+
+
 class UpdateRelationDetailRequest(BaseModel):
     trust: int | None = Field(default=None, ge=0, le=10)
     affection: int | None = Field(default=None, ge=0, le=10)

@@ -1206,6 +1206,67 @@ function syncModalScrollLock() {
   document.body.classList.toggle("modal-open", hasVisibleModal);
 }
 
+let appConfirmResolver = null;
+
+function closeAppConfirmModal(result = false) {
+  toggle("app-confirm-modal", false);
+  syncModalScrollLock();
+  if (appConfirmResolver) {
+    const resolve = appConfirmResolver;
+    appConfirmResolver = null;
+    resolve(Boolean(result));
+  }
+}
+
+function showAppConfirm(options = {}) {
+  const message = String(options.message || "").trim();
+  const fallback = String(options.fallbackMessage || "确定吗？").trim();
+  const modal = el("app-confirm-modal");
+  if (!modal) {
+    return Promise.resolve(window.confirm(message || fallback));
+  }
+  const titleNode = el("app-confirm-modal-title");
+  const messageNode = el("app-confirm-modal-message");
+  const confirmButton = el("app-confirm-modal-confirm");
+  const cancelButton = el("app-confirm-modal-cancel");
+  if (titleNode) {
+    titleNode.textContent = String(options.title || "确认操作").trim();
+  }
+  if (messageNode) {
+    messageNode.textContent = message || fallback;
+  }
+  if (confirmButton) {
+    confirmButton.textContent = String(options.confirmText || "确认").trim();
+    confirmButton.classList.toggle("app-confirm-danger-button", Boolean(options.danger));
+  }
+  if (cancelButton) {
+    cancelButton.textContent = String(options.cancelText || "取消").trim();
+  }
+  toggle("app-confirm-modal", true);
+  syncModalScrollLock();
+  return new Promise((resolve) => {
+    appConfirmResolver = resolve;
+  });
+}
+
+function initAppConfirmModal() {
+  const backdrop = el("app-confirm-modal-backdrop");
+  const cancelButton = el("app-confirm-modal-cancel");
+  const confirmButton = el("app-confirm-modal-confirm");
+  if (backdrop && !backdrop.dataset.bound) {
+    backdrop.dataset.bound = "1";
+    backdrop.addEventListener("click", () => closeAppConfirmModal(false));
+  }
+  if (cancelButton && !cancelButton.dataset.bound) {
+    cancelButton.dataset.bound = "1";
+    cancelButton.addEventListener("click", () => closeAppConfirmModal(false));
+  }
+  if (confirmButton && !confirmButton.dataset.bound) {
+    confirmButton.dataset.bound = "1";
+    confirmButton.addEventListener("click", () => closeAppConfirmModal(true));
+  }
+}
+
 function findRunById(runId) {
   return allRuns.find((item) => item.run_id === runId) || null;
 }

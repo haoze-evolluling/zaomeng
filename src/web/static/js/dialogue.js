@@ -5,6 +5,8 @@ if (existingDialogueModule?.initialized) {
 }
 const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
 let lastAutoSceneRecommendationKey = "";
+let sessionSelectionMode = false;
+const selectedSessionKeys = new Set();
 
 function scrollTranscriptToBottom() {
   const root = el("dialogue-transcript");
@@ -1049,9 +1051,174 @@ async function renderDialogueSession(session) {
   el("dialogue-message")?.focus();
 }
 
+function sessionListItemKey(item) {
+  const runId = String(item?.run_id || "").trim();
+  const sessionId = String(item?.session_id || "").trim();
+  if (!runId || !sessionId) return "";
+  return `${runId}::${sessionId}`;
+}
+
+function updateSessionSelectionToolbar() {
+  const toolbar = el("sidebar-session-toolbar");
+  const deleteButton = el("sidebar-session-delete-selected-button");
+  const selectButton = el("sidebar-session-select-button");
+  const selectAllButton = el("sidebar-session-select-all-button");
+  const count = selectedSessionKeys.size;
+  if (toolbar) {
+    toolbar.hidden = !sessionSelectionMode;
+    toolbar.classList.toggle("hidden", !sessionSelectionMode);
+  }
+  if (deleteButton) {
+    deleteButton.disabled = count === 0;
+    deleteButton.textContent = count > 0 ? `删除所选 (${count})` : "删除所选";
+  }
+  if (selectButton) {
+    selectButton.textContent = sessionSelectionMode ? "完成" : "选择";
+  }
+  if (selectAllButton) {
+    const visibleKeys = getVisibleSessionKeys();
+    const allSelected = visibleKeys.length > 0 && visibleKeys.every((key) => selectedSessionKeys.has(key));
+    selectAllButton.textContent = allSelected ? "取消全选" : "全选";
+  }
+}
+
+function setSessionSelectionMode(enabled) {
+  sessionSelectionMode = Boolean(enabled);
+  if (!sessionSelectionMode) {
+    selectedSessionKeys.clear();
+  }
+  updateSessionSelectionToolbar();
+  loadRecentSessions().catch((error) => console.warn("loadRecentSessions failed", error));
+}
+
+function toggleSessionSelectionMode() {
+  setSessionSelectionMode(!sessionSelectionMode);
+}
+
+function getVisibleSessionKeys() {
+  const keys = [];
+  document.querySelectorAll("#sidebar-session-list .session-row").forEach((row) => {
+    const key = String(row.getAttribute("data-session-key") || "").trim();
+    if (key) keys.push(key);
+  });
+  return keys;
+}
+
+function toggleSessionSelection(key) {
+  const normalized = String(key || "").trim();
+  if (!normalized) return;
+  if (selectedSessionKeys.has(normalized)) {
+    selectedSessionKeys.delete(normalized);
+  } else {
+    selectedSessionKeys.add(normalized);
+  }
+  updateSessionSelectionToolbar();
+  document.querySelectorAll("#sidebar-session-list .session-row").forEach((row) => {
+    const rowKey = String(row.getAttribute("data-session-key") || "").trim();
+    const checkbox = row.querySelector(".session-select-checkbox");
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.checked = selectedSessionKeys.has(rowKey);
+    }
+    row.classList.toggle("session-row-selected", selectedSessionKeys.has(rowKey));
+  });
+}
+
+function toggleAllVisibleSessions() {
+  const visibleKeys = getVisibleSessionKeys();
+  if (!visibleKeys.length) return;
+  const allSelected = visibleKeys.every((key) => selectedSessionKeys.has(key));
+  if (allSelected) {
+    visibleKeys.forEach((key) => selectedSessionKeys.delete(key));
+  } else {
+    visibleKeys.forEach((key) => selectedSessionKeys.add(key));
+  }
+  updateSessionSelectionToolbar();
+  document.querySelectorAll("#sidebar-session-list .session-row").forEach((row) => {
+    const rowKey = String(row.getAttribute("data-session-key") || "").trim();
+    const checkbox = row.querySelector(".session-select-checkbox");
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.checked = selectedSessionKeys.has(rowKey);
+    }
+    row.classList.toggle("session-row-selected", selectedSessionKeys.has(rowKey));
+  });
+}
+
+async function deleteSelectedSessions() {
+  if (!selectedSessionKeys.size) return;
+  const count = selectedSessionKeys.size;
+  const confirmed = await (typeof showAppConfirm === "function"
+    ? showAppConfirm({
+        title: "删除会话",
+        message: `确定删除选中的 ${count} 个会话吗？删除后无法恢复。`,
+        confirmText: "删除",
+        cancelText: "取消",
+        danger: true,
+      })
+    : Promise.resolve(window.confirm(`确定删除选中的 ${count} 个会话吗？`)));
+  if (!confirmed) return;
+  const items = [...selectedSessionKeys].map((key) => {
+    const [run_id, session_id] = key.split("::");
+    return { run_id, session_id };
+  });
+  const currentKey = sessionListItemKey({
+    run_id: currentRunId,
+    session_id: currentDialogueSessionId,
+  });
+  try {
+    await apiJson(
+      "/api/web/sessions",
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      },
+      "删除会话失败。"
+    );
+    if (currentKey && selectedSessionKeys.has(currentKey)) {
+      resetDialogueView();
+      updateWorkflowState();
+    }
+    selectedSessionKeys.clear();
+    sessionSelectionMode = false;
+    updateSessionSelectionToolbar();
+    await loadRecentSessions();
+  } catch (error) {
+    window.alert(error.message || "删除会话失败。");
+  }
+}
+
+function bindSessionSelectionControls() {
+  const selectButton = el("sidebar-session-select-button");
+  if (selectButton && !selectButton.dataset.bound) {
+    selectButton.dataset.bound = "1";
+    selectButton.addEventListener("click", () => {
+      setSessionSelectionMode(!sessionSelectionMode);
+    });
+  }
+  const selectAllButton = el("sidebar-session-select-all-button");
+  if (selectAllButton && !selectAllButton.dataset.bound) {
+    selectAllButton.dataset.bound = "1";
+    selectAllButton.addEventListener("click", () => toggleAllVisibleSessions());
+  }
+  const deleteButton = el("sidebar-session-delete-selected-button");
+  if (deleteButton && !deleteButton.dataset.bound) {
+    deleteButton.dataset.bound = "1";
+    deleteButton.addEventListener("click", () => {
+      deleteSelectedSessions().catch((error) => console.warn("deleteSelectedSessions failed", error));
+    });
+  }
+  const cancelButton = el("sidebar-session-cancel-select-button");
+  if (cancelButton && !cancelButton.dataset.bound) {
+    cancelButton.dataset.bound = "1";
+    cancelButton.addEventListener("click", () => setSessionSelectionMode(false));
+  }
+  updateSessionSelectionToolbar();
+}
+
 async function loadRecentSessions() {
   const root = el("sidebar-session-list");
   if (!root) return;
+  bindSessionSelectionControls();
   const requestId = ++recentSessionsRequestId;
   const data = await apiJson("/api/web/sessions");
   if (requestId !== recentSessionsRequestId) return;
@@ -1072,6 +1239,7 @@ async function loadRecentSessions() {
   root.innerHTML = "";
   if (!deduped.length) {
     root.innerHTML = '<p class="sidebar-text">还没有停留下来的篇章。</p>';
+    updateSessionSelectionToolbar();
     return;
   }
 
@@ -1093,8 +1261,13 @@ async function loadRecentSessions() {
     section.appendChild(title);
 
     sessions.forEach((item) => {
+      const itemKey = sessionListItemKey(item);
       const row = document.createElement("div");
       row.className = "session-row";
+      if (sessionSelectionMode && selectedSessionKeys.has(itemKey)) {
+        row.classList.add("session-row-selected");
+      }
+      row.setAttribute("data-session-key", itemKey);
       row.style.position = "relative";
       row.style.display = "block";
       row.style.minWidth = "0";
@@ -1109,7 +1282,8 @@ async function loadRecentSessions() {
       button.style.width = "100%";
       button.style.minWidth = "0";
       button.style.padding = "0.8rem 0.9rem";
-      button.style.paddingRight = "2.8rem";
+      button.style.paddingRight = sessionSelectionMode ? "0.9rem" : "2.8rem";
+      button.style.paddingLeft = sessionSelectionMode ? "2.2rem" : "0.9rem";
       button.style.textAlign = "left";
       button.style.overflow = "hidden";
       const title = document.createElement("span");
@@ -1157,6 +1331,10 @@ async function loadRecentSessions() {
       button.appendChild(mode);
       button.appendChild(meta);
       button.addEventListener("click", async () => {
+        if (sessionSelectionMode) {
+          toggleSessionSelection(itemKey);
+          return;
+        }
         const previousRunId = currentRunId;
         const previousRun = currentRun;
         const previousSessionId = currentDialogueSessionId;
@@ -1239,6 +1417,22 @@ async function loadRecentSessions() {
         }
       });
 
+      if (sessionSelectionMode) {
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "session-select-checkbox";
+        checkbox.checked = selectedSessionKeys.has(itemKey);
+        checkbox.setAttribute("aria-label", "选择会话");
+        checkbox.addEventListener("click", (event) => {
+          event.stopPropagation();
+          toggleSessionSelection(itemKey);
+        });
+        row.appendChild(checkbox);
+        row.appendChild(button);
+        section.appendChild(row);
+        return;
+      }
+
       const removeButton = document.createElement("button");
       removeButton.type = "button";
       removeButton.className = "session-delete-button";
@@ -1257,7 +1451,16 @@ async function loadRecentSessions() {
       removeButton.style.transition = "opacity 160ms ease, transform 160ms ease";
       removeButton.addEventListener("click", async (event) => {
         event.stopPropagation();
-        if (!window.confirm("确定删除这个会话吗？")) return;
+        const confirmed = await (typeof showAppConfirm === "function"
+          ? showAppConfirm({
+              title: "删除会话",
+              message: "确定删除这个会话吗？删除后无法恢复。",
+              confirmText: "删除",
+              cancelText: "取消",
+              danger: true,
+            })
+          : Promise.resolve(window.confirm("确定删除这个会话吗？")));
+        if (!confirmed) return;
         try {
           await apiJson(
             `/api/web/runs/${item.run_id}/dialogue/sessions/${item.session_id}`,
@@ -1301,6 +1504,7 @@ async function loadRecentSessions() {
   root.replaceChildren(fragment);
   applySessionListViewportLock();
   syncSidebarSelection();
+  updateSessionSelectionToolbar();
 }
 
 async function loadLatestRun() {
@@ -1340,6 +1544,12 @@ window.latestSessionSnippetFromTranscript = latestSessionSnippetFromTranscript;
 window.renderDialogueSession = renderDialogueSession;
 window.loadRecentSessions = loadRecentSessions;
 window.loadLatestRun = loadLatestRun;
+window.bindSessionSelectionControls = bindSessionSelectionControls;
+window.setSessionSelectionMode = setSessionSelectionMode;
+window.toggleSessionSelectionMode = toggleSessionSelectionMode;
+window.deleteSelectedSessions = deleteSelectedSessions;
+window.toggleAllVisibleSessions = toggleAllVisibleSessions;
+bindSessionSelectionControls();
 window.__ZAOMENG_DIALOGUE_MODULE__ = {
   initialized: true,
   version: String(window.__ZAOMENG_WEB_UI_VERSION__ || ""),

@@ -2682,7 +2682,6 @@ const DIALOGUE_SUGGESTION_WAITING = "正在生成中...";
 const DIALOGUE_SUGGESTION_BUSY_LABEL = "…";
 const DIALOGUE_RETRY_FEEDBACK_DELAY_MS = 8000;
 const DIALOGUE_SEND_RETRY_MESSAGE = "这次响应稍慢，正在等待声源返回...";
-let composerDraftSnapshot = "";
 const DIALOGUE_SUGGEST_RETRY_MESSAGE = "这次生成稍慢，正在等待结果返回...";
 let currentDialogueSceneRecommendationCacheKey = "";
 let currentDialogueSceneRecommendationCachePayload = null;
@@ -3017,10 +3016,7 @@ function setComposerWaiting(waiting, message = "") {
   const suggestButton = el("suggest-turn-button");
   if (!area) return;
   if (waiting) {
-    if (!composerDraftSnapshot) {
-      composerDraftSnapshot = String(area.value || "");
-    }
-    area.disabled = true;
+    area.disabled = false;
     area.placeholder = message || DIALOGUE_PLACEHOLDER_WAITING;
     if (sendButton) sendButton.disabled = true;
     if (suggestButton) suggestButton.disabled = true;
@@ -3031,10 +3027,6 @@ function setComposerWaiting(waiting, message = "") {
     updateDialogueMessagePlaceholder();
     if (message) {
       area.value = message;
-      composerDraftSnapshot = "";
-    } else if (composerDraftSnapshot) {
-      area.value = composerDraftSnapshot;
-      composerDraftSnapshot = "";
     }
   }
   setQuickRepliesEnabled(!waiting);
@@ -3143,7 +3135,7 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
         })
       )
     : null;
-  composerDraftSnapshot = message;
+  setComposerDraft("", { publish: true, focus: true });
   const retryFeedbackTimer = window.setTimeout(() => {
     setComposerWaiting(true, DIALOGUE_SEND_RETRY_MESSAGE);
   }, DIALOGUE_RETRY_FEEDBACK_DELAY_MS);
@@ -3185,7 +3177,6 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
       )
     );
     window.clearTimeout(retryFeedbackTimer);
-    composerDraftSnapshot = "";
     setComposerWaiting(false, "");
     setComposerDraft("", { publish: true });
     return true;
@@ -3212,7 +3203,6 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
       }
     }
     setComposerWaiting(false, "");
-    setComposerDraft(composerDraftSnapshot || message, { publish: true });
     return false;
   }
 }
@@ -3349,6 +3339,9 @@ async function handleSuggestTurn(event) {
 }
 
 function bindEvents() {
+  if (typeof initAppConfirmModal === "function") {
+    initAppConfirmModal();
+  }
   bind("open-bookshelf-button", "click", showBookshelfHome);
   bind("open-settings-button", "click", openSettingsModal);
   bind("open-settings-primary", "click", openSettingsModal);

@@ -6,7 +6,7 @@ from typing import Any, Callable
 from src.utils.file_utils import safe_filename
 from src.skill_support.prompt_payloads import build_distill_prompt_payload
 from src.skill_support.prompt_payloads import build_relation_prompt_payload
-from src.web.artifacts import load_profile_source
+from src.web.artifacts import load_profile_source, load_persona_bundle
 from src.web.review import read_persona_review_fields, resolve_persona_review_source, summarize_redistill_character_change
 
 
@@ -44,11 +44,14 @@ def process_distill_character(
     persona_dir = run_dir / "artifacts" / "characters" / novel_id / safe_filename(character)
     if persona_dir.exists():
         try:
-            _, _, previous_source_path = resolve_persona_review_source(persona_dir)
-            if previous_source_path.exists():
-                previous_review_fields = read_persona_review_fields(load_profile_source(previous_source_path))
+            previous_review_fields = read_persona_review_fields(load_persona_bundle(persona_dir))
         except Exception:
-            previous_review_fields = {}
+            try:
+                _, _, previous_source_path = resolve_persona_review_source(persona_dir)
+                if previous_source_path.exists():
+                    previous_review_fields = read_persona_review_fields(load_profile_source(previous_source_path))
+            except Exception:
+                previous_review_fields = {}
 
     assert_run_not_stopped(manifest_path, current_character=character)
     on_distill("drafting_character", {"character": character})
@@ -126,15 +129,18 @@ def process_distill_character(
 
     assert_run_not_stopped(manifest_path, current_character=character)
     on_distill("materializing_character", {"character": character})
-    current_review_fields = read_persona_review_fields(load_profile_source(source_path))
+    materialized = materialize_profile_source(
+        source_path,
+        run_dir / "artifacts" / "characters" / novel_id / safe_filename(character),
+    )
+    try:
+        current_review_fields = read_persona_review_fields(load_persona_bundle(materialized["persona_dir"]))
+    except Exception:
+        current_review_fields = read_persona_review_fields(load_profile_source(source_path))
     change_summary = summarize_redistill_character_change(
         character=character,
         previous_fields=previous_review_fields,
         next_fields=current_review_fields,
-    )
-    materialized = materialize_profile_source(
-        source_path,
-        run_dir / "artifacts" / "characters" / novel_id / safe_filename(character),
     )
     aggregates["character_dirs"][materialized["character"]] = materialized["persona_dir"]
 
