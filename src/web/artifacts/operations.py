@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from src.utils.file_utils import safe_filename
+from src.utils.file_utils import coerce_int, safe_filename
 from src.web.artifacts.ingest import decode_text_content
 
 
@@ -118,14 +118,14 @@ def list_relation_details(
             {
                 "pair_key": pair_key,
                 "characters": [left, right],
-                "trust": int(relation.get("trust", 0) or 0),
-                "affection": int(relation.get("affection", 0) or 0),
-                "hostility": int(relation.get("hostility", 0) or 0),
+                "trust": coerce_int(relation.get("trust"), 0, min_value=0, max_value=10),
+                "affection": coerce_int(relation.get("affection"), 0, min_value=0, max_value=10),
+                "hostility": coerce_int(relation.get("hostility"), 0, min_value=0, max_value=10),
                 "relationship_type": relation_type_label(relation),
                 "relation_change": str(relation.get("relation_change", "")).strip(),
                 "conflict_point": str(relation.get("conflict_point", "")).strip(),
                 "typical_interaction": str(relation.get("typical_interaction", "")).strip(),
-                "ambiguity": int(relation.get("ambiguity", 3) or 3),
+                "ambiguity": coerce_int(relation.get("ambiguity"), 3, min_value=0, max_value=10),
                 "evidence_lines": coerce_relation_evidence(relation),
             }
         )

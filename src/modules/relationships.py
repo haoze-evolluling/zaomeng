@@ -22,7 +22,7 @@ from src.core.contracts import (
 from src.core.relation_store import MarkdownRelationStore
 from src.core.relation_visualization_exporter import MermaidRelationVisualizationExporter
 from src.modules.distillation import NovelDistiller
-from src.utils.file_utils import novel_id_from_input, save_markdown_data
+from src.utils.file_utils import coerce_int, novel_id_from_input, save_markdown_data
 from src.utils.text_parser import load_novel_text, split_sentences
 from src.utils.token_counter import TokenCounter
 
@@ -404,9 +404,9 @@ class RelationshipExtractor:
             if len(names) != 2:
                 continue
             left, right = names
-            trust = int(payload.get("trust", 5))
-            affection = int(payload.get("affection", 5))
-            hostility = int(payload.get("hostility", max(0, 5 - affection)))
+            trust = coerce_int(payload.get("trust"), 5, min_value=0, max_value=10)
+            affection = coerce_int(payload.get("affection"), 5, min_value=0, max_value=10)
+            hostility = coerce_int(payload.get("hostility"), max(0, 5 - affection), min_value=0, max_value=10)
             closeness = self._closeness_score(trust, affection)
             label = f"T{trust} A{affection} H{hostility}"
             lines.append(f"    {self._graph_id(left)}[{left}] ---|{label}| {self._graph_id(right)}[{right}]")
@@ -450,10 +450,10 @@ class RelationshipExtractor:
         node_styles = node_styles or {}
         rows: List[str] = []
         for pair_key, payload in sorted(relations.items()):
-            trust = int(payload.get("trust", 5))
-            affection = int(payload.get("affection", 5))
-            hostility = int(payload.get("hostility", 0))
-            power_gap = int(payload.get("power_gap", 0))
+            trust = coerce_int(payload.get("trust"), 5, min_value=0, max_value=10)
+            affection = coerce_int(payload.get("affection"), 5, min_value=0, max_value=10)
+            hostility = coerce_int(payload.get("hostility"), 0, min_value=0, max_value=10)
+            power_gap = coerce_int(payload.get("power_gap"), 0)
             closeness = self._closeness_score(trust, affection)
             conflict = html.escape(str(payload.get("conflict_point", "")))
             interaction = html.escape(str(payload.get("typical_interaction", "")))
@@ -517,7 +517,9 @@ class RelationshipExtractor:
             for _, style in unique_categories
         )
         category_legend_html = category_legend or '<span class="legend-item">暂无阵营/角色元数据</span>'
-        conflict_count = sum(1 for payload in relations.values() if int(payload.get("hostility", 0)) >= 6)
+        conflict_count = sum(
+            1 for payload in relations.values() if coerce_int(payload.get("hostility"), 0, min_value=0, max_value=10) >= 6
+        )
         runtime_script_tag = (
             f"  <script src=\"{html.escape(mermaid_runtime_filename)}\"></script>\n"
             "  <script>\n"
@@ -582,7 +584,7 @@ class RelationshipExtractor:
             f"    <div class=\"subtitle\">共 {relation_count} 条关系。节点颜色优先按阵营，其次按角色类型；绿色边偏信任，红色边偏冲突，线越粗表示关系越亲密。</div>\n"
             "    <div class=\"summary\">\n"
             f"      <div class=\"stat\"><span class=\"stat-label\">Relations</span><span class=\"stat-value\">{relation_count}</span></div>\n"
-            f"      <div class=\"stat\"><span class=\"stat-label\">High Trust</span><span class=\"stat-value\">{sum(1 for payload in relations.values() if int(payload.get('trust', 5)) >= 7)}</span></div>\n"
+            f"      <div class=\"stat\"><span class=\"stat-label\">High Trust</span><span class=\"stat-value\">{sum(1 for payload in relations.values() if coerce_int(payload.get('trust'), 5, min_value=0, max_value=10) >= 7)}</span></div>\n"
             f"      <div class=\"stat\"><span class=\"stat-label\">High Conflict</span><span class=\"stat-value\">{conflict_count}</span></div>\n"
             f"      <div class=\"stat\"><span class=\"stat-label\">Node Groups</span><span class=\"stat-value\">{max(1, len(unique_categories))}</span></div>\n"
             "    </div>\n"

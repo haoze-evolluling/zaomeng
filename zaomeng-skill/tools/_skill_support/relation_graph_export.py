@@ -150,6 +150,38 @@ def _coerce_value(value: str) -> Any:
     return value
 
 
+def _safe_int(
+    value: Any,
+    default: int,
+    *,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    if isinstance(value, bool):
+        parsed = int(value)
+    elif isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        parsed = int(round(value))
+    elif value is None:
+        parsed = default
+    else:
+        text = str(value).strip()
+        if not text or text in {".", "..", "...", "…"}:
+            parsed = default
+        else:
+            try:
+                parsed = int(text)
+            except ValueError:
+                match = re.search(r"-?\d+", text)
+                parsed = int(match.group(0)) if match else default
+    if min_value is not None:
+        parsed = max(min_value, parsed)
+    if max_value is not None:
+        parsed = min(max_value, parsed)
+    return parsed
+
+
 def _novel_id_from_name(name: str) -> str:
     text = str(name or "").strip()
     text = re.sub(r"(?i)_?relations?$", "", text).strip("_- ")
@@ -173,9 +205,9 @@ def _build_relation_entries(relations: dict[str, dict[str, Any]]) -> list[dict[s
         names = pair_key.split("_")
         if len(names) != 2:
             continue
-        trust = int(payload.get("trust", 5))
-        affection = int(payload.get("affection", 5))
-        hostility = int(payload.get("hostility", max(0, 5 - affection)))
+        trust = _safe_int(payload.get("trust"), 5, min_value=0, max_value=10)
+        affection = _safe_int(payload.get("affection"), 5, min_value=0, max_value=10)
+        hostility = _safe_int(payload.get("hostility"), max(0, 5 - affection), min_value=0, max_value=10)
         hidden_attitude = str(payload.get("hidden_attitude", "")).strip()
         conflict_point = str(payload.get("conflict_point", "")).strip()
         interaction = str(payload.get("typical_interaction", "")).strip()
@@ -188,15 +220,15 @@ def _build_relation_entries(relations: dict[str, dict[str, Any]]) -> list[dict[s
             hidden_attitude,
         )
         intensity = _intensity_score(trust, affection, hostility)
-        stability_score = _stability_score(evolution, int(payload.get("confidence", 6)), hidden_attitude)
+        stability_score = _stability_score(evolution, _safe_int(payload.get("confidence"), 6, min_value=0, max_value=10), hidden_attitude)
         entries.append(
             {
                 "key": pair_key,
                 "trust": trust,
                 "affection": affection,
                 "hostility": hostility,
-                "power_gap": int(payload.get("power_gap", 0)),
-                "confidence": int(payload.get("confidence", 6)),
+                "power_gap": _safe_int(payload.get("power_gap"), 0),
+                "confidence": _safe_int(payload.get("confidence"), 6, min_value=0, max_value=10),
                 "relationship_type": relation_type,
                 "intensity": intensity,
                 "stability_label": _stability_label(stability_score),
@@ -404,9 +436,9 @@ def _render_mermaid_graph(
         if len(names) != 2:
             continue
         left, right = names
-        trust = int(payload.get("trust", 5))
-        affection = int(payload.get("affection", 5))
-        hostility = int(payload.get("hostility", max(0, 5 - affection)))
+        trust = _safe_int(payload.get("trust"), 5, min_value=0, max_value=10)
+        affection = _safe_int(payload.get("affection"), 5, min_value=0, max_value=10)
+        hostility = _safe_int(payload.get("hostility"), max(0, 5 - affection), min_value=0, max_value=10)
         closeness = _closeness_score(trust, affection)
         hidden_attitude = str(payload.get("hidden_attitude", "")).strip()
         relation_type = str(payload.get("relationship_type", "")).strip() or _infer_relationship_type(
@@ -418,7 +450,7 @@ def _render_mermaid_graph(
         )
         evolution = str(payload.get("relation_change", "")).strip() or _infer_evolution(trust, affection, hostility)
         intensity = _intensity_score(trust, affection, hostility)
-        stability_score = _stability_score(evolution, int(payload.get("confidence", 6)), hidden_attitude)
+        stability_score = _stability_score(evolution, _safe_int(payload.get("confidence"), 6, min_value=0, max_value=10), hidden_attitude)
         label = f"信{trust} 情{affection} 冲{hostility}"
         left_id = node_ids.setdefault(left, _graph_id(left, len(node_ids)))
         right_id = node_ids.setdefault(right, _graph_id(right, len(node_ids)))

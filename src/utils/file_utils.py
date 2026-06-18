@@ -182,3 +182,36 @@ def find_character_file(
         matches.extend(root.glob(f"{dirname}/PROFILE.md"))
         matches.extend(root.glob(f"*/{dirname}/PROFILE.md"))
     return sorted({path.resolve() for path in matches})
+
+
+def coerce_int(
+    value: Any,
+    default: int = 0,
+    *,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    """Parse relation-style metrics from ints, floats, or noisy LLM strings."""
+    if isinstance(value, bool):
+        parsed = int(value)
+    elif isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        parsed = int(round(value))
+    elif value is None:
+        parsed = default
+    else:
+        text = str(value).strip()
+        if not text or text in {".", "..", "...", "…"}:
+            parsed = default
+        else:
+            try:
+                parsed = int(text)
+            except ValueError:
+                match = re.search(r"-?\d+", text)
+                parsed = int(match.group(0)) if match else default
+    if min_value is not None:
+        parsed = max(min_value, parsed)
+    if max_value is not None:
+        parsed = min(max_value, parsed)
+    return parsed
