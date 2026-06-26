@@ -134,8 +134,14 @@ function updateWorkflowState() {
   syncTopbar();
   if (typeof window.__ZAOMENG_UI_BRIDGE_TOOLS__?.syncLegacyUiState === "function") {
     window.__ZAOMENG_UI_BRIDGE_TOOLS__.syncLegacyUiState("workflow-update", { workflow: state });
-  } else if (typeof publishLegacyUiState === "function") {
+  } else   if (typeof publishLegacyUiState === "function") {
     publishLegacyUiState("workflow-update", { workflow: state });
+  }
+  if (typeof syncMobileShellLayout === "function") {
+    syncMobileShellLayout(state);
+  }
+  if (typeof syncWorkDetailTabs === "function") {
+    syncWorkDetailTabs();
   }
 }
 
@@ -247,6 +253,7 @@ function resetDialogueView() {
   chatModePickerOpen = false;
   characterOverviewOpen = false;
   currentCharacterOverview = null;
+  mobileSessionDrawerOpen = false;
   setSessionBadge("未启幕");
   if (el("dialogue-transcript")) el("dialogue-transcript").innerHTML = "";
   const memoryRoot = el("dialogue-memory");

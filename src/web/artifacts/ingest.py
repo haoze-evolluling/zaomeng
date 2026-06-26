@@ -18,6 +18,7 @@ from _skill_support.persona_bundle import (  # type: ignore  # noqa: E402
     load_existing_persona_bundle,
     load_profile_source,
     materialize_persona_bundle,
+    merge_persona_profiles,
     render_profile_md,
 )
 from _skill_support.relation_graph_export import export_relation_graph, _load_relations_payload  # type: ignore  # noqa: E402
@@ -36,7 +37,14 @@ def decode_text_content(content_base64: str) -> str:
 def materialize_profile_source(profile_source: str | Path, output_dir: str | Path) -> dict[str, Any]:
     source = Path(profile_source)
     profile = load_profile_source(source)
-    target_dir = materialize_persona_bundle(output_dir, profile)
+    target_dir = Path(output_dir)
+    if target_dir.exists():
+        try:
+            existing = load_existing_persona_bundle(target_dir)
+            profile = merge_persona_profiles(existing, profile)
+        except FileNotFoundError:
+            pass
+    target_dir = materialize_persona_bundle(target_dir, profile, sync_editable=True)
     generated_files = sorted(path.name for path in target_dir.glob("*.generated.md"))
     editable_files = sorted(path.name for path in target_dir.glob("*.md") if not path.name.endswith(".generated.md"))
     return {
@@ -58,6 +66,7 @@ def write_persona_profile(persona_dir: str | Path, profile: dict[str, Any]) -> P
     target_dir.mkdir(parents=True, exist_ok=True)
     editable_profile = target_dir / "PROFILE.md"
     editable_profile.write_text(render_profile_md(profile), encoding="utf-8")
+    materialize_persona_bundle(target_dir, profile, sync_editable=True)
     return editable_profile
 
 

@@ -575,6 +575,127 @@
   align-items: flex-start;
 }
 
+.work-detail-nav {
+  display: flex;
+  gap: 0.28rem;
+  padding: 0.22rem;
+  margin: 0 0 0.85rem;
+  border-radius: 999px;
+  border: 1px solid rgba(170, 146, 127, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 24px rgba(126, 92, 70, 0.06);
+}
+
+.work-detail-nav-button {
+  flex: 1 1 auto;
+  min-width: 4.2rem;
+  min-height: 2.05rem;
+  padding: 0 0.72rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.work-detail-nav-button.is-active {
+  color: var(--ink);
+  border-color: rgba(184, 132, 113, 0.22);
+  background: rgba(255, 248, 242, 0.98);
+  box-shadow: 0 8px 18px rgba(126, 92, 70, 0.08);
+}
+
+.work-detail-tabs-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.work-detail-tab-panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.work-detail-tabs-secondary {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.work-detail-tabs-secondary > .work-detail-tab-panel {
+  flex: 1 1 31%;
+  min-width: 0;
+}
+
+#step-progress.work-detail-tabs-enabled .work-detail-tab-panel {
+  display: none;
+}
+
+#step-progress.work-detail-tabs-enabled.work-detail-tab-overview [data-work-detail-tab="overview"],
+#step-progress.work-detail-tabs-enabled.work-detail-tab-characters [data-work-detail-tab="characters"],
+#step-progress.work-detail-tabs-enabled.work-detail-tab-continue [data-work-detail-tab="continue"],
+#step-progress.work-detail-tabs-enabled.work-detail-tab-more [data-work-detail-tab="more"] {
+  display: grid;
+}
+
+#step-progress.work-detail-tabs-enabled .work-detail-tabs-secondary {
+  display: block;
+}
+
+#step-progress.work-detail-tabs-enabled.work-detail-tab-characters .work-detail-tabs-secondary > [data-work-detail-tab="continue"],
+#step-progress.work-detail-tabs-enabled.work-detail-tab-continue .work-detail-tabs-secondary > [data-work-detail-tab="characters"] {
+  display: none;
+}
+
+#step-progress.work-detail-tabs-enabled .work-summary-in-overview {
+  margin-top: 0.15rem;
+}
+
+#step-progress.is-loading-work .work-detail-nav,
+#step-progress.is-loading-work .work-detail-tabs-shell {
+  display: none !important;
+}
+
+@media (min-width: 1181px) {
+  #step-progress .work-detail-nav {
+    display: none !important;
+  }
+
+  #step-progress .work-detail-tab-panel {
+    display: grid !important;
+  }
+
+  #step-progress .work-detail-tabs-secondary {
+    display: flex;
+  }
+}
+
+@media (max-width: 1180px) {
+  #step-progress.work-detail-tabs-enabled .work-hero-metrics,
+  #step-progress.work-detail-tabs-enabled .work-progress-strip {
+    display: none;
+  }
+
+  #step-progress.work-detail-tabs-enabled .work-detail-secondary-desktop {
+    display: none;
+  }
+}
+
 .work-overview-grid > .work-overview-panel:nth-child(1) {
   flex: 1 1 31%;
 }

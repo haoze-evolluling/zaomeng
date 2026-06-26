@@ -574,26 +574,44 @@ class DialogueService:
             scene_card=scene_card,
             scene_progress=scene_progress,
         )
+        controlled_character_name = str(session.get("controlled_character", "")).strip()
         response_limit_hint = self._choose_response_limit_hint(
             mode=mode,
             active_count=len(active_participants),
             turn_id=turn_id,
             message_kind=normalized_message_kind,
         )
+        response_count_rule = (
+            f"Return 1-{response_limit_hint} in-world replies. "
+            "Let only characters who are currently present respond; do not force every participant to speak each turn."
+        )
+        if normalized_message_kind == "narration" and mode == "act" and controlled_character_name:
+            response_count_rule = (
+                f"Return {max(2, min(response_limit_hint, len(active_participants)))}-{response_limit_hint} in-world replies "
+                f"when multiple cast members are present. Other participants besides {controlled_character_name} must speak; "
+                "do not return only the controlled character's line."
+            )
         instructions = {
             "mode": mode,
             "generation_goal": "Keep every reply faithful to the persona bundle, relationship context, and scene mode.",
-            "mode_rule": self._mode_rule(mode),
+            "mode_rule": self._mode_rule(mode, normalized_message_kind, controlled_character_name),
             "speaker_rule": self._speaker_rule(mode, session, normalized_message_kind),
-            "response_style": self._response_style_rule(mode, normalized_message_kind),
+            "response_style": self._response_style_rule(
+                mode,
+                normalized_message_kind,
+                controlled_character_name,
+            ),
             "scene_rule": self._scene_rule(scene_card),
             "progression_rule": self._scene_progress_rule(scene_progress),
-            "response_count_rule": (
-                f"Return 1-{response_limit_hint} in-world replies. "
-                "Let only characters who are currently present respond; do not force every participant to speak each turn."
-            ),
+            "response_count_rule": response_count_rule,
         }
-        responder_hints = self._responder_hints(mode, active_participants, speaker)
+        responder_hints = self._responder_hints(
+            mode,
+            active_participants,
+            speaker,
+            normalized_message_kind,
+            controlled_character_name,
+        )
 
         return {
             "kind": "zaomeng_dialogue_turn",
@@ -635,7 +653,13 @@ class DialogueService:
                     "Do not split obvious small actions into standalone narration; keep them inside the speaking character's line with brief parenthetical action."
                 ),
             },
-            "host_prompt_brief": self._host_prompt_brief(mode, speaker, participants),
+            "host_prompt_brief": self._host_prompt_brief(
+                mode,
+                speaker,
+                participants,
+                normalized_message_kind,
+                controlled_character_name,
+            ),
             "updated_at": _utc_now(),
         }
 
@@ -1076,6 +1100,10 @@ class DialogueService:
             if message_kind == "narration":
                 upper = min(5, max(upper, 3))
                 lower = min(upper, 2 if active_count <= 2 else 3)
+            return rng.randint(lower, upper)
+        if message_kind == "narration" and mode in {"act", "insert"}:
+            upper = min(4, max(2, active_count))
+            lower = 2 if active_count >= 2 else 1
             return rng.randint(lower, upper)
         upper = min(3, max(1, active_count))
         lower = 1 if active_count <= 1 else 2

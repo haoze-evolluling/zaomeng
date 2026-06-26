@@ -52,6 +52,9 @@
   }
 
   function openTimelineBridge() {
+    if (typeof setWorkDetailTab === "function" && window.matchMedia("(max-width: 1180px)").matches) {
+      setWorkDetailTab("more");
+    }
     const vueTimelineRoot = el("run-timeline-vue-root");
     const legacyEvents = el("events");
     const timelineSection = document.querySelector(".detail-section-timeline");
@@ -60,7 +63,9 @@
       (vueTimelineRoot && !vueTimelineRoot.classList.contains("hidden") && vueTimelineRoot) ||
       (legacyEvents && !legacyEvents.classList.contains("hidden") && legacyEvents) ||
       legacyEvents;
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.requestAnimationFrame(() => {
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function publishRunOverviewUi(source, overrides = {}) {

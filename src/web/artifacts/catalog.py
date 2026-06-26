@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.utils.file_utils import coerce_int
+
 
 def read_preview_fields(profile_path: Path) -> dict[str, str]:
     preview: dict[str, str] = {}
@@ -81,9 +83,9 @@ def relation_type_label(relation: dict[str, Any]) -> str:
     configured = str(relation.get("relationship_type", "")).strip()
     if configured:
         return configured
-    trust = int(relation.get("trust", 0) or 0)
-    affection = int(relation.get("affection", 0) or 0)
-    hostility = int(relation.get("hostility", 0) or 0)
+    trust = coerce_int(relation.get("trust"), 0, min_value=0, max_value=10)
+    affection = coerce_int(relation.get("affection"), 0, min_value=0, max_value=10)
+    hostility = coerce_int(relation.get("hostility"), 0, min_value=0, max_value=10)
     if hostility >= max(trust, affection) and hostility >= 6:
         return "对立"
     if affection >= 8 and trust >= 7:

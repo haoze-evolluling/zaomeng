@@ -6,6 +6,7 @@ from src.web.time_utils import utc_now as _utc_now
 from src.web.run_ops import (
     build_model_settings_response,
     delete_run_group,
+    delete_sessions,
     is_model_configured_payload,
     list_recent_sessions,
     list_runs,
@@ -60,6 +61,12 @@ class RunServiceMixin:
             runs_root=self.runs_root,
             load_manifest=self._load_manifest,
             list_sessions=self.dialogue.list_sessions,
+        )
+
+    def delete_recent_sessions(self, items: list[dict[str, str]]) -> dict[str, Any]:
+        return delete_sessions(
+            items=items,
+            delete_session=self.delete_dialogue_session,
         )
 
     def get_run(self, run_id: str) -> dict[str, Any]:

@@ -8,6 +8,42 @@ from src.core.exceptions import LLMRequestError
 from src.skill_support.scene_recommendations import build_scene_opening_message
 
 
+def _strip_code_fence(text: str) -> str:
+    text = str(text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if "\n" in text:
+            text = text.split("\n", 1)[1]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+    return text
+
+
+def _loads_llm_json(text: str, *, prefer_array: bool = False) -> Any:
+    text = _strip_code_fence(text)
+    if not text:
+        raise ValueError("Model returned empty JSON.")
+    bracket_pairs = ("[]", "{}") if prefer_array else ("{}", "[]")
+    candidates: list[str] = [text]
+    for brackets in bracket_pairs:
+        open_ch, close_ch = brackets[0], brackets[1]
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if start != -1 and end > start:
+            snippet = text[start : end + 1]
+            if snippet not in candidates:
+                candidates.append(snippet)
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        for strict in (True, False):
+            try:
+                return json.loads(candidate, strict=strict)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                continue
+    raise ValueError("Model reply is not valid JSON.") from last_error
+
+
 def _session_state(session: dict[str, Any]) -> dict[str, Any]:
     return dict(session.get("state", {}) or {})
 
@@ -586,20 +622,10 @@ def parse_dialogue_scene_progress(content: str, participants: list[str]) -> dict
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty scene progress state.")
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            text = text.split("\n", 1)[1]
-        if text.endswith("```"):
-            text = text[:-3].strip()
     try:
-        parsed: Any = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("Model reply is not valid scene progress JSON.") from None
-        parsed = json.loads(text[start : end + 1])
+        parsed = _loads_llm_json(text)
+    except ValueError as exc:
+        raise ValueError("Model reply is not valid scene progress JSON.") from exc
     if not isinstance(parsed, dict):
         raise ValueError("Scene progress state is not an object.")
 
@@ -639,20 +665,10 @@ def parse_dialogue_relation_state(content: str, participants: list[str]) -> dict
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty relation state.")
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            text = text.split("\n", 1)[1]
-        if text.endswith("```"):
-            text = text[:-3].strip()
     try:
-        parsed: Any = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("Model reply is not valid relation state JSON.") from None
-        parsed = json.loads(text[start : end + 1])
+        parsed = _loads_llm_json(text)
+    except ValueError as exc:
+        raise ValueError("Model reply is not valid relation state JSON.") from exc
     if not isinstance(parsed, dict):
         raise ValueError("Relation state is not an object.")
 
@@ -732,21 +748,10 @@ def parse_dialogue_responses(content: str, allowed_speakers: list[str]) -> list[
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty reply.")
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            text = text.split("\n", 1)[1]
-        if text.endswith("```"):
-            text = text[:-3].strip()
-    parsed: Any
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("[")
-        end = text.rfind("]")
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("Model reply is not valid JSON.") from None
-        parsed = json.loads(text[start : end + 1])
+        parsed = _loads_llm_json(text, prefer_array=True)
+    except ValueError as exc:
+        raise ValueError("Model reply is not valid JSON.") from exc
 
     if isinstance(parsed, dict):
         parsed = parsed.get("responses", [])
@@ -819,15 +824,9 @@ def parse_dialogue_suggestion(content: str) -> str:
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty suggestion.")
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            text = text.split("\n", 1)[1]
-        if text.endswith("```"):
-            text = text[:-3].strip()
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
+        parsed = _loads_llm_json(text)
+    except ValueError:
         parsed = None
     if isinstance(parsed, dict):
         text = str(parsed.get("suggestion", "")).strip()
@@ -880,15 +879,16 @@ def generate_dialogue_responses(
             break
         try:
             responses = parse_responses(content, allowed_speakers)
-            return _normalize_dialogue_responses(
+            normalized = _normalize_dialogue_responses(
                 responses,
                 response_limit=int(dict(payload.get("host_action", {}) or {}).get("response_limit_hint", 0) or 0),
             )
-        except ValueError as exc:
-            last_error = exc
+            return _reorder_plot_push_responses(normalized, payload)
+        except (ValueError, json.JSONDecodeError) as exc:
+            last_error = ValueError(str(exc)) if isinstance(exc, json.JSONDecodeError) else exc
             if index + 1 < len(attempts):
                 continue
-            raise
+            raise last_error
     raise ValueError("模型没有返回可用的角色回复。") from last_error
 
 
@@ -922,6 +922,47 @@ def generate_dialogue_suggestion(
                 continue
             raise
     raise ValueError("模型没有返回可用的续写建议。") from last_error
+
+
+def _reorder_plot_push_responses(
+    responses: list[dict[str, str]],
+    payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    """剧情推动 + 扮演时，控制角色不应成为最后一条角色对白。"""
+    mode = str(payload.get("mode", "")).strip()
+    input_block = dict(payload.get("input", {}) or {})
+    message_kind = str(input_block.get("message_kind", "")).strip()
+    controlled = str(input_block.get("controlled_character", "")).strip()
+    if message_kind != "narration" or mode != "act" or not controlled:
+        return responses
+
+    meta_speakers = {"旁白", "场景提示"}
+    characters: list[dict[str, str]] = []
+    meta: list[dict[str, str]] = []
+    for item in responses:
+        speaker = str(item.get("speaker", "")).strip()
+        if speaker in meta_speakers:
+            meta.append(item)
+        else:
+            characters.append(item)
+
+    if len(characters) <= 1:
+        return responses
+
+    last_idx = len(characters) - 1
+    controlled_idx = next(
+        (index for index, item in enumerate(characters) if str(item.get("speaker", "")).strip() == controlled),
+        -1,
+    )
+    if controlled_idx != last_idx:
+        return responses
+
+    controlled_item = characters.pop(last_idx)
+    if len(characters) >= 2:
+        characters.insert(len(characters) - 1, controlled_item)
+    else:
+        characters.insert(0, controlled_item)
+    return characters + meta
 
 
 def _normalize_dialogue_responses(

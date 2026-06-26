@@ -33,6 +33,73 @@ function setWorkOverviewLoading(loading, message = "") {
   } else if (currentRun?.status !== "running" && currentRun?.status !== "stopped" && currentRun?.status !== "failed") {
     toggle("detail-action-note", false);
   }
+  if (typeof syncWorkDetailTabs === "function") {
+    syncWorkDetailTabs();
+  }
+}
+
+const WORK_DETAIL_TABS = ["overview", "characters", "continue", "more"];
+let workDetailActiveTab = "overview";
+
+function isWorkDetailTabsEnabled() {
+  return window.matchMedia("(max-width: 1180px)").matches;
+}
+
+function resolveDefaultWorkDetailTab(run) {
+  if (!run) return "overview";
+  const names = typeof getRunCharacterNames === "function" ? getRunCharacterNames(run) : [];
+  const hasCharacters = names.length > 0;
+  const complete = typeof isRunWorkflowComplete === "function" ? isRunWorkflowComplete(run) : false;
+  if (run.status === "running" && !complete) return "overview";
+  if (complete && hasCharacters) return "continue";
+  return "overview";
+}
+
+function setWorkDetailTab(tab, options = {}) {
+  const next = String(tab || "").trim();
+  if (!WORK_DETAIL_TABS.includes(next)) return;
+  workDetailActiveTab = next;
+  if (!options.skipSync) {
+    syncWorkDetailTabs();
+  }
+}
+
+function syncWorkDetailTabs() {
+  const root = el("step-progress");
+  const nav = el("work-detail-nav");
+  if (!root) return;
+  const enabled = isWorkDetailTabsEnabled() && !root.classList.contains("hidden");
+  if (nav) {
+    nav.classList.toggle("hidden", !enabled);
+  }
+  WORK_DETAIL_TABS.forEach((name) => {
+    root.classList.toggle(`work-detail-tab-${name}`, enabled && workDetailActiveTab === name);
+  });
+  root.classList.toggle("work-detail-tabs-enabled", enabled);
+  if (nav && enabled) {
+    nav.querySelectorAll("[data-work-detail-tab-target]").forEach((button) => {
+      button.classList.toggle(
+        "is-active",
+        button.getAttribute("data-work-detail-tab-target") === workDetailActiveTab
+      );
+    });
+  }
+}
+
+function bindWorkDetailNav() {
+  const nav = el("work-detail-nav");
+  if (!nav || nav.dataset.bound === "1") return;
+  nav.dataset.bound = "1";
+  nav.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-work-detail-tab-target]") : null;
+    if (!button) return;
+    setWorkDetailTab(button.getAttribute("data-work-detail-tab-target") || "overview");
+  });
+  window.addEventListener("resize", () => syncWorkDetailTabs());
+}
+
+function resetWorkDetailTab(run) {
+  setWorkDetailTab(resolveDefaultWorkDetailTab(run), { skipSync: true });
 }
 
 function renderRunSummary(run) {
@@ -59,6 +126,7 @@ function renderRunSummary(run) {
   renderWorkGraphSummary(run);
   renderWorkSessionPreview(run);
   syncRedistillPreview();
+  syncWorkDetailTabs();
 }
 
 function buildWorkImportStatus(run) {
@@ -918,6 +986,9 @@ function buildCharacterOverviewReviewCopy(reviewEvent) {
 }
 
 function openWorkTimeline() {
+  if (isWorkDetailTabsEnabled()) {
+    setWorkDetailTab("more");
+  }
   const vueTimelineRoot = el("run-timeline-vue-root");
   const legacyEvents = el("events");
   const timelineSection = document.querySelector(".detail-section-timeline");
@@ -926,7 +997,9 @@ function openWorkTimeline() {
     (legacyEvents && !legacyEvents.classList.contains("hidden") && legacyEvents) ||
     timelineSection ||
     legacyEvents;
-  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.requestAnimationFrame(() => {
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 function buildCharacterOverviewRedistillSignal(character) {
@@ -1137,6 +1210,7 @@ function renderRun(run, options = {}) {
   syncRunArtifacts(run);
   if (!preserveDialogue) {
     resetDialogueView();
+    resetWorkDetailTab(run);
   }
   renderBookshelfDetail(run);
   syncBookshelfSelection();
@@ -1145,6 +1219,7 @@ function renderRun(run, options = {}) {
   if (!suppressWorkflowUpdate) {
     updateWorkflowState();
   }
+  syncWorkDetailTabs();
   if (run.status === "running") {
     scheduleRunPolling();
   } else {
@@ -1358,6 +1433,9 @@ window.renderCharacterOverviewTrustSignals = renderCharacterOverviewTrustSignals
 window.findLatestRunEventForCharacter = findLatestRunEventForCharacter;
 window.buildCharacterOverviewReviewCopy = buildCharacterOverviewReviewCopy;
 window.openWorkTimeline = openWorkTimeline;
+window.syncWorkDetailTabs = syncWorkDetailTabs;
+window.setWorkDetailTab = setWorkDetailTab;
+window.bindWorkDetailNav = bindWorkDetailNav;
 window.buildCharacterOverviewRedistillSignal = buildCharacterOverviewRedistillSignal;
 window.formatCharacterOverviewAutofillSource = formatCharacterOverviewAutofillSource;
 window.buildCharacterOverviewFieldTags = buildCharacterOverviewFieldTags;

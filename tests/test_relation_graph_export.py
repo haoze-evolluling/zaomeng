@@ -65,6 +65,42 @@ class RelationGraphExportTests(unittest.TestCase):
             self.assertIn("mini_relations.html", exported["html_path"])
             self.assertIn("mini_relations.mermaid.md", exported["mermaid_path"])
 
+    def test_export_relation_graph_tolerates_ellipsis_metrics(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                "paths:\n"
+                "  characters: data/characters\n"
+                "  relations: data/relations\n"
+                "  sessions: data/sessions\n"
+                "  corrections: data/corrections\n"
+                "  logs: logs\n"
+                "  rules: rules\n",
+                encoding="utf-8",
+            )
+            relation_dir = root / "data" / "relations" / "mini"
+            relation_dir.mkdir(parents=True, exist_ok=True)
+            relations_file = relation_dir / "mini_relations.md"
+            save_markdown_data(
+                relations_file,
+                {
+                    "novel_id": "mini",
+                    "relations": {
+                        "刘备_关羽": {
+                            "trust": "...",
+                            "affection": "",
+                            "hostility": "...",
+                            "power_gap": "...",
+                        }
+                    },
+                },
+                title="RELATION_GRAPH",
+            )
+            exported = export_relation_graph(relations_file, config_path=str(config_path), novel_id="mini")
+            self.assertTrue(Path(exported["html_path"]).exists())
+            self.assertTrue(Path(exported["mermaid_path"]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

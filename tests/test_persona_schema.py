@@ -198,6 +198,142 @@ class PersonaSchemaTests(unittest.TestCase):
         )
         self.assertIn("只写不对外展示的一面，不要重复内在冲突或自我认知。", messages[1]["content"])
 
+    def test_materialize_profile_source_merges_incremental_distill_into_editable_profile(self):
+        import tempfile
+        from pathlib import Path
+
+        from src.web.artifacts.ingest import materialize_profile_source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            persona_dir = Path(tmp) / "王熙凤"
+            persona_dir.mkdir(parents=True)
+            persona_dir.joinpath("PROFILE.md").write_text(
+                "\n".join(
+                    [
+                        "# PROFILE",
+                        "",
+                        "## Basic Positioning",
+                        "- core_identity: 荣国府管家奶奶",
+                        "- story_role: 掌家理事",
+                        "",
+                        "## Inner Core",
+                        "- soul_goal: 稳住贾府门面",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            persona_dir.joinpath("PROFILE.generated.md").write_text(
+                persona_dir.joinpath("PROFILE.md").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
+            source = Path(tmp) / "PROFILE.generated.md"
+            source.write_text(
+                "\n".join(
+                    [
+                        "# PROFILE",
+                        "",
+                        "## Basic Positioning",
+                        "- core_identity: 荣国府管家奶奶",
+                        "- story_role: 协理宁国府",
+                        "",
+                        "## Inner Core",
+                        "- soul_goal: 稳住贾府门面",
+                        "- temperament_type: 泼辣果决",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            materialize_profile_source(source, persona_dir)
+
+            profile_text = persona_dir.joinpath("PROFILE.md").read_text(encoding="utf-8")
+            self.assertIn("协理宁国府", profile_text)
+            self.assertIn("泼辣果决", profile_text)
+            self.assertIn("稳住贾府门面", profile_text)
+
+    def test_load_persona_bundle_keeps_profile_name_over_memory_module(self):
+        import tempfile
+        from pathlib import Path
+
+        from src.web.artifacts.ingest import load_persona_bundle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            persona_dir = Path(tmp) / "许蓉"
+            persona_dir.mkdir(parents=True)
+            persona_dir.joinpath("PROFILE.md").write_text(
+                "\n".join(
+                    [
+                        "# PROFILE",
+                        "",
+                        "## Meta",
+                        "- name: 许蓉",
+                        "- novel_id: 传说",
+                        "",
+                        "## Basic Positioning",
+                        "- core_identity: 李伟杰的恋人之一",
+                        "- story_role: 朋友社交圈的核心粘合剂",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            persona_dir.joinpath("MEMORY.md").write_text(
+                "\n".join(
+                    [
+                        "# MEMORY",
+                        "",
+                        "## Stable Memory",
+                        "- canon_memory: 长期与李伟杰交往",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            profile = load_persona_bundle(persona_dir)
+            self.assertEqual(profile.get("name"), "许蓉")
+            self.assertEqual(profile.get("core_identity"), "李伟杰的恋人之一")
+
+    def test_load_persona_bundle_prefers_profile_over_weak_style_placeholder(self):
+        import tempfile
+        from pathlib import Path
+
+        from src.web.artifacts.ingest import load_persona_bundle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            persona_dir = Path(tmp) / "林若彤"
+            persona_dir.mkdir(parents=True)
+            persona_dir.joinpath("PROFILE.md").write_text(
+                "\n".join(
+                    [
+                        "# PROFILE",
+                        "",
+                        "## Voice",
+                        "- speech_style: 热情健谈，喜欢用感叹句",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            persona_dir.joinpath("STYLE.md").write_text(
+                "\n".join(
+                    [
+                        "# STYLE",
+                        "",
+                        "## Expression",
+                        "- speech_style: 证据不足",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            profile = load_persona_bundle(persona_dir)
+            self.assertEqual(profile.get("speech_style"), "热情健谈，喜欢用感叹句")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,40 @@ def list_recent_sessions(
     return items
 
 
+def delete_sessions(
+    *,
+    items: list[dict[str, str]],
+    delete_session: Callable[[str, str], None],
+) -> dict[str, Any]:
+    deleted: list[dict[str, str]] = []
+    not_found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in items:
+        run_id = str(raw.get("run_id", "")).strip()
+        session_id = str(raw.get("session_id", "")).strip()
+        if not run_id or not session_id:
+            continue
+        key = f"{run_id}::{session_id}"
+        if key in seen:
+            continue
+        seen.add(key)
+        ref = {"run_id": run_id, "session_id": session_id}
+        try:
+            delete_session(run_id, session_id)
+            deleted.append(ref)
+        except FileNotFoundError:
+            not_found.append(ref)
+    if not deleted and not not_found:
+        raise ValueError("No valid sessions were provided.")
+    return {
+        "status": "deleted",
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "not_found_count": len(not_found),
+        "not_found": not_found,
+    }
+
+
 def delete_run_group(
     *,
     run_id: str,

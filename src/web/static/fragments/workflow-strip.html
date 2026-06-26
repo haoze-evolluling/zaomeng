@@ -95,6 +95,14 @@
         <button id="back-to-bookshelf-button" type="button" class="soft-button">返回书架</button>
       </div>
     </div>
+    <nav id="work-detail-nav" class="work-detail-nav hidden" aria-label="书卷分区">
+      <button type="button" class="work-detail-nav-button is-active" data-work-detail-tab-target="overview">概览</button>
+      <button type="button" class="work-detail-nav-button" data-work-detail-tab-target="characters">角色</button>
+      <button type="button" class="work-detail-nav-button" data-work-detail-tab-target="continue">开聊</button>
+      <button type="button" class="work-detail-nav-button" data-work-detail-tab-target="more">更多</button>
+    </nav>
+    <div class="work-detail-tabs-shell">
+      <div data-work-detail-tab="overview" class="work-detail-tab-panel">
     <div id="work-top-vue-root" class="work-top-vue-root hidden"></div>
     <div id="work-top-legacy">
       <section class="work-overview-hero">
@@ -162,7 +170,7 @@
             <button id="detail-stop-run-button" type="button" class="soft-button hidden">停止蒸馏</button>
           </div>
         </div>
-        <div id="detail-secondary-actions-shell" class="work-action-group">
+        <div id="detail-secondary-actions-shell" class="work-action-group work-detail-secondary-desktop">
           <span class="work-action-label">次动作</span>
           <div id="detail-secondary-actions" class="card-actions">
             <button id="open-relation-details-button" type="button" class="soft-button hidden">关系明细</button>
@@ -175,36 +183,7 @@
       </section>
       <p id="detail-action-note" class="card-note hidden">这一卷还在整理中，先看进度继续往前走。</p>
     </div>
-    <section id="work-overview-loading" class="work-overview-loading hidden" aria-hidden="true">
-      <div class="work-loading-line work-loading-line-lg"></div>
-      <div class="work-loading-grid">
-        <div class="work-loading-card"></div>
-        <div class="work-loading-card"></div>
-        <div class="work-loading-card"></div>
-      </div>
-      <div class="work-loading-grid work-loading-grid-2">
-        <div class="work-loading-card"></div>
-        <div class="work-loading-card"></div>
-      </div>
-    </section>
-
-    <div class="work-overview-grid">
-      <section id="work-character-panel" class="detail-section work-overview-panel">
-        <div class="detail-section-head">
-          <div>
-            <p class="eyebrow">角色</p>
-            <h4>这一卷里谁已经站稳了</h4>
-          </div>
-          <button id="run-character-readiness-toggle" type="button" class="soft-button hidden">展开全部</button>
-        </div>
-        <div id="work-character-vue-root" class="work-character-vue-root hidden"></div>
-        <div id="work-character-legacy">
-          <div id="run-character-readiness" class="work-character-list"></div>
-          <p id="run-character-readiness-empty" class="card-note hidden">还没有角色卡，先继续蒸馏把人物请出来。</p>
-        </div>
-      </section>
-
-      <section id="work-summary-panel" class="detail-section work-overview-panel">
+      <section id="work-summary-panel" class="detail-section work-overview-panel work-summary-in-overview">
         <div class="detail-section-head">
           <div>
             <p class="eyebrow">概览</p>
@@ -269,7 +248,54 @@
           <p id="quality-empty-copy" class="card-note hidden">这卷暂时还没有足够多的蒸馏线索，但人物和进度会继续在这里显出来。</p>
         </div>
       </section>
+      </div>
+    <section id="work-overview-loading" class="work-overview-loading hidden" aria-hidden="true">
+      <div class="work-loading-line work-loading-line-lg"></div>
+      <div class="work-loading-grid">
+        <div class="work-loading-card"></div>
+        <div class="work-loading-card"></div>
+        <div class="work-loading-card"></div>
+      </div>
+      <div class="work-loading-grid work-loading-grid-2">
+        <div class="work-loading-card"></div>
+        <div class="work-loading-card"></div>
+      </div>
+    </section>
 
+      <div class="work-detail-tabs-secondary">
+        <div data-work-detail-tab="characters" class="work-detail-tab-panel">
+      <section id="work-character-panel" class="detail-section work-overview-panel">
+        <div class="detail-section-head">
+          <div>
+            <p class="eyebrow">角色</p>
+            <h4>这一卷里谁已经站稳了</h4>
+          </div>
+          <button id="run-character-readiness-toggle" type="button" class="soft-button hidden">展开全部</button>
+        </div>
+        <div id="work-character-vue-root" class="work-character-vue-root hidden"></div>
+        <div id="work-character-legacy">
+          <div id="run-character-readiness" class="work-character-list"></div>
+          <p id="run-character-readiness-empty" class="card-note hidden">还没有角色卡，先继续蒸馏把人物请出来。</p>
+        </div>
+      </section>
+
+      <section id="work-priority-panel" class="detail-section">
+        <div class="detail-section-head">
+          <div>
+            <p class="eyebrow">下一刀</p>
+            <h4>现在最值得先补的角色</h4>
+          </div>
+        </div>
+        <p class="detail-section-copy">这里会按证据薄弱、关键字段缺口和整体稳定度，帮你排出最值得先处理的顺序。</p>
+        <div id="work-priority-vue-root" class="work-priority-vue-root hidden"></div>
+        <div id="work-priority-legacy">
+          <div id="work-priority-review-list" class="work-priority-review-list"></div>
+          <p id="work-priority-review-empty" class="card-note hidden">目前没有明显掉队角色，可以直接开聊或查看关系图。</p>
+        </div>
+      </section>
+        </div>
+
+        <div data-work-detail-tab="continue" class="work-detail-tab-panel">
       <section id="work-entry-panel" class="detail-section work-overview-panel">
         <div class="detail-section-head">
           <div>
@@ -305,24 +331,11 @@
           </div>
         </div>
       </section>
-    </div>
-
-    <section id="work-priority-panel" class="detail-section">
-      <div class="detail-section-head">
-        <div>
-          <p class="eyebrow">下一刀</p>
-          <h4>现在最值得先补的角色</h4>
         </div>
       </div>
-      <p class="detail-section-copy">这里会按证据薄弱、关键字段缺口和整体稳定度，帮你排出最值得先处理的顺序。</p>
-      <div id="work-priority-vue-root" class="work-priority-vue-root hidden"></div>
-      <div id="work-priority-legacy">
-        <div id="work-priority-review-list" class="work-priority-review-list"></div>
-        <p id="work-priority-review-empty" class="card-note hidden">目前没有明显掉队角色，可以直接开聊或查看关系图。</p>
-      </div>
-    </section>
 
-    <section class="detail-section">
+      <div data-work-detail-tab="more" class="work-detail-tab-panel">
+    <section class="detail-section work-detail-more-source">
       <div class="detail-section-head">
         <div>
           <p class="eyebrow">书页来源</p>
@@ -337,6 +350,22 @@
         <p id="source-history-empty" class="card-note hidden">目前只有最初那一份正文。</p>
       </div>
     </section>
+
+    <section class="detail-section detail-section-timeline">
+      <div class="detail-section-head">
+        <div>
+          <p class="eyebrow">流转</p>
+          <h4>这一卷最近的整理轨迹</h4>
+        </div>
+      </div>
+      <div id="run-timeline-vue-root" class="run-timeline-vue-root hidden"></div>
+      <div id="run-timeline-legacy">
+        <ol id="events" class="timeline timeline-dense"></ol>
+        <p id="timeline-empty-note" class="card-note hidden">这轮还没有新的时间线事件。</p>
+      </div>
+    </section>
+      </div>
+    </div>
 
     <div id="redistill-panel" class="refresh-card hidden">
       <div id="redistill-vue-root" class="redistill-vue-root hidden"></div>
@@ -398,20 +427,6 @@
       </div>
       <p id="redistill-status" class="card-note"></p>
     </div>
-
-    <section class="detail-section detail-section-timeline">
-      <div class="detail-section-head">
-        <div>
-          <p class="eyebrow">流转</p>
-          <h4>这一卷最近的整理轨迹</h4>
-        </div>
-      </div>
-      <div id="run-timeline-vue-root" class="run-timeline-vue-root hidden"></div>
-      <div id="run-timeline-legacy">
-        <ol id="events" class="timeline timeline-dense"></ol>
-        <p id="timeline-empty-note" class="card-note hidden">这轮还没有新的时间线事件。</p>
-      </div>
-    </section>
   </section>
 
   <section id="step-character-overview" class="studio-card hidden">

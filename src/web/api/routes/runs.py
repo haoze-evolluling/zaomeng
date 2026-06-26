@@ -9,6 +9,7 @@ from src.web.api.compat import model_to_dict
 from src.web.api.deps import get_run_service
 from src.web.api.schemas import (
     CreateRunRequest,
+    DeleteSessionsRequest,
     ImportRunPackageRequest,
     IngestCharacterRequest,
     IngestRelationRequest,
@@ -46,6 +47,19 @@ def list_runs(run_service: WebRunService = Depends(get_run_service)) -> dict[str
 @router.get("/api/web/sessions")
 def list_recent_sessions(run_service: WebRunService = Depends(get_run_service)) -> dict[str, Any]:
     return {"items": run_service.list_recent_sessions()}
+
+
+@router.delete("/api/web/sessions")
+def delete_recent_sessions(
+    payload: DeleteSessionsRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.delete_recent_sessions(
+            [{"run_id": item.run_id, "session_id": item.session_id} for item in payload.items]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/api/web/runs")
