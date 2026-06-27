@@ -586,8 +586,9 @@ class DialogueService:
             "Let only characters who are currently present respond; do not force every participant to speak each turn."
         )
         if normalized_message_kind == "narration" and mode == "act" and controlled_character_name:
+            response_lower_bound = min(response_limit_hint, max(1, min(2, len(active_participants))))
             response_count_rule = (
-                f"Return {max(2, min(response_limit_hint, len(active_participants)))}-{response_limit_hint} in-world replies "
+                f"Return {response_lower_bound}-{response_limit_hint} in-world replies "
                 f"when multiple cast members are present. Other participants besides {controlled_character_name} must speak; "
                 "do not return only the controlled character's line."
             )
@@ -1102,7 +1103,7 @@ class DialogueService:
                 lower = min(upper, 2 if active_count <= 2 else 3)
             return rng.randint(lower, upper)
         if message_kind == "narration" and mode in {"act", "insert"}:
-            upper = min(4, max(2, active_count))
+            upper = min(4, max(1, active_count))
             lower = 2 if active_count >= 2 else 1
             return rng.randint(lower, upper)
         upper = min(3, max(1, active_count))
