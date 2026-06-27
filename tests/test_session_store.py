@@ -128,6 +128,34 @@ class SessionStoreTests(unittest.TestCase):
             self.assertIn("未完事项", summary.get("summary", ""))
             self.assertIn("冲突张力", summary.get("summary", ""))
 
+    def test_session_store_compression_accepts_iso_timestamp_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = Config()
+            config.update({"paths": {"sessions": str(root / "sessions")}})
+            store = MarkdownSessionStore(PathProvider(config))
+            session = {
+                "id": "iso-ts",
+                "novel_id": "demo",
+                "mode": "observe",
+                "history": [
+                    {
+                        "speaker": "温婉",
+                        "message": f"第{i}句仍然要进入长期记忆。",
+                        "ts": "2026-05-10T04:12:37.129751Z",
+                    }
+                    for i in range(32)
+                ],
+                "state": {"memory": {"summary": {}}},
+            }
+
+            store.compress_context(session)
+
+            memory_payload = load_markdown_data(root / "sessions" / "iso-ts_memory.md", default={})
+            entries = memory_payload.get("entries", [])
+            self.assertTrue(entries)
+            self.assertIsInstance(entries[0].get("metadata", {}).get("ts"), int)
+
 
 if __name__ == "__main__":
     unittest.main()
