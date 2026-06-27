@@ -3184,6 +3184,17 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
     window.clearTimeout(retryFeedbackTimer);
     const errorText = String(error?.message || "").trim() || "这句话暂时没有送达。";
     if (sessionSnapshot && !silentOptimistic) {
+      if (typeof UI_BRIDGE_TOOLS?.syncLegacyUiState === "function") {
+        UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-restore", {
+          currentDialogueSessionId,
+          currentDialogueSession: sessionSnapshot,
+        });
+      } else if (typeof publishLegacyUiState === "function") {
+        publishLegacyUiState("dialogue-session-restore", {
+          currentDialogueSessionId,
+          currentDialogueSession: sessionSnapshot,
+        });
+      }
       const failedSession = {
         ...sessionSnapshot,
         transcript: window.buildFailedSendTranscript(sessionSnapshot, message, messageKind, errorText),
