@@ -9,6 +9,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from importlib import import_module
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -32,6 +33,26 @@ def _extract_tokens(text: str) -> list[str]:
 
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, int(value)))
+
+
+def _coerce_ts(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return default
 
 
 @dataclass
@@ -116,7 +137,7 @@ class MarkdownSessionStore(SessionStore):
                 metadata = {
                     "speaker": str(entry.get("speaker", "")).strip(),
                     "target": str(entry.get("target", "")).strip(),
-                    "ts": int(entry.get("ts", 0) or 0),
+                    "ts": _coerce_ts(entry.get("ts", 0), default=0),
                 }
                 self.append_long_term_memory(session_id, text, metadata=metadata)
                 entry["memory_archived"] = True
