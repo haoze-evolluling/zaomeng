@@ -126,6 +126,7 @@ def process_distill_character(
         payload=character_payload,
         chunk_count=int(chunk_meta.get("chunk_count", 1) or 1),
     )
+    current_review_fields = read_persona_review_fields(load_profile_source(source_path))
 
     assert_run_not_stopped(manifest_path, current_character=character)
     on_distill("materializing_character", {"character": character})
@@ -133,10 +134,6 @@ def process_distill_character(
         source_path,
         run_dir / "artifacts" / "characters" / novel_id / safe_filename(character),
     )
-    try:
-        current_review_fields = read_persona_review_fields(load_persona_bundle(materialized["persona_dir"]))
-    except Exception:
-        current_review_fields = read_persona_review_fields(load_profile_source(source_path))
     change_summary = summarize_redistill_character_change(
         character=character,
         previous_fields=previous_review_fields,

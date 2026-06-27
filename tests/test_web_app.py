@@ -6401,6 +6401,60 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             self.assertEqual(hints[0]["priority"], "normal")
             self.assertEqual(hints[1]["priority"], "high")
 
+    def test_prepare_turn_act_narration_prompt_handles_single_responder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            service.save_model_settings(
+                provider="openai-compatible",
+                model="deepseek-chat",
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+            )
+            payload = service.create_run(
+                novel_name="laoshe.txt",
+                novel_content_base64=base64.b64encode("祥子娶了虎妞。".encode("utf-8")).decode("ascii"),
+                characters=["祥子", "虎妞"],
+            )
+            for name in ("祥子", "虎妞"):
+                service.ingest_character_result(
+                    payload["run_id"],
+                    character=name,
+                    content_base64=base64.b64encode(
+                        f"- name: {name}\n- novel_id: laoshe\n- core_identity: 人物\n".encode("utf-8")
+                    ).decode("ascii"),
+                )
+
+            manifest = service._require_manifest(payload["run_id"])
+            session = service.dialogue.create_session(
+                manifest,
+                mode="act",
+                participants=["祥子", "虎妞"],
+                controlled_character="祥子",
+            )
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(payload["run_id"], session["session_id"])
+            )
+            service.dialogue._set_session_scene_progress(
+                raw_session,
+                {
+                    "present_participants": ["虎妞"],
+                    "offstage_participants": ["祥子"],
+                },
+            )
+            turn_payload = service.dialogue._build_turn_payload(
+                manifest,
+                raw_session,
+                turn_id="turn-act-narration-single",
+                message="第二天一早，虎妞催祥子出门办事。",
+                message_kind="narration",
+                speaker_override="场景提示",
+            )
+            response_rule = turn_payload["instructions"]["response_count_rule"]
+
+            self.assertEqual(turn_payload["host_action"]["response_limit_hint"], 1)
+            self.assertIn("Return 1-1 in-world replies", response_rule)
+            self.assertNotIn("Return 2-1", response_rule)
+
     def test_reorder_plot_push_responses_moves_controlled_character_before_closing_line(self):
         payload = {
             "mode": "act",
