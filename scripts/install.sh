@@ -64,6 +64,7 @@ print_python_version_help() {
     echo ""
   elif command -v apt-get >/dev/null 2>&1 || command -v apt >/dev/null 2>&1; then
     echo "  Ubuntu / Debian:" >&2
+    echo "    If the distribution provides Python 3.10+: sudo apt-get install python3 python3-venv" >&2
     echo "    sudo apt-get update && sudo apt-get install -y software-properties-common" >&2
     echo "    sudo add-apt-repository -y ppa:deadsnakes/ppa" >&2
     echo "    sudo apt-get install -y python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}-venv" >&2
