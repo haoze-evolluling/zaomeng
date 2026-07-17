@@ -16,11 +16,94 @@ cleanup() {
   fi
 }
 
+# zaomeng uses PEP 604 union type syntax (e.g. str | Path), which requires Python >= 3.10
+MIN_PYTHON_MAJOR=3
+MIN_PYTHON_MINOR=10
+
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing required command / 缺少必要命令: $1" >&2
     exit 1
   fi
+}
+
+get_python_version() {
+  local py="$1"
+  "$py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0"
+}
+
+check_python_version() {
+  local py="$1"
+  local version major minor
+  version="$(get_python_version "$py")"
+  major="${version%%.*}"
+  minor="${version##*.}"
+  if [ "$major" -ge "$MIN_PYTHON_MAJOR" ] && [ "$minor" -ge "$MIN_PYTHON_MINOR" ]; then
+    return 0
+  fi
+  return 1
+}
+
+print_python_version_help() {
+  local current_version="$1"
+  echo ""
+  echo "=== Python version requirement / Python 版本要求 ===" >&2
+  echo "" >&2
+  echo "zaomeng requires Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} (uses modern type syntax)." >&2
+  echo "zaomeng 需要 Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}（使用了新式类型注解语法）。" >&2
+  if [ -n "$current_version" ] && [ "$current_version" != "0.0" ]; then
+    echo "Detected Python version / 检测到的 Python 版本: ${current_version}  ✗" >&2
+  fi
+  echo "" >&2
+  echo "How to install Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+ / 如何安装 Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+:" >&2
+  echo "" >&2
+
+  if is_termux; then
+    echo "  Termux:" >&2
+    echo "    pkg install python" >&2
+    echo ""
+  elif command -v apt-get >/dev/null 2>&1 || command -v apt >/dev/null 2>&1; then
+    echo "  Ubuntu / Debian:" >&2
+    echo "    sudo apt-get update && sudo apt-get install -y software-properties-common" >&2
+    echo "    sudo add-apt-repository -y ppa:deadsnakes/ppa" >&2
+    echo "    sudo apt-get install -y python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}-venv" >&2
+    echo ""
+    echo "  Or use pyenv / 或使用 pyenv:" >&2
+    echo "    curl https://pyenv.run | bash" >&2
+    echo "    pyenv install ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}.0" >&2
+    echo "    pyenv global ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}.0" >&2
+    echo ""
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "  Fedora:" >&2
+    echo "    sudo dnf install -y python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}" >&2
+    echo ""
+  elif command -v yum >/dev/null 2>&1; then
+    echo "  CentOS / RHEL:" >&2
+    echo "    sudo yum install -y epel-release" >&2
+    echo "    sudo yum install -y python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}" >&2
+    echo ""
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "  Arch Linux:" >&2
+    echo "    sudo pacman -Sy --noconfirm python" >&2
+    echo ""
+  elif command -v brew >/dev/null 2>&1; then
+    echo "  macOS (Homebrew):" >&2
+    echo "    brew install python@${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}" >&2
+    echo ""
+  else
+    echo "  Please install Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+ manually from:" >&2
+    echo "  https://www.python.org/downloads/" >&2
+    echo ""
+    echo "  Or use pyenv:" >&2
+    echo "    curl https://pyenv.run | bash" >&2
+    echo "    pyenv install ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}.0" >&2
+    echo "    pyenv global ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}.0" >&2
+    echo ""
+  fi
+
+  echo "After installing, you can specify the Python binary explicitly / 安装后可以显式指定 Python:" >&2
+  echo "  curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/${REPO_REF}/scripts/install.sh | ZAOMENG_PYTHON=python${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} bash" >&2
+  echo ""
 }
 
 is_termux() {
@@ -151,37 +234,68 @@ auto_install_python() {
 }
 
 choose_python() {
+  local candidate=""
+  local version=""
+
+  # 1) User-specified Python binary takes highest priority
   if [ -n "$PYTHON_BIN" ]; then
-    echo "$PYTHON_BIN"
-    return
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    echo python3
-    return
-  fi
-  if command -v python >/dev/null 2>&1; then
-    echo python
-    return
+    if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+      version="$(get_python_version "$PYTHON_BIN")"
+      if check_python_version "$PYTHON_BIN"; then
+        echo "$PYTHON_BIN"
+        return
+      fi
+      echo "Specified Python ($PYTHON_BIN) is version ${version}, but Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} is required." >&2
+      echo "指定的 Python ($PYTHON_BIN) 版本为 ${version}，但需要 Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}。" >&2
+      print_python_version_help "$version"
+      exit 1
+    fi
+    echo "Specified Python not found / 指定的 Python 未找到: $PYTHON_BIN" >&2
+    exit 1
   fi
 
-  if auto_install_python; then
-    if command -v python3 >/dev/null 2>&1; then
+  # 2) Try system python3
+  if command -v python3 >/dev/null 2>&1; then
+    version="$(get_python_version python3)"
+    if check_python_version python3; then
       echo python3
       return
     fi
-    if command -v python >/dev/null 2>&1; then
+    candidate="python3"
+  fi
+
+  # 3) Try system python
+  if command -v python >/dev/null 2>&1; then
+    version="$(get_python_version python)"
+    if check_python_version python; then
       echo python
       return
     fi
+    if [ -z "$candidate" ]; then
+      candidate="python"
+    fi
   fi
 
-  if is_termux; then
-    echo "Python 3 is required. Please run: pkg install python / 需要 Python 3，请执行：pkg install python" >&2
-  elif command -v apt-get >/dev/null 2>&1 || command -v apt >/dev/null 2>&1; then
-    echo "Python 3 is required. Please run: sudo apt-get install python3 python3-venv / 需要 Python 3，请执行：sudo apt-get install python3 python3-venv" >&2
-  else
-    echo "Python 3 is required. Please install python3 first. / 需要 Python 3，请先安装 python3。" >&2
+  # 4) Try auto-installing Python through the system package manager
+  if auto_install_python; then
+    if command -v python3 >/dev/null 2>&1; then
+      version="$(get_python_version python3)"
+      if check_python_version python3; then
+        echo python3
+        return
+      fi
+    fi
+    if command -v python >/dev/null 2>&1; then
+      version="$(get_python_version python)"
+      if check_python_version python; then
+        echo python
+        return
+      fi
+    fi
   fi
+
+  # 5) No suitable Python found — print detailed help
+  print_python_version_help "$version"
   exit 1
 }
 
@@ -256,6 +370,17 @@ main() {
 
   local python_cmd
   python_cmd="$(choose_python)"
+  # Final safeguard: ensure the chosen Python meets the minimum version requirement
+  if ! check_python_version "$python_cmd"; then
+    local detected_ver
+    detected_ver="$(get_python_version "$python_cmd")"
+    echo "Internal error: Python version check failed / 内部错误: Python 版本检查未通过 (${python_cmd} = ${detected_ver})" >&2
+    print_python_version_help "$detected_ver"
+    exit 1
+  fi
+  local detected_version
+  detected_version="$(get_python_version "$python_cmd")"
+  echo "Python ${detected_version} detected / 检测到 Python ${detected_version} ✓"
   local fetcher
   fetcher="$(choose_fetch)"
 

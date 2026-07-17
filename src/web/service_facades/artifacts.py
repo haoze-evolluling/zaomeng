@@ -5,6 +5,7 @@ from typing import Any
 
 from src.utils.file_utils import save_markdown_data
 from src.web.time_utils import utc_now as _utc_now
+from src.web.review.persona_quality import evaluate_persona_quality
 from src.web.artifacts import (
     export_relations_source,
     load_profile_source,
@@ -105,6 +106,22 @@ class ArtifactServiceMixin:
             load_profile_source=load_profile_source,
             read_persona_review_fields=read_persona_review_fields,
         )
+
+    def get_persona_quality_report(self, run_id: str, character: str) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        persona_dir = resolve_persona_dir(manifest, character)
+        _, _, source_path = resolve_persona_review_source(persona_dir)
+        if not source_path.exists():
+            raise FileNotFoundError(character)
+        report = evaluate_persona_quality(load_profile_source(source_path), character=character)
+        report_path = persona_dir / "QUALITY_REPORT.json"
+        relative_path = report_path.resolve().relative_to((self.runs_root / run_id).resolve()).as_posix()
+        report["artifact"] = {
+            "relative_path": relative_path,
+            "file_url": f"/api/web/runs/{run_id}/files/{relative_path}",
+        }
+        self._write_json(report_path, report)
+        return report
 
     def save_persona_review(self, run_id: str, character: str, fields: dict[str, str]) -> dict[str, Any]:
         manifest = self._require_manifest(run_id)

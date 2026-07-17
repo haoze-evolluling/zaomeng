@@ -10,6 +10,14 @@
     return requireApiJson()(`/api/web/runs/${runId}/personas/${encodeURIComponent(character)}`);
   }
 
+  async function getPersonaQualityReport(runId, character) {
+    return requireApiJson()(
+      `/api/web/runs/${runId}/personas/${encodeURIComponent(character)}/quality-report`,
+      {},
+      "人物质量报告暂时没有载入。"
+    );
+  }
+
   async function saveModelSettings(payload) {
     return requireApiJson()(
       "/api/web/settings/model",
@@ -239,6 +247,7 @@
   window.__ZAOMENG_WEBUI_API__ = {
     saveModelSettings,
     getPersonaReview,
+    getPersonaQualityReport,
     savePersonaReview,
     suggestPersonaField,
     restartRedistill,

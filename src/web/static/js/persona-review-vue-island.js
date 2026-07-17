@@ -52,6 +52,7 @@
       const modalVisible = ref(!modal.classList.contains("hidden"));
       const state = reactive({
         loading: false,
+        qualityLoading: false,
         saving: false,
         autofillField: "",
         character: "",
@@ -61,6 +62,7 @@
         referenceSummary: "网页摘要参考",
         advancedOpen: false,
         feedback: {},
+        qualityReport: null,
       });
 
       const unsubscribe = bridge.subscribe((nextSnapshot) => {
@@ -82,6 +84,49 @@
         state.referenceSummary = "网页摘要参考";
       }
 
+      function applyQualityPayload(payload) {
+        const report = payload && typeof payload === "object" ? payload : null;
+        state.qualityReport = report;
+        if (!report) {
+          state.feedback = {};
+          return;
+        }
+        const issues = Array.isArray(report.issues) ? report.issues : [];
+        const issueByField = new Map();
+        issues.forEach((issue) => {
+          const fields = Array.isArray(issue?.fields) ? issue.fields : [];
+          fields.forEach((field) => {
+            if (!issueByField.has(field)) issueByField.set(field, issue);
+          });
+        });
+        const feedback = {};
+        const results = Array.isArray(report.field_results) ? report.field_results : [];
+        results.forEach((result) => {
+          const field = String(result?.field || "").trim();
+          if (!field || result?.status === "ready") return;
+          const issue = issueByField.get(field);
+          feedback[field] = {
+            kind: "error",
+            message: issue?.suggestion || "这个字段仍需要更具体、可验证的内容。",
+          };
+        });
+        state.feedback = feedback;
+      }
+
+      async function loadQualityReport(runId, character) {
+        state.qualityLoading = true;
+        try {
+          const report = await webuiApi.getPersonaQualityReport(runId, character);
+          applyQualityPayload(report);
+          return true;
+        } catch (_error) {
+          applyQualityPayload(null);
+          return false;
+        } finally {
+          state.qualityLoading = false;
+        }
+      }
+
       function applyAutofillReferences(payload) {
         const refs = Array.isArray(payload?.references) ? payload.references : [];
         state.references = refs;
@@ -97,7 +142,8 @@
         try {
           const payload = await webuiApi.getPersonaReview(runId, character);
           applyReviewPayload(payload);
-          setStatus("");
+          const qualityLoaded = await loadQualityReport(runId, character);
+          setStatus(qualityLoaded ? "" : "人物档案已载入，质量报告暂时不可用。");
           syncPersonaBridgeState("persona-review-vue-loaded", {
             currentPersonaReview: payload,
             currentPersonaAutofill: null,
@@ -118,6 +164,7 @@
         try {
           const saved = await webuiApi.savePersonaReview(runId, character, clone(state.fields));
           applyReviewPayload(saved);
+          await loadQualityReport(runId, character);
           applyAutofillReferences(null);
           syncPersonaBridgeState("persona-review-vue-saved", {
             currentPersonaReview: saved,
@@ -198,6 +245,10 @@
       });
 
       const visible = computed(() => modalVisible.value);
+      const visibleQualityIssues = computed(() => {
+        const issues = Array.isArray(state.qualityReport?.issues) ? state.qualityReport.issues : [];
+        return issues.filter((item) => item?.severity !== "low").slice(0, 5);
+      });
 
       onMounted(() => {
         modal.classList.add("has-vue-island");
@@ -255,6 +306,7 @@
         availableCharacters,
         keyFields: KEY_FIELDS,
         advancedGroups: ADVANCED_GROUPS,
+        visibleQualityIssues,
         needsAutofill,
         fieldLabel,
         loadCharacter,
@@ -283,6 +335,51 @@
             <span v-if="!availableCharacters.length" class="pill hint-pill">请先选择一卷已完成的人物</span>
           </div>
         </label>
+
+        <section
+          v-if="state.qualityReport"
+          class="persona-quality-panel"
+          :data-grade="state.qualityReport.grade"
+          aria-label="人物质量报告"
+        >
+          <div class="persona-quality-head">
+            <div>
+              <strong>人物质量</strong>
+              <p>{{ state.qualityReport.verdict }}</p>
+            </div>
+            <div class="persona-quality-score" aria-label="总分">
+              <strong>{{ state.qualityReport.score }}</strong>
+              <span>/ 100</span>
+            </div>
+          </div>
+          <div class="persona-quality-dimensions">
+            <div v-for="item in state.qualityReport.dimensions" :key="item.id" class="persona-quality-dimension">
+              <div><span>{{ item.label }}</span><b>{{ item.score }} / {{ item.max_score }}</b></div>
+              <progress :value="item.score" :max="item.max_score"></progress>
+            </div>
+          </div>
+          <p class="persona-quality-metrics">
+            38 项中 {{ state.qualityReport.metrics.ready_field_count }} 项可用，
+            {{ state.qualityReport.metrics.missing_field_count }} 项缺失；
+            证据含 {{ state.qualityReport.evidence.description_count }} 条描写、
+            {{ state.qualityReport.evidence.dialogue_count }} 条对白、
+            {{ state.qualityReport.evidence.thought_count }} 条心理活动。
+          </p>
+          <ol v-if="visibleQualityIssues.length" class="persona-quality-issues">
+            <li v-for="item in visibleQualityIssues" :key="item.code" :data-severity="item.severity">
+              <strong>{{ item.message }}</strong>
+              <span>{{ item.suggestion }}</span>
+            </li>
+          </ol>
+          <a
+            v-if="state.qualityReport.artifact?.file_url"
+            class="persona-quality-download"
+            :href="state.qualityReport.artifact.file_url"
+            target="_blank"
+            rel="noreferrer"
+          >下载 JSON 报告</a>
+        </section>
+        <p v-else-if="state.qualityLoading" class="card-note">正在计算人物质量...</p>
 
         <section class="review-group">
           <div class="review-group-head">

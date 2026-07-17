@@ -217,6 +217,20 @@ def get_persona_review(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/api/web/runs/{run_id}/personas/{character}/quality-report")
+def get_persona_quality_report(
+    run_id: str,
+    character: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.get_persona_quality_report(run_id, character)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Character not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.put("/api/web/runs/{run_id}/personas/{character}")
 def save_persona_review(
     run_id: str,
