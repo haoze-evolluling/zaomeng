@@ -334,6 +334,22 @@
     max-width: 100%;
   }
 
+  .dialogue-association-panel {
+    width: 100%;
+    padding: 13px 14px 14px;
+  }
+
+  .dialogue-association-options,
+  .dialogue-association-loading {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .dialogue-association-option,
+  .dialogue-association-placeholder {
+    width: 100%;
+  }
+
   .composer-card {
     width: 100%;
   }

@@ -55,6 +55,33 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("window.branchDialogueSessionFromScene = branchDialogueSessionFromScene;", content)
         self.assertIn("function renderDialogueSceneChainSuggestions(chains = [], sessionId = \"\") {", content)
         self.assertIn("function applyDialogueSceneChain(chain = {}) {", content)
+        self.assertIn("function renderDialogueAssociations() {", content)
+        self.assertIn("function requestDialogueAssociations(session = currentDialogueSession) {", content)
+        self.assertIn("function maybeRequestDialogueAssociations(session = currentDialogueSession) {", content)
+        self.assertIn("async function handleDialogueAssociationChoice(option) {", content)
+        self.assertIn("window.requestDialogueAssociations = requestDialogueAssociations;", content)
+        self.assertIn("window.maybeRequestDialogueAssociations = maybeRequestDialogueAssociations;", content)
+        self.assertIn("/associations`", content)
+        self.assertIn('body: JSON.stringify({ seed_text: "", direction })', content)
+        self.assertIn('status: "error",', content)
+        self.assertIn('retry.textContent = "重试";', content)
+
+    def test_dialogue_association_toggle_persists_and_gates_requests(self):
+        main_content = read_js("main.js")
+        composer_content = read_js("composer-vue-island.js")
+        fragment_content = read_fragment("main-shell.html")
+
+        self.assertIn(
+            'const DIALOGUE_ASSOCIATION_ENABLED_KEY = "zaomeng:dialogue-associations-enabled";',
+            main_content,
+        )
+        self.assertIn("associationEnabled: dialogueAssociationsEnabled", main_content)
+        self.assertIn("function setDialogueAssociationsEnabled(enabled) {", main_content)
+        self.assertIn("if (!dialogueAssociationsEnabled) return;", main_content)
+        self.assertIn("setAssociationEnabled(enabled)", main_content)
+        self.assertIn('class="dialogue-association-toggle-control"', composer_content)
+        self.assertIn('@change="setAssociationEnabled"', composer_content)
+        self.assertIn('id="dialogue-association-toggle"', fragment_content)
 
     def test_main_uses_shared_bridge_sync_for_self_card_state(self):
         content = read_js("main.js")

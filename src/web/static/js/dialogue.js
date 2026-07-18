@@ -888,6 +888,10 @@ function renderTranscript(items) {
     root.appendChild(row);
   });
 
+  if (typeof window.renderDialogueAssociations === "function") {
+    window.renderDialogueAssociations();
+  }
+
   scrollTranscriptToBottom();
 }
 
@@ -1048,6 +1052,9 @@ async function renderDialogueSession(session) {
   }
   scrollTranscriptToBottom();
   await maybeAutoRecommendNextScene(session);
+  if (typeof window.maybeRequestDialogueAssociations === "function") {
+    window.maybeRequestDialogueAssociations(session);
+  }
   el("dialogue-message")?.focus();
 }
 

@@ -707,6 +707,146 @@
   line-height: 1.65;
 }
 
+.dialogue-association-panel {
+  width: min(100%, 820px);
+  max-width: 980px;
+  margin: 4px auto 0;
+  padding: 14px 16px 15px;
+  border-left: 2px solid rgba(184, 112, 78, 0.72);
+  border-radius: 0 8px 8px 0;
+  background: rgba(244, 243, 242, 0.94);
+  color: var(--ink);
+  animation: fade-message 220ms ease;
+}
+
+.dialogue-association-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--accent-strong);
+}
+
+.dialogue-association-head strong {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.dialogue-association-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #b65f31;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.dialogue-association-options,
+.dialogue-association-loading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dialogue-association-option {
+  appearance: none;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 0 13px;
+  border: 1px solid rgba(196, 121, 83, 0.36);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.dialogue-association-option:hover:not(:disabled),
+.dialogue-association-option:focus-visible {
+  border-color: rgba(182, 95, 49, 0.62);
+  background: #fffaf6;
+  color: #9f4f29;
+  box-shadow: 0 0 0 3px rgba(196, 121, 83, 0.1);
+  outline: none;
+}
+
+.dialogue-association-option.is-selected {
+  border-color: rgba(182, 95, 49, 0.48);
+  background: rgba(255, 247, 241, 0.96);
+  color: #9f4f29;
+}
+
+.dialogue-association-option:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.dialogue-association-option.is-selected:disabled {
+  opacity: 1;
+}
+
+.dialogue-association-placeholder {
+  width: clamp(120px, 22%, 170px);
+  height: 34px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(225, 220, 216, 0.64), rgba(247, 244, 241, 0.96), rgba(225, 220, 216, 0.64));
+  background-size: 220% 100%;
+  animation: dialogue-association-loading 1.25s ease-in-out infinite;
+}
+
+.dialogue-association-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.dialogue-association-error {
+  color: #9b4d37;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dialogue-association-retry {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(182, 95, 49, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #9f4f29;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dialogue-association-retry:hover,
+.dialogue-association-retry:focus-visible {
+  border-color: rgba(182, 95, 49, 0.68);
+  background: #fffaf6;
+  box-shadow: 0 0 0 3px rgba(196, 121, 83, 0.1);
+  outline: none;
+}
+
+@keyframes dialogue-association-loading {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .composer-shell {
   width: 100%;
   padding-top: 0.85rem;
@@ -731,6 +871,71 @@
 
 .composer-vue-shell .quick-reply-row {
   padding: 2px 10px 4px;
+}
+
+.composer-utility-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 24px;
+  padding: 0 10px;
+}
+
+.dialogue-association-toggle-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dialogue-association-toggle-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dialogue-association-toggle-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: 0 0 34px;
+  border: 1px solid rgba(157, 145, 137, 0.34);
+  border-radius: 999px;
+  background: rgba(224, 220, 216, 0.88);
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.dialogue-association-toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(100, 82, 72, 0.2);
+  transition: transform 150ms ease;
+}
+
+.dialogue-association-toggle-control input:checked + .dialogue-association-toggle-track {
+  border-color: rgba(182, 95, 49, 0.5);
+  background: rgba(190, 112, 76, 0.82);
+}
+
+.dialogue-association-toggle-control input:checked + .dialogue-association-toggle-track::after {
+  transform: translateX(14px);
+}
+
+.dialogue-association-toggle-control input:focus-visible + .dialogue-association-toggle-track {
+  box-shadow: 0 0 0 3px rgba(196, 121, 83, 0.14);
 }
 
 .quick-reply-row {
@@ -885,6 +1090,7 @@
 
 #turn-stage.has-vue-island > .composer-card > #observe-quick-replies,
 #turn-stage.has-vue-island > .composer-card > #observe-auto-row,
+#turn-stage.has-vue-island > .composer-card > #dialogue-association-toggle-row,
 #turn-stage.has-vue-island > .composer-card > .composer-main {
   display: none !important;
 }

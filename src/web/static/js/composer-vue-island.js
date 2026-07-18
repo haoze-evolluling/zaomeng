@@ -81,6 +81,7 @@
       const showKindToggle = computed(() => mode.value !== "observe");
       const suggestDisabled = computed(() => Boolean(composer.value.suggestDisabled));
       const sendDisabled = computed(() => Boolean(composer.value.sendDisabled));
+      const associationEnabled = computed(() => composer.value.associationEnabled !== false);
 
       onMounted(() => {
         stage.classList.add("has-vue-island");
@@ -131,6 +132,13 @@
         }
       }
 
+      function setAssociationEnabled(event) {
+        const actions = composerActions();
+        if (typeof actions.setAssociationEnabled === "function") {
+          actions.setAssociationEnabled(Boolean(event?.target?.checked));
+        }
+      }
+
       function handleEnter(event) {
         if (event.key !== "Enter" || event.shiftKey) return;
         event.preventDefault();
@@ -157,6 +165,8 @@
         suggest,
         suggestDisabled,
         suggestHidden,
+        associationEnabled,
+        setAssociationEnabled,
       };
     },
     template: `
@@ -172,6 +182,18 @@
           >
             {{ item.label }}
           </button>
+        </div>
+
+        <div class="composer-utility-row">
+          <label class="dialogue-association-toggle-control">
+            <input
+              type="checkbox"
+              :checked="associationEnabled"
+              @change="setAssociationEnabled"
+            >
+            <span class="dialogue-association-toggle-track" aria-hidden="true"></span>
+            <span>AI 联想</span>
+          </label>
         </div>
 
         <div class="composer-main composer-main-vue">

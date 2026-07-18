@@ -6,6 +6,23 @@ if (existingMainModule?.initialized) {
 let appUpdateStatus = null;
 let appUpdatePollTimer = 0;
 let exportRunPackagePendingId = "";
+let dialogueAssociationRequestId = 0;
+let dialogueAssociationLastRequestKey = "";
+const DIALOGUE_ASSOCIATION_ENABLED_KEY = "zaomeng:dialogue-associations-enabled";
+let dialogueAssociationsEnabled = (() => {
+  try {
+    return window.localStorage?.getItem(DIALOGUE_ASSOCIATION_ENABLED_KEY) !== "0";
+  } catch (_error) {
+    return true;
+  }
+})();
+let dialogueAssociationState = {
+  sessionId: "",
+  status: "idle",
+  options: [],
+  selectedLabel: "",
+  error: "",
+};
 
 const APP_UPDATE_DISMISS_PREFIX = "zaomeng:update-dismissed:";
 const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
@@ -2891,6 +2908,7 @@ function buildComposerUiState() {
     quickReplies: mode === "observe" ? buildObserveQuickReplies(currentDialogueSession) : [],
     quickHint: nextHint,
     observeAutoMode,
+    associationEnabled: dialogueAssociationsEnabled,
   };
 }
 
@@ -3113,6 +3131,269 @@ function coerceMessageOverride(value) {
   return String(value || "");
 }
 
+function clearDialogueAssociations() {
+  dialogueAssociationRequestId += 1;
+  dialogueAssociationState = {
+    sessionId: "",
+    status: "idle",
+    options: [],
+    selectedLabel: "",
+    error: "",
+  };
+  el("dialogue-association-panel")?.remove();
+}
+
+function syncDialogueAssociationToggle() {
+  const toggle = el("dialogue-association-toggle");
+  if (toggle) {
+    toggle.checked = dialogueAssociationsEnabled;
+  }
+}
+
+function setDialogueAssociationsEnabled(enabled) {
+  dialogueAssociationsEnabled = Boolean(enabled);
+  try {
+    window.localStorage?.setItem(
+      DIALOGUE_ASSOCIATION_ENABLED_KEY,
+      dialogueAssociationsEnabled ? "1" : "0"
+    );
+  } catch (_error) {
+    // The in-memory preference still applies when storage is unavailable.
+  }
+  syncDialogueAssociationToggle();
+  dialogueAssociationLastRequestKey = "";
+  if (!dialogueAssociationsEnabled) {
+    clearDialogueAssociations();
+  } else {
+    maybeRequestDialogueAssociations(currentDialogueSession);
+  }
+  publishComposerUiState("composer-association-toggle");
+}
+
+function renderDialogueAssociations() {
+  el("dialogue-association-panel")?.remove();
+  if (!dialogueAssociationsEnabled) return;
+  const root = el("dialogue-transcript");
+  const state = dialogueAssociationState;
+  if (!root || !state.sessionId || state.sessionId !== currentDialogueSessionId) return;
+  if (state.status === "idle" && !state.options.length) return;
+
+  const panel = document.createElement("aside");
+  panel.id = "dialogue-association-panel";
+  panel.className = "dialogue-association-panel";
+  panel.setAttribute("aria-live", "polite");
+
+  const header = document.createElement("div");
+  header.className = "dialogue-association-head";
+  const mark = document.createElement("span");
+  mark.className = "dialogue-association-mark";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = "✦";
+  const title = document.createElement("strong");
+  title.textContent =
+    state.status === "loading"
+      ? "AI 正在联想情节分支"
+      : state.status === "error"
+        ? "AI 联想暂时没有生成"
+        : "AI 联想 · 情节分支";
+  header.append(mark, title);
+  panel.appendChild(header);
+
+  if (state.status === "loading") {
+    const loading = document.createElement("div");
+    loading.className = "dialogue-association-loading";
+    loading.setAttribute("aria-label", "正在生成情节分支");
+    for (let index = 0; index < 3; index += 1) {
+      const placeholder = document.createElement("span");
+      placeholder.className = "dialogue-association-placeholder";
+      loading.appendChild(placeholder);
+    }
+    panel.appendChild(loading);
+  } else {
+    const choices = document.createElement("div");
+    choices.className = "dialogue-association-options";
+    state.options.forEach((option) => {
+      const button = document.createElement("button");
+      const selected = option.label === state.selectedLabel;
+      button.type = "button";
+      button.className = `dialogue-association-option${selected ? " is-selected" : ""}`;
+      button.textContent = selected && state.status === "generating" ? `${option.label} · 正在构思` : option.label;
+      button.disabled = state.status === "generating";
+      button.addEventListener("click", () => {
+        handleDialogueAssociationChoice(option).catch((error) => {
+          console.warn("dialogue association choice failed", error);
+        });
+      });
+      choices.appendChild(button);
+    });
+    panel.appendChild(choices);
+    if (state.error) {
+      const errorRow = document.createElement("div");
+      errorRow.className = "dialogue-association-error-row";
+      const error = document.createElement("small");
+      error.className = "dialogue-association-error";
+      error.textContent = state.error;
+      errorRow.appendChild(error);
+      if (state.status === "error") {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "dialogue-association-retry";
+        retry.textContent = "重试";
+        retry.addEventListener("click", () => {
+          requestDialogueAssociations(currentDialogueSession).catch((retryError) => {
+            console.warn("dialogue associations retry failed", retryError);
+          });
+        });
+        errorRow.appendChild(retry);
+      }
+      panel.appendChild(errorRow);
+    }
+  }
+
+  root.appendChild(panel);
+  scrollTranscriptToBottom();
+}
+
+async function requestDialogueAssociations(session = currentDialogueSession) {
+  if (!dialogueAssociationsEnabled) return;
+  const runId = String(currentRunId || "").trim();
+  const sessionId = String(session?.session_id || currentDialogueSessionId || "").trim();
+  if (!runId || !sessionId) return;
+  const requestId = ++dialogueAssociationRequestId;
+  dialogueAssociationState = {
+    sessionId,
+    status: "loading",
+    options: [],
+    selectedLabel: "",
+    error: "",
+  };
+  renderDialogueAssociations();
+  try {
+    const payload = await apiJson(
+      `/api/web/runs/${runId}/dialogue/sessions/${sessionId}/associations`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ option_count: 3 }),
+      },
+      "剧情联想生成失败。"
+    );
+    if (requestId !== dialogueAssociationRequestId || sessionId !== currentDialogueSessionId) return;
+    const options = Array.isArray(payload?.options)
+      ? payload.options
+          .map((item) => ({
+            label: String(item?.label || "").trim(),
+            direction: String(item?.direction || "").trim(),
+          }))
+          .filter((item) => item.label && item.direction)
+          .slice(0, 4)
+      : [];
+    dialogueAssociationState = {
+      sessionId,
+      status: options.length ? "ready" : "idle",
+      options,
+      selectedLabel: "",
+      error: "",
+    };
+    renderDialogueAssociations();
+  } catch (error) {
+    if (requestId !== dialogueAssociationRequestId || sessionId !== currentDialogueSessionId) return;
+    dialogueAssociationState = {
+      sessionId,
+      status: "error",
+      options: [],
+      selectedLabel: "",
+      error: error?.message || "剧情联想暂时没有生成成功。",
+    };
+    renderDialogueAssociations();
+    console.warn("dialogue associations failed", error);
+  }
+}
+
+function dialogueAssociationRequestKey(session = currentDialogueSession) {
+  const sessionId = String(session?.session_id || "").trim();
+  const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+  const latest = transcript.length ? transcript[transcript.length - 1] || {} : {};
+  return [
+    sessionId,
+    String(session?.updated_at || "").trim(),
+    transcript.length,
+    String(latest?.message || "").trim(),
+  ].join("::");
+}
+
+function maybeRequestDialogueAssociations(session = currentDialogueSession) {
+  const sessionId = String(session?.session_id || "").trim();
+  const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+  if (!dialogueAssociationsEnabled || !sessionId || !transcript.length || observeAutoMode) return;
+  const requestKey = dialogueAssociationRequestKey(session);
+  if (!requestKey || requestKey === dialogueAssociationLastRequestKey) return;
+  dialogueAssociationLastRequestKey = requestKey;
+  requestDialogueAssociations(session).catch((error) => {
+    console.warn("dialogue associations failed", error);
+  });
+}
+
+async function handleDialogueAssociationChoice(option) {
+  const label = String(option?.label || "").trim();
+  const direction = String(option?.direction || "").trim();
+  const sessionId = String(currentDialogueSessionId || "").trim();
+  if (!label || !direction || !currentRunId || !sessionId || dialogueAssociationState.status === "generating") {
+    return;
+  }
+
+  dialogueAssociationState = {
+    ...dialogueAssociationState,
+    status: "generating",
+    selectedLabel: label,
+    error: "",
+  };
+  renderDialogueAssociations();
+  setSuggestingState(true);
+  try {
+    const payload = await apiJson(
+      `/api/web/runs/${currentRunId}/dialogue/sessions/${sessionId}/suggest`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seed_text: "", direction }),
+      },
+      "按这个方向生成文案失败。"
+    );
+    if (sessionId !== currentDialogueSessionId) {
+      setSuggestingState(false);
+      return;
+    }
+    const suggestion = String(payload?.suggestion || "").trim();
+    if (!suggestion) throw new Error("模型没有返回可发送的文案。");
+    setSuggestingState(false);
+    clearDialogueAssociations();
+    const mode = currentDialogueSession?.mode || currentDialogueSession?.session_card?.mode || "";
+    const sent = await handleSendTurn(suggestion, mode === "observe" ? "narration" : "dialogue");
+    if (!sent) {
+      setComposerDraft(suggestion, { focus: true });
+      setDialogueSessionFailure(
+        "文案已经生成，但这次没有发送成功。",
+        "内容已放回输入框，可以直接重试。",
+        true
+      );
+    }
+  } catch (error) {
+    if (sessionId !== currentDialogueSessionId) {
+      setSuggestingState(false);
+      return;
+    }
+    setSuggestingState(false);
+    dialogueAssociationState = {
+      ...dialogueAssociationState,
+      status: "ready",
+      selectedLabel: "",
+      error: error?.message || "这个方向暂时没有生成成功，请再试一次。",
+    };
+    renderDialogueAssociations();
+  }
+}
+
 async function handleSendTurn(messageOverride = "", messageKindOverride = "", options = {}) {
   if (!currentRunId || !currentDialogueSessionId) {
     setComposerWaiting(false, "先进入这一幕，再把话递出去。");
@@ -3126,6 +3407,8 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
     setComposerWaiting(false, messageKind === "narration" ? "先写一句剧情推动提示。" : "先写一句你想让他们听见的话。");
     return false;
   }
+
+  clearDialogueAssociations();
 
   const sessionSnapshot = currentDialogueSession
     ? JSON.parse(
@@ -3161,21 +3444,20 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
   }
 
   try {
-    await renderDialogueSession(
-      await apiJson(
-        `/api/web/runs/${currentRunId}/dialogue/sessions/${currentDialogueSessionId}/reply`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message,
-            message_kind: messageKind,
-            suppress_transcript_message: suppressTranscriptMessage,
-          }),
-        },
-        "发送失败。"
-      )
+    const session = await apiJson(
+      `/api/web/runs/${currentRunId}/dialogue/sessions/${currentDialogueSessionId}/reply`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          message_kind: messageKind,
+          suppress_transcript_message: suppressTranscriptMessage,
+        }),
+      },
+      "发送失败。"
     );
+    await renderDialogueSession(session);
     window.clearTimeout(retryFeedbackTimer);
     setComposerWaiting(false, "");
     setComposerDraft("", { publish: true });
@@ -3574,6 +3856,10 @@ function bindEvents() {
   bind("delete-self-card-button", "click", handleDeleteSelfCard);
   bind("suggest-turn-button", "click", handleSuggestTurn);
   bind("prepare-turn-button", "click", handleSendTurn);
+  el("dialogue-association-toggle")?.addEventListener("change", (event) => {
+    setDialogueAssociationsEnabled(Boolean(event.target?.checked));
+  });
+  syncDialogueAssociationToggle();
   el("dialogue-message-kind")?.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -3830,6 +4116,9 @@ const composerActions = {
   quickReply(value) {
     return applyQuickReply(value);
   },
+  setAssociationEnabled(enabled) {
+    setDialogueAssociationsEnabled(enabled);
+  },
 };
 
 if (typeof UI_BRIDGE_TOOLS.mergeLegacyActionBridge === "function") {
@@ -3866,6 +4155,10 @@ window.handleStopRun = handleStopRun;
 window.handleRedistillAdd = handleRedistillAdd;
 window.handleRedistillRefresh = handleRedistillRefresh;
 window.handleDialogueSessionSubmit = handleDialogueSessionSubmit;
+window.renderDialogueAssociations = renderDialogueAssociations;
+window.requestDialogueAssociations = requestDialogueAssociations;
+window.maybeRequestDialogueAssociations = maybeRequestDialogueAssociations;
+window.setDialogueAssociationsEnabled = setDialogueAssociationsEnabled;
 window.sceneCardFieldId = sceneCardFieldId;
 window.collectSceneCardPayload = collectSceneCardPayload;
 window.validateSceneCardPayload = validateSceneCardPayload;
@@ -3968,4 +4261,3 @@ window.__ZAOMENG_MAIN_MODULE__ = {
   version: String(window.__ZAOMENG_WEB_UI_VERSION__ || ""),
 };
 })();
-
