@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+
+try:
+    from pydantic import field_validator
+except ImportError:  # Pydantic v1 on Termux
+    from pydantic import validator as field_validator
 
 
 class CreateRunRequest(BaseModel):

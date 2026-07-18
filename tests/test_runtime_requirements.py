@@ -24,6 +24,30 @@ class RuntimeRequirementsTests(unittest.TestCase):
         self.assertRegex(requirements, r"(?im)^\s*fastapi>=0\.104\.0,<1\.0\.0\s*$")
         self.assertRegex(requirements, r"(?im)^\s*pydantic>=2\.0\.0,<3\.0\.0\s*$")
 
+    def test_termux_requirements_avoid_rust_extensions(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        requirements = (repo_root / "requirements.termux.txt").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertRegex(requirements, r"(?im)^\s*fastapi>=0\.104\.0,<0\.120\.0\s*$")
+        self.assertRegex(requirements, r"(?im)^\s*pydantic>=1\.10\.20,<2\.0\.0\s*$")
+        self.assertIsNone(
+            re.search(
+                r"(?im)^\s*(?:pydantic-core|maturin)(?:[<>=!~].*)?$",
+                requirements,
+            )
+        )
+
+    def test_web_schemas_support_pydantic_v1_and_v2_validator_imports(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        schemas = (repo_root / "src" / "web" / "api" / "schemas.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("from pydantic import field_validator", schemas)
+        self.assertIn("from pydantic import validator as field_validator", schemas)
+
     def test_root_readmes_describe_full_and_runtime_dependency_sets(self):
         repo_root = Path(__file__).resolve().parents[1]
 
@@ -33,6 +57,7 @@ class RuntimeRequirementsTests(unittest.TestCase):
 
                 self.assertIn("requirements.txt", readme)
                 self.assertIn("requirements.runtime.txt", readme)
+                self.assertIn("requirements.termux.txt", readme)
                 self.assertIn("httpx2", readme)
                 self.assertIn("EPUB", readme)
 

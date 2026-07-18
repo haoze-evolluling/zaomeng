@@ -7,13 +7,27 @@ INSTALL_ROOT="${ZAOMENG_INSTALL_DIR:-$HOME/.local/share/zaomeng}"
 STORAGE_ROOT="${ZAOMENG_STORAGE_DIR:-$HOME/.local/share/zaomeng-data}"
 BIN_DIR="${ZAOMENG_BIN_DIR:-$HOME/.local/bin}"
 PYTHON_BIN="${ZAOMENG_PYTHON:-}"
-RUNTIME_REQUIREMENTS_FILE="${ZAOMENG_REQUIREMENTS_FILE:-requirements.runtime.txt}"
+RUNTIME_REQUIREMENTS_FILE="${ZAOMENG_REQUIREMENTS_FILE:-}"
 TMP_DIR=""
+INSTALL_BACKUP=""
+INSTALL_SWAP_ACTIVE=0
 
 cleanup() {
+  local exit_code=$?
+  trap - EXIT
+  if [ "${INSTALL_SWAP_ACTIVE:-0}" -eq 1 ]; then
+    rm -rf "$INSTALL_ROOT"
+    if [ -n "${INSTALL_BACKUP:-}" ] && [ -d "${INSTALL_BACKUP:-}" ]; then
+      mv "$INSTALL_BACKUP" "$INSTALL_ROOT"
+      echo "Installation failed; previous runtime restored. / 安装失败，已恢复原有运行环境。" >&2
+    else
+      echo "Installation failed; incomplete runtime removed. / 安装失败，已清理不完整的运行环境。" >&2
+    fi
+  fi
   if [ -n "${TMP_DIR:-}" ] && [ -d "${TMP_DIR:-}" ]; then
     rm -rf "$TMP_DIR"
   fi
+  exit "$exit_code"
 }
 
 # zaomeng uses PEP 604 union type syntax (e.g. str | Path), which requires Python >= 3.10
@@ -109,6 +123,19 @@ print_python_version_help() {
 
 is_termux() {
   [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux/files/usr" ]
+}
+
+select_runtime_requirements() {
+  if is_termux && {
+    [ -z "$RUNTIME_REQUIREMENTS_FILE" ] ||
+      [ "$RUNTIME_REQUIREMENTS_FILE" = "requirements.runtime.txt" ]
+  }; then
+    RUNTIME_REQUIREMENTS_FILE="requirements.termux.txt"
+    return
+  fi
+  if [ -z "$RUNTIME_REQUIREMENTS_FILE" ]; then
+    RUNTIME_REQUIREMENTS_FILE="requirements.runtime.txt"
+  fi
 }
 
 install_system_packages() {
@@ -368,6 +395,7 @@ main() {
   need_cmd tar
   need_cmd mktemp
   need_cmd chmod
+  select_runtime_requirements
 
   local python_cmd
   python_cmd="$(choose_python)"
@@ -393,9 +421,9 @@ main() {
   local extract_root="${TMP_DIR}/extract"
   local venv_dir="${INSTALL_ROOT}/.venv"
   local launcher_path="${BIN_DIR}/zaomeng"
+  local staged_launcher_path="${TMP_DIR}/zaomeng-launcher"
   local requirements_path="${INSTALL_ROOT}/${RUNTIME_REQUIREMENTS_FILE}"
-  local legacy_storage_root="${INSTALL_ROOT}/.zaomeng-web"
-  local storage_backup_path="${TMP_DIR}/zaomeng-storage-backup"
+  local staged_requirements_path
   local extracted_dir
   local rc_file
   rc_file="$(detect_rc_file)"
@@ -408,21 +436,30 @@ main() {
     exit 1
   fi
 
-  if [ -d "$legacy_storage_root" ] && [ ! -e "$STORAGE_ROOT" ]; then
-    mv "$legacy_storage_root" "$storage_backup_path"
-  fi
-  rm -rf "$INSTALL_ROOT"
   tar -xzf "$archive_path" -C "$extract_root"
   extracted_dir="$(find "$extract_root" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   if [ -z "$extracted_dir" ]; then
     echo "Failed to locate extracted repository directory. / 未找到解压后的仓库目录。" >&2
     exit 1
   fi
-  mv "$extracted_dir" "$INSTALL_ROOT"
-  if [ -d "$storage_backup_path" ] && [ ! -e "$STORAGE_ROOT" ]; then
-    mv "$storage_backup_path" "$STORAGE_ROOT"
+  staged_requirements_path="${extracted_dir}/${RUNTIME_REQUIREMENTS_FILE}"
+  if [ ! -f "$staged_requirements_path" ]; then
+    echo "Missing runtime requirements file / 缺少运行时依赖文件: ${staged_requirements_path}" >&2
+    exit 1
   fi
-  mkdir -p "$STORAGE_ROOT"
+
+  INSTALL_BACKUP="${INSTALL_ROOT}.backup.$$"
+  if [ -e "$INSTALL_BACKUP" ]; then
+    echo "Install backup path already exists / 安装备份目录已存在: ${INSTALL_BACKUP}" >&2
+    exit 1
+  fi
+  if [ -e "$INSTALL_ROOT" ]; then
+    mv "$INSTALL_ROOT" "$INSTALL_BACKUP"
+  else
+    INSTALL_BACKUP=""
+  fi
+  INSTALL_SWAP_ACTIVE=1
+  mv "$extracted_dir" "$INSTALL_ROOT"
 
   if [ ! -f "$requirements_path" ]; then
     echo "Missing runtime requirements file / 缺少运行时依赖文件: ${requirements_path}" >&2
@@ -434,7 +471,7 @@ main() {
   "$venv_dir/bin/python" -m pip install --upgrade pip setuptools wheel
   "$venv_dir/bin/python" -m pip install -r "$requirements_path"
 
-  cat >"$launcher_path" <<EOF
+  cat >"$staged_launcher_path" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -632,11 +669,22 @@ HELP
 esac
 EOF
 
-  chmod +x "$launcher_path"
-  if [ ! -x "$launcher_path" ]; then
-    echo "Launcher creation failed / 启动命令创建失败: ${launcher_path}" >&2
+  chmod +x "$staged_launcher_path"
+  if [ ! -x "$staged_launcher_path" ]; then
+    echo "Launcher creation failed / 启动命令创建失败: ${staged_launcher_path}" >&2
     exit 1
   fi
+  mv "$staged_launcher_path" "$launcher_path"
+
+  INSTALL_SWAP_ACTIVE=0
+  if [ -n "$INSTALL_BACKUP" ]; then
+    if [ -d "${INSTALL_BACKUP}/.zaomeng-web" ] && [ ! -e "$STORAGE_ROOT" ]; then
+      mv "${INSTALL_BACKUP}/.zaomeng-web" "$STORAGE_ROOT"
+    fi
+    rm -rf "$INSTALL_BACKUP"
+    INSTALL_BACKUP=""
+  fi
+  mkdir -p "$STORAGE_ROOT"
   append_path_line "$rc_file"
 
 cat <<EOF

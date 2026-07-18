@@ -91,6 +91,7 @@ The installer will:
 - download the repository into `~/.local/share/zaomeng`
 - create an isolated virtual environment
 - install the lighter `requirements.runtime.txt` by default
+- automatically use the Rust-free `requirements.termux.txt` on Termux
 - create a `~/.local/bin/zaomeng` launcher
 - add `~/.local/bin` to your shell `PATH`
 
@@ -114,6 +115,9 @@ cd zaomeng
 pip install -r requirements.runtime.txt
 python scripts/run_webui.py --reload
 ```
+
+For a manual Termux install, replace the dependency command with
+`pip install -r requirements.termux.txt`.
 
 Then open `http://127.0.0.1:8000` and go through the full workflow in one place:
 

@@ -33,6 +33,34 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn('pkg install python', script_text)
         self.assertIn('sudo apt-get install python3 python3-venv', script_text)
 
+    def test_install_script_selects_termux_requirements(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script_text = (repo_root / "scripts" / "install.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("select_runtime_requirements()", script_text)
+        self.assertIn(
+            'RUNTIME_REQUIREMENTS_FILE="requirements.termux.txt"', script_text
+        )
+        self.assertIn(
+            '[ "$RUNTIME_REQUIREMENTS_FILE" = "requirements.runtime.txt" ]',
+            script_text,
+        )
+
+    def test_install_script_restores_previous_runtime_after_failure(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script_text = (repo_root / "scripts" / "install.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("INSTALL_SWAP_ACTIVE=0", script_text)
+        self.assertIn('INSTALL_BACKUP="${INSTALL_ROOT}.backup.$$"', script_text)
+        self.assertIn('mv "$INSTALL_BACKUP" "$INSTALL_ROOT"', script_text)
+        self.assertIn("previous runtime restored", script_text)
+        self.assertIn('cat >"$staged_launcher_path"', script_text)
+        self.assertIn('mv "$staged_launcher_path" "$launcher_path"', script_text)
+
     def test_install_launcher_checks_remote_version_before_update(self):
         repo_root = Path(__file__).resolve().parents[1]
         script_text = (repo_root / "scripts" / "install.sh").read_text(encoding="utf-8")
@@ -48,7 +76,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn('Update skipped / 跳过更新: zaomeng is already up to date.', script_text)
         self.assertIn('Update required / 需要更新: \\${local_version} -> \\${remote_version}', script_text)
         self.assertIn('Version check unavailable, proceeding with update.', script_text)
-        self.assertIn('if [ ! -x "$launcher_path" ]; then', script_text)
+        self.assertIn('if [ ! -x "$staged_launcher_path" ]; then', script_text)
         self.assertIn('Launcher creation failed / 启动命令创建失败', script_text)
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', script_text)
         self.assertIn('Data root / 数据目录:   ${STORAGE_ROOT}', script_text)

@@ -91,6 +91,7 @@ source ~/.zshrc
 - 下载当前仓库到 `~/.local/share/zaomeng`
 - 创建独立虚拟环境
 - 默认安装更轻的 `requirements.runtime.txt`
+- 在 Termux 中自动改用不需要 Rust 编译的 `requirements.termux.txt`
 - 写入 `~/.local/bin/zaomeng` 启动命令
 - 自动把 `~/.local/bin` 加入 shell 的 `PATH`
 
@@ -114,6 +115,8 @@ cd zaomeng
 pip install -r requirements.runtime.txt
 python scripts/run_webui.py --reload
 ```
+
+在 Termux 中手动安装时，请把依赖命令替换为 `pip install -r requirements.termux.txt`。
 
 启动后打开浏览器访问 `http://127.0.0.1:8000`，就可以直接走这条完整工作流：
 
