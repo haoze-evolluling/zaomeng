@@ -19,8 +19,12 @@ def create_dialogue_session_payload(
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
     generate_dialogue_responses: Callable[[str, dict[str, Any]], list[dict[str, str]]],
     friendly_dialogue_llm_error: Callable[[Exception], str],
-    evolve_relations_from_turn: Callable[[str, dict[str, Any], list[dict[str, str]]], None],
-    refresh_scene_progress: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    evolve_relations_from_turn: Callable[
+        [str, dict[str, Any], list[dict[str, str]]], None
+    ],
+    refresh_scene_progress: (
+        Callable[[str, dict[str, Any]], dict[str, Any]] | None
+    ) = None,
 ) -> dict[str, Any]:
     session = dialogue.create_session(
         manifest,
@@ -66,8 +70,12 @@ def continue_dialogue_scene_opening_payload(
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
     generate_dialogue_responses: Callable[[str, dict[str, Any]], list[dict[str, str]]],
     friendly_dialogue_llm_error: Callable[[Exception], str],
-    evolve_relations_from_turn: Callable[[str, dict[str, Any], list[dict[str, str]]], None],
-    refresh_scene_progress: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    evolve_relations_from_turn: Callable[
+        [str, dict[str, Any], list[dict[str, str]]], None
+    ],
+    refresh_scene_progress: (
+        Callable[[str, dict[str, Any]], dict[str, Any]] | None
+    ) = None,
 ) -> dict[str, Any]:
     session_id = str(session.get("session_id", "")).strip()
     if not session_id:
@@ -109,10 +117,16 @@ def reply_dialogue_turn_payload(
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
     generate_dialogue_responses: Callable[[str, dict[str, Any]], list[dict[str, str]]],
     friendly_dialogue_llm_error: Callable[[Exception], str],
-    evolve_relations_from_turn: Callable[[str, dict[str, Any], list[dict[str, str]]], None],
-    refresh_scene_progress: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    evolve_relations_from_turn: Callable[
+        [str, dict[str, Any], list[dict[str, str]]], None
+    ],
+    refresh_scene_progress: (
+        Callable[[str, dict[str, Any]], dict[str, Any]] | None
+    ) = None,
 ) -> dict[str, Any]:
-    speaker_override = "场景提示" if str(message_kind or "").strip() == "narration" else ""
+    speaker_override = (
+        "场景提示" if str(message_kind or "").strip() == "narration" else ""
+    )
     dialogue.prepare_turn(
         manifest,
         session_id=session_id,
@@ -147,14 +161,40 @@ def suggest_dialogue_turn_payload(
     dialogue: Any,
     generate_dialogue_suggestion: Callable[[str, dict[str, Any]], str],
     friendly_dialogue_llm_error: Callable[[Exception], str],
+    direction: str = "",
 ) -> dict[str, str]:
     payload = dialogue.build_suggestion_payload(
         manifest,
         session_id=session_id,
         seed_text=seed_text,
+        direction=direction,
     )
     try:
         suggestion = generate_dialogue_suggestion(run_id, payload)
     except LLMRequestError as exc:
         raise ValueError(friendly_dialogue_llm_error(exc)) from exc
     return {"suggestion": suggestion}
+
+
+def associate_dialogue_turn_payload(
+    *,
+    run_id: str,
+    session_id: str,
+    option_count: int,
+    manifest: dict[str, Any],
+    dialogue: Any,
+    generate_dialogue_associations: Callable[
+        [str, dict[str, Any]], list[dict[str, str]]
+    ],
+    friendly_dialogue_llm_error: Callable[[Exception], str],
+) -> dict[str, Any]:
+    payload = dialogue.build_association_payload(
+        manifest,
+        session_id=session_id,
+        option_count=option_count,
+    )
+    try:
+        options = generate_dialogue_associations(run_id, payload)
+    except LLMRequestError as exc:
+        raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+    return {"show": bool(options), "options": options}

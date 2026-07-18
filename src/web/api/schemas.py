@@ -211,6 +211,11 @@ class PrepareDialogueTurnRequest(BaseModel):
 
 class SuggestDialogueTurnRequest(BaseModel):
     seed_text: str = Field(default="")
+    direction: str = Field(default="", max_length=240)
+
+
+class DialogueAssociationsRequest(BaseModel):
+    option_count: int = Field(default=3, ge=2, le=4)
 
 
 class SwitchDialogueSceneCardRequest(BaseModel):
@@ -234,7 +239,9 @@ class IngestDialogueTurnRequest(BaseModel):
 
     @field_validator("responses")
     @classmethod
-    def _validate_responses(cls, value: list[DialogueResponseItem]) -> list[DialogueResponseItem]:
+    def _validate_responses(
+        cls, value: list[DialogueResponseItem]
+    ) -> list[DialogueResponseItem]:
         if not value:
             raise ValueError("responses must not be empty")
         return value

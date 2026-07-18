@@ -11,9 +11,12 @@ from unittest.mock import Mock, patch
 
 from src.core.exceptions import LLMRequestError
 from src.web.chat.helpers import (
-    compact_dialogue_suggestion_payload,
-    parse_dialogue_suggestion,
     _reorder_plot_push_responses,
+    build_dialogue_association_llm_messages,
+    compact_dialogue_suggestion_payload,
+    generate_dialogue_associations,
+    parse_dialogue_associations,
+    parse_dialogue_suggestion,
 )
 from src.web.pipeline import process_relation_graph, update_manifest_chunk_progress
 from src.web.review.persona_completion import collect_persona_web_references
@@ -60,12 +63,16 @@ class WebRunServiceTests(unittest.TestCase):
                 }
             )
 
-            payload = service.recommend_scene_cards(mode="insert", participants=["林黛玉", "贾宝玉", "薛宝钗"])
+            payload = service.recommend_scene_cards(
+                mode="insert", participants=["林黛玉", "贾宝玉", "薛宝钗"]
+            )
 
             self.assertEqual(payload["recommended_card_id"], guest_card["card_id"])
             self.assertTrue(payload["items"][0]["recommendation"]["reasons"])
 
-    def test_dialogue_scene_card_recommendation_prefers_next_scene_not_current_one(self):
+    def test_dialogue_scene_card_recommendation_prefers_next_scene_not_current_one(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -118,7 +125,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -126,14 +135,18 @@ class WebRunServiceTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
             with patch.object(
                 WebRunService,
                 "_generate_dialogue_responses",
-                return_value=[{"speaker": "场景提示", "message": "雨势更大，众人不得不转入花厅。"}],
+                return_value=[
+                    {"speaker": "场景提示", "message": "雨势更大，众人不得不转入花厅。"}
+                ],
             ):
                 session = service.create_dialogue_session(
                     run["run_id"],
@@ -148,19 +161,29 @@ class WebRunServiceTests(unittest.TestCase):
                     message_kind="narration",
                 )
 
-            payload = service.recommend_dialogue_scene_card(run["run_id"], session_id=session["session_id"])
+            payload = service.recommend_dialogue_scene_card(
+                run["run_id"], session_id=session["session_id"]
+            )
 
             self.assertEqual(payload["current_scene_card_id"], current_scene["card_id"])
             self.assertEqual(payload["recommended_card_id"], next_scene["card_id"])
-            self.assertNotEqual(payload["recommended_card_id"], current_scene["card_id"])
+            self.assertNotEqual(
+                payload["recommended_card_id"], current_scene["card_id"]
+            )
             self.assertTrue(payload["items"][0]["recommendation"]["reasons"])
-            self.assertTrue(str(payload.get("recommended_transition_message", "")).strip())
-            self.assertTrue(str(payload.get("recommended_auto_continue_message", "")).strip())
+            self.assertTrue(
+                str(payload.get("recommended_transition_message", "")).strip()
+            )
+            self.assertTrue(
+                str(payload.get("recommended_auto_continue_message", "")).strip()
+            )
             self.assertTrue(payload["chain_suggestions"])
             self.assertGreaterEqual(len(payload["chain_suggestions"][0]["scenes"]), 2)
             self.assertTrue(str(payload["chain_suggestions"][0]["reason"]).strip())
 
-    def test_dialogue_scene_card_recommendation_stays_in_same_location_when_beat_is_early(self):
+    def test_dialogue_scene_card_recommendation_stays_in_same_location_when_beat_is_early(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -213,7 +236,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -221,14 +246,21 @@ class WebRunServiceTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
             with patch.object(
                 WebRunService,
                 "_generate_dialogue_responses",
-                return_value=[{"speaker": "场景提示", "message": "回廊里只剩雨声和一句没说完的话。"}],
+                return_value=[
+                    {
+                        "speaker": "场景提示",
+                        "message": "回廊里只剩雨声和一句没说完的话。",
+                    }
+                ],
             ):
                 session = service.create_dialogue_session(
                     run["run_id"],
@@ -251,12 +283,19 @@ class WebRunServiceTests(unittest.TestCase):
                 },
             )
 
-            payload = service.recommend_dialogue_scene_card(run["run_id"], session_id=session["session_id"])
+            payload = service.recommend_dialogue_scene_card(
+                run["run_id"], session_id=session["session_id"]
+            )
 
             self.assertEqual(payload["recommended_card_id"], same_location["card_id"])
-            self.assertIn("生成一个自然开场", str(payload.get("recommended_auto_continue_message", "")).strip())
+            self.assertIn(
+                "生成一个自然开场",
+                str(payload.get("recommended_auto_continue_message", "")).strip(),
+            )
 
-    def test_dialogue_scene_card_recommendation_uses_runtime_shift_reason_in_transition_hint(self):
+    def test_dialogue_scene_card_recommendation_uses_runtime_shift_reason_in_transition_hint(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -309,7 +348,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -317,14 +358,21 @@ class WebRunServiceTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
             with patch.object(
                 WebRunService,
                 "_generate_dialogue_responses",
-                return_value=[{"speaker": "场景提示", "message": "雨已经大到不得不换个地方把话说完。"}],
+                return_value=[
+                    {
+                        "speaker": "场景提示",
+                        "message": "雨已经大到不得不换个地方把话说完。",
+                    }
+                ],
             ):
                 session = service.create_dialogue_session(
                     run["run_id"],
@@ -347,11 +395,18 @@ class WebRunServiceTests(unittest.TestCase):
                 },
             )
 
-            payload = service.recommend_dialogue_scene_card(run["run_id"], session_id=session["session_id"])
+            payload = service.recommend_dialogue_scene_card(
+                run["run_id"], session_id=session["session_id"]
+            )
 
             self.assertEqual(payload["recommended_card_id"], next_scene["card_id"])
-            self.assertIn("雨势压得两人都没法再站在回廊里装作无事", payload["recommended_transition_message"])
-            self.assertTrue(str(payload.get("recommended_auto_continue_message", "")).strip())
+            self.assertIn(
+                "雨势压得两人都没法再站在回廊里装作无事",
+                payload["recommended_transition_message"],
+            )
+            self.assertTrue(
+                str(payload.get("recommended_auto_continue_message", "")).strip()
+            )
 
     def test_dialogue_scene_history_tracks_initial_scene_and_switches(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -392,7 +447,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -400,7 +457,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -427,7 +486,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(len(history), 2)
             self.assertEqual(history[0]["title"], "回廊夜谈")
             self.assertEqual(history[1]["title"], "转入花厅")
-            self.assertEqual(history[1]["transition_message"], "雨势更大，众人转入花厅。")
+            self.assertEqual(
+                history[1]["transition_message"], "雨势更大，众人转入花厅。"
+            )
             self.assertEqual(history[1]["is_current"], "true")
 
     def test_switch_dialogue_scene_card_can_auto_continue_new_scene(self):
@@ -469,7 +530,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -477,7 +540,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -486,7 +551,12 @@ class WebRunServiceTests(unittest.TestCase):
                 "_generate_dialogue_responses",
                 side_effect=[
                     [{"speaker": "场景提示", "message": "开场。"}],
-                    [{"speaker": "林黛玉", "message": "（她抬眼看了看门外雨势）进了花厅，也未见得就好说。"}],
+                    [
+                        {
+                            "speaker": "林黛玉",
+                            "message": "（她抬眼看了看门外雨势）进了花厅，也未见得就好说。",
+                        }
+                    ],
                 ],
             ):
                 session = service.create_dialogue_session(
@@ -504,9 +574,18 @@ class WebRunServiceTests(unittest.TestCase):
                 )
 
             transcript = list(switched.get("transcript", []) or [])
-            self.assertEqual(switched["session_card"]["scene_card"]["title"], "转入花厅")
-            self.assertTrue(any("众人转入花厅" in str(item.get("message", "")) for item in transcript))
-            self.assertTrue(any(str(item.get("speaker", "")) == "林黛玉" for item in transcript))
+            self.assertEqual(
+                switched["session_card"]["scene_card"]["title"], "转入花厅"
+            )
+            self.assertTrue(
+                any(
+                    "众人转入花厅" in str(item.get("message", ""))
+                    for item in transcript
+                )
+            )
+            self.assertTrue(
+                any(str(item.get("speaker", "")) == "林黛玉" for item in transcript)
+            )
             self.assertEqual(switched.get("status"), "ready")
             self.assertFalse(bool(switched.get("pending_turn")))
 
@@ -549,7 +628,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -557,7 +638,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -590,7 +673,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(branch["session_card"]["scene_card"]["location"], "花厅")
             self.assertEqual(branch["scene_history"][0]["title"], "花厅再会")
             self.assertEqual(branch["branch_origin"]["scene_title"], "花厅再会")
-            self.assertTrue(str(branch["session_memory_summary"]["recap"]).startswith("承接旧线："))
+            self.assertTrue(
+                str(branch["session_memory_summary"]["recap"]).startswith("承接旧线：")
+            )
 
     def test_scene_card_crud_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -695,7 +780,9 @@ class WebRunServiceTests(unittest.TestCase):
 
             fetched = service.get_opening_preset(created["card_id"])
             self.assertEqual(fetched["fields"]["mode"], "insert")
-            self.assertEqual(fetched["fields"]["participants"], ["林黛玉", "贾宝玉", "薛宝钗"])
+            self.assertEqual(
+                fetched["fields"]["participants"], ["林黛玉", "贾宝玉", "薛宝钗"]
+            )
 
             deleted = service.delete_opening_preset(created["card_id"])
             self.assertEqual(deleted["status"], "deleted")
@@ -770,8 +857,12 @@ class WebRunServiceTests(unittest.TestCase):
             fetched = service.get_opening_preset(preset["card_id"])
             self.assertEqual(fetched["preview"]["scene_title"], "花厅夜宴")
             self.assertEqual(fetched["preview"]["self_name"], "阿眠")
-            self.assertEqual(fetched["fields"]["scene_card"]["fields"]["location"], "花厅")
-            self.assertEqual(fetched["fields"]["self_card"]["fields"]["core_identity"], "会看局的人")
+            self.assertEqual(
+                fetched["fields"]["scene_card"]["fields"]["location"], "花厅"
+            )
+            self.assertEqual(
+                fetched["fields"]["self_card"]["fields"]["core_identity"], "会看局的人"
+            )
 
     def test_generate_self_card_returns_complete_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -833,7 +924,9 @@ class WebRunServiceTests(unittest.TestCase):
 
             self.assertEqual(payload["fields"]["display_name"], "沈雾")
             self.assertEqual(payload["fields"]["core_identity"], "善算局的外来人")
-            self.assertEqual(payload["preview"]["speech_style"], "先轻描淡写，再慢慢逼近重点")
+            self.assertEqual(
+                payload["preview"]["speech_style"], "先轻描淡写，再慢慢逼近重点"
+            )
 
     def test_create_dialogue_session_uses_selected_self_card_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -866,7 +959,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -874,7 +969,9 @@ class WebRunServiceTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -892,8 +989,13 @@ class WebRunServiceTests(unittest.TestCase):
                 )
 
             self.assertEqual(session["session_card"]["self_card_id"], card["card_id"])
-            self.assertEqual(session["session_card"]["self_insert"]["display_name"], "阿眠")
-            self.assertEqual(session["session_card"]["self_insert"]["core_identity"], "看得懂人情的局外人")
+            self.assertEqual(
+                session["session_card"]["self_insert"]["display_name"], "阿眠"
+            )
+            self.assertEqual(
+                session["session_card"]["self_insert"]["core_identity"],
+                "看得懂人情的局外人",
+            )
 
     def test_insert_session_keeps_snapshot_after_self_card_deleted(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -926,7 +1028,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -934,7 +1038,9 @@ class WebRunServiceTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -964,7 +1070,9 @@ class WebRunServiceTests(unittest.TestCase):
                     message="我只是先来看看风向。",
                 )
 
-            self.assertEqual(replied["session_card"]["self_insert"]["display_name"], "阿眠")
+            self.assertEqual(
+                replied["session_card"]["self_insert"]["display_name"], "阿眠"
+            )
             self.assertEqual(replied["transcript"][-2]["speaker"], "阿眠")
             self.assertEqual(replied["transcript"][-1]["speaker"], "林黛玉")
 
@@ -993,7 +1101,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -1001,7 +1111,9 @@ class WebRunServiceTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -1022,7 +1134,9 @@ class WebRunServiceTests(unittest.TestCase):
             with patch.object(
                 WebRunService,
                 "_generate_dialogue_responses",
-                return_value=[{"speaker": "贾宝玉", "message": "这话怎么偏偏此刻提起。"}],
+                return_value=[
+                    {"speaker": "贾宝玉", "message": "这话怎么偏偏此刻提起。"}
+                ],
             ):
                 replied = service.reply_dialogue_turn(
                     payload["run_id"],
@@ -1032,7 +1146,9 @@ class WebRunServiceTests(unittest.TestCase):
                 )
 
             self.assertEqual(replied["session_card"]["scene_card"]["title"], "花厅夜宴")
-            self.assertEqual(replied["session_card"]["scene_card"]["location"], "花厅暖阁")
+            self.assertEqual(
+                replied["session_card"]["scene_card"]["location"], "花厅暖阁"
+            )
 
     def test_switch_dialogue_scene_card_updates_snapshot_and_appends_transition(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1073,7 +1189,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -1081,7 +1199,9 @@ class WebRunServiceTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -1104,8 +1224,12 @@ class WebRunServiceTests(unittest.TestCase):
                 transition_message="雨势更大，众人只得移进花厅，把未说完的话接着往下说。",
             )
 
-            self.assertEqual(switched["session_card"]["scene_card_id"], second_scene["card_id"])
-            self.assertEqual(switched["session_card"]["scene_card"]["title"], "花厅对坐")
+            self.assertEqual(
+                switched["session_card"]["scene_card_id"], second_scene["card_id"]
+            )
+            self.assertEqual(
+                switched["session_card"]["scene_card"]["title"], "花厅对坐"
+            )
             self.assertEqual(switched["transcript"][-1]["speaker"], "场景提示")
             self.assertIn("移进花厅", switched["transcript"][-1]["message"])
             self.assertIn("花厅对坐", switched["session_memory_summary"]["scene_frame"])
@@ -1113,12 +1237,16 @@ class WebRunServiceTests(unittest.TestCase):
     def test_service_prefers_storage_root_env_when_explicit_root_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage_root = Path(tmp) / "custom-storage"
-            with patch.dict(os.environ, {"ZAOMENG_STORAGE_DIR": str(storage_root)}, clear=False):
+            with patch.dict(
+                os.environ, {"ZAOMENG_STORAGE_DIR": str(storage_root)}, clear=False
+            ):
                 service = WebRunService()
 
             self.assertEqual(service.storage_root, storage_root)
             self.assertEqual(service.runs_root, storage_root / "runs")
-            self.assertEqual(service.settings_path, storage_root / "model_settings.json")
+            self.assertEqual(
+                service.settings_path, storage_root / "model_settings.json"
+            )
             self.assertTrue(service.runs_root.exists())
 
     def test_persona_web_references_filters_dictionary_like_results(self):
@@ -1167,24 +1295,42 @@ class WebRunServiceTests(unittest.TestCase):
             chunks = service._build_distill_chunk_payloads(payload)
 
             self.assertGreaterEqual(len(chunks), 2)
-            self.assertTrue(all(item["payload"]["request"]["excerpt"] for item in chunks))
-            self.assertTrue(any(str(item["label"]).startswith("前段") for item in chunks))
+            self.assertTrue(
+                all(item["payload"]["request"]["excerpt"] for item in chunks)
+            )
+            self.assertTrue(
+                any(str(item["label"]).startswith("前段") for item in chunks)
+            )
 
     def test_chunk_parallel_workers_stays_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             config = Mock()
-            config.get = Mock(side_effect=lambda key, default=None: {"llm.provider": "openai-compatible", "llm.parallel_chunk_workers": 3}.get(key, default))
-            self.assertEqual(service._chunk_parallel_workers(config=config, chunk_total=1), 1)
-            self.assertEqual(service._chunk_parallel_workers(config=config, chunk_total=2), 2)
-            self.assertEqual(service._chunk_parallel_workers(config=config, chunk_total=5), 3)
+            config.get = Mock(
+                side_effect=lambda key, default=None: {
+                    "llm.provider": "openai-compatible",
+                    "llm.parallel_chunk_workers": 3,
+                }.get(key, default)
+            )
+            self.assertEqual(
+                service._chunk_parallel_workers(config=config, chunk_total=1), 1
+            )
+            self.assertEqual(
+                service._chunk_parallel_workers(config=config, chunk_total=2), 2
+            )
+            self.assertEqual(
+                service._chunk_parallel_workers(config=config, chunk_total=5), 3
+            )
 
     def test_generate_character_profile_markdown_falls_back_to_chunked_merge(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             manifest_path = Path(tmp) / "run_manifest.json"
             manifest_path.write_text(
-                json.dumps({"control": {"stop_requested": False}}, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(
+                    {"control": {"stop_requested": False}}, ensure_ascii=False, indent=2
+                )
+                + "\n",
                 encoding="utf-8",
             )
             payload = {
@@ -1206,9 +1352,15 @@ class WebRunServiceTests(unittest.TestCase):
             fake_parts.llm.chat_completion = Mock(
                 side_effect=[
                     LLMRequestError("LLM 连接失败: [WinError 10054]"),
-                    {"content": "# PROFILE\n- name: 甲\n- speech_style: 先压住再开口\n"},
-                    {"content": "# PROFILE\n- name: 甲\n- speech_style: 句尾收得很轻\n"},
-                    {"content": "# PROFILE\n- name: 甲\n- speech_style: 先压住再开口，句尾收得很轻\n"},
+                    {
+                        "content": "# PROFILE\n- name: 甲\n- speech_style: 先压住再开口\n"
+                    },
+                    {
+                        "content": "# PROFILE\n- name: 甲\n- speech_style: 句尾收得很轻\n"
+                    },
+                    {
+                        "content": "# PROFILE\n- name: 甲\n- speech_style: 先压住再开口，句尾收得很轻\n"
+                    },
                 ]
             )
 
@@ -1222,7 +1374,9 @@ class WebRunServiceTests(unittest.TestCase):
             ):
                 content, meta = service._generate_character_profile_markdown(
                     parts=fake_parts,
-                    config=Mock(get=Mock(side_effect=lambda key, default=None: default)),
+                    config=Mock(
+                        get=Mock(side_effect=lambda key, default=None: default)
+                    ),
                     manifest_path=manifest_path,
                     payload=payload,
                     character="甲",
@@ -1239,7 +1393,10 @@ class WebRunServiceTests(unittest.TestCase):
             service = WebRunService(tmp)
             manifest_path = Path(tmp) / "run_manifest.json"
             manifest_path.write_text(
-                json.dumps({"control": {"stop_requested": False}}, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(
+                    {"control": {"stop_requested": False}}, ensure_ascii=False, indent=2
+                )
+                + "\n",
                 encoding="utf-8",
             )
             payload = {
@@ -1251,7 +1408,11 @@ class WebRunServiceTests(unittest.TestCase):
                 },
                 "request": {
                     "excerpt": "甲见乙。乙应甲。",
-                    "excerpt_stages": {"start": "甲见乙。", "mid": "乙应甲。", "end": ""},
+                    "excerpt_stages": {
+                        "start": "甲见乙。",
+                        "mid": "乙应甲。",
+                        "end": "",
+                    },
                     "excerpt_focus": {"strategy": "character_windows"},
                 },
                 "meta": {"novel_id": "demo"},
@@ -1260,9 +1421,15 @@ class WebRunServiceTests(unittest.TestCase):
             fake_parts.llm.chat_completion = Mock(
                 side_effect=[
                     LLMRequestError("LLM 连接失败: [WinError 10054]"),
-                    {"content": "# RELATION_GRAPH\n\n## 甲_乙\n- trust: 7\n- affection: 3\n- power_gap: 0\n- conflict_point: 立场试探\n- typical_interaction: 观察与回应\n- hidden_attitude: \n- relation_change: 固化\n- appellation_to_target: 乙\n- confidence: 7\n"},
-                    {"content": "# RELATION_GRAPH\n\n## 甲_乙\n- trust: 8\n- affection: 4\n- power_gap: 0\n- conflict_point: 互相试探\n- typical_interaction: 追问与回应\n- hidden_attitude: \n- relation_change: 升温\n- appellation_to_target: 乙\n- confidence: 7\n"},
-                    {"content": "# RELATION_GRAPH\n\n## 甲_乙\n- trust: 8\n- affection: 4\n- power_gap: 0\n- conflict_point: 互相试探\n- typical_interaction: 观察、追问与回应\n- hidden_attitude: \n- relation_change: 反复波动\n- appellation_to_target: 乙\n- confidence: 8\n"},
+                    {
+                        "content": "# RELATION_GRAPH\n\n## 甲_乙\n- trust: 7\n- affection: 3\n- power_gap: 0\n- conflict_point: 立场试探\n- typical_interaction: 观察与回应\n- hidden_attitude: \n- relation_change: 固化\n- appellation_to_target: 乙\n- confidence: 7\n"
+                    },
+                    {
+                        "content": "# RELATION_GRAPH\n\n## 甲_乙\n- trust: 8\n- affection: 4\n- power_gap: 0\n- conflict_point: 互相试探\n- typical_interaction: 追问与回应\n- hidden_attitude: \n- relation_change: 升温\n- appellation_to_target: 乙\n- confidence: 7\n"
+                    },
+                    {
+                        "content": "# RELATION_GRAPH\n\n## 甲_乙\n- trust: 8\n- affection: 4\n- power_gap: 0\n- conflict_point: 互相试探\n- typical_interaction: 观察、追问与回应\n- hidden_attitude: \n- relation_change: 反复波动\n- appellation_to_target: 乙\n- confidence: 8\n"
+                    },
                 ]
             )
 
@@ -1276,7 +1443,9 @@ class WebRunServiceTests(unittest.TestCase):
             ):
                 content, meta = service._generate_relation_markdown(
                     parts=fake_parts,
-                    config=Mock(get=Mock(side_effect=lambda key, default=None: default)),
+                    config=Mock(
+                        get=Mock(side_effect=lambda key, default=None: default)
+                    ),
                     manifest_path=manifest_path,
                     payload=payload,
                     characters=["甲", "乙"],
@@ -1287,7 +1456,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(meta["chunk_count"], 2)
             self.assertEqual(fake_parts.llm.chat_completion.call_count, 4)
 
-    def test_finalize_generated_profile_source_backfills_evidence_counts_from_payload(self):
+    def test_finalize_generated_profile_source_backfills_evidence_counts_from_payload(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             source_path = Path(tmp) / "PROFILE.generated.md"
@@ -1306,19 +1477,28 @@ class WebRunServiceTests(unittest.TestCase):
             payload = {
                 "request": {
                     "excerpt": "魏无羡笑道：“先别慌。”\n江澄心想此事绝不简单。\n夷陵风声渐紧。",
-                    "excerpt_stages": {"start": "魏无羡笑道：“先别慌。”", "mid": "江澄心想此事绝不简单。", "end": "夷陵风声渐紧。"},
+                    "excerpt_stages": {
+                        "start": "魏无羡笑道：“先别慌。”",
+                        "mid": "江澄心想此事绝不简单。",
+                        "end": "夷陵风声渐紧。",
+                    },
                     "excerpt_focus": {"strategy": "character_windows_mixed"},
                 }
             }
 
-            service._finalize_generated_profile_source(source_path, payload=payload, chunk_count=3)
+            service._finalize_generated_profile_source(
+                source_path, payload=payload, chunk_count=3
+            )
             content = source_path.read_text(encoding="utf-8")
 
             self.assertIn("- description_count: 1", content)
             self.assertIn("- dialogue_count: 1", content)
             self.assertIn("- thought_count: 1", content)
             self.assertIn("- chunk_count: 3", content)
-            self.assertIn("- evidence_source: excerpt:start；excerpt:mid；excerpt:end；strategy:character_windows_mixed", content)
+            self.assertIn(
+                "- evidence_source: excerpt:start；excerpt:mid；excerpt:end；strategy:character_windows_mixed",
+                content,
+            )
 
     def test_profile_repair_triggers_when_completion_fields_are_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1337,13 +1517,26 @@ class WebRunServiceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             fake_parts = Mock()
-            fake_parts.llm.chat_completion = Mock(return_value={"content": "# PROFILE\n- name: 魏无羡\n- soul_goal: 护住该护的人\n"})
+            fake_parts.llm.chat_completion = Mock(
+                return_value={
+                    "content": "# PROFILE\n- name: 魏无羡\n- soul_goal: 护住该护的人\n"
+                }
+            )
             payload = {
                 "prompt": "系统提示",
-                "references": {"output_schema": "schema", "style_differ": "style", "logic_constraint": "logic", "validation_policy": "policy"},
+                "references": {
+                    "output_schema": "schema",
+                    "style_differ": "style",
+                    "logic_constraint": "logic",
+                    "validation_policy": "policy",
+                },
                 "request": {
                     "excerpt": "魏无羡笑道：“先别慌。”\n江澄心想此事绝不简单。\n夷陵风声渐紧。",
-                    "excerpt_stages": {"start": "魏无羡笑道：“先别慌。”", "mid": "江澄心想此事绝不简单。", "end": "夷陵风声渐紧。"},
+                    "excerpt_stages": {
+                        "start": "魏无羡笑道：“先别慌。”",
+                        "mid": "江澄心想此事绝不简单。",
+                        "end": "夷陵风声渐紧。",
+                    },
                     "excerpt_focus": {"strategy": "character_windows_mixed"},
                 },
                 "meta": {"novel_id": "魔道祖师"},
@@ -1414,7 +1607,9 @@ class WebRunServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Model is not configured yet."):
                 service.create_run(
                     novel_name="hongloumeng.txt",
-                    novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    novel_content_base64=base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     characters=["林黛玉"],
                 )
 
@@ -1437,7 +1632,9 @@ class WebRunServiceTests(unittest.TestCase):
                     "repo_slug": "wkbin/zaomeng",
                     "repo_ref": "main",
                 },
-            ), patch.object(service, "_read_local_app_version", return_value="20260508100000"), patch.object(
+            ), patch.object(
+                service, "_read_local_app_version", return_value="20260508100000"
+            ), patch.object(
                 service,
                 "_fetch_remote_app_version",
                 return_value="20260510120000",
@@ -1468,8 +1665,12 @@ class WebRunServiceTests(unittest.TestCase):
                 service,
                 "_fetch_remote_app_version",
                 side_effect=["20260510120000", "20260510120000"],
-            ), patch("src.web.service_facades.system_update.subprocess.run") as run_update:
-                run_update.return_value = Mock(returncode=0, stdout="updated", stderr="")
+            ), patch(
+                "src.web.service_facades.system_update.subprocess.run"
+            ) as run_update:
+                run_update.return_value = Mock(
+                    returncode=0, stdout="updated", stderr=""
+                )
                 started = service.start_app_update()
                 self.assertEqual(started["status"], "updating")
                 self.assertIsNotNone(service._app_update_thread)
@@ -1504,14 +1705,20 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。薛宝钗也在场。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。薛宝钗也在场。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
 
             self.assertEqual(payload["entrypoint"], "webui")
             self.assertEqual(payload["progress"]["stage"], "relation_payload_ready")
-            self.assertEqual(payload["summary"]["status_text"], "waiting_for_host_generation")
-            self.assertEqual(payload["locked_characters"], ["林黛玉", "贾宝玉", "薛宝钗"])
+            self.assertEqual(
+                payload["summary"]["status_text"], "waiting_for_host_generation"
+            )
+            self.assertEqual(
+                payload["locked_characters"], ["林黛玉", "贾宝玉", "薛宝钗"]
+            )
             self.assertEqual(payload["novel_sources"][0]["kind"], "initial")
             self.assertGreater(payload["novel_sources"][0]["byte_size"], 0)
             self.assertGreater(payload["novel_sources"][0]["char_count"], 0)
@@ -1541,7 +1748,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             broken_dir = Path(tmp) / "runs" / "run-broken"
@@ -1563,18 +1772,25 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("王熙凤见了史湘云。晴雯与袭人也在场。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "王熙凤见了史湘云。晴雯与袭人也在场。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["王熙凤", "史湘云", "晴雯", "袭人"],
             )
             manifest_path = Path(tmp) / "runs" / payload["run_id"] / "run_manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest.setdefault("artifacts", {}).setdefault("payloads", {})["distill_characters"] = {
+            manifest.setdefault("artifacts", {}).setdefault("payloads", {})[
+                "distill_characters"
+            ] = {
                 "王熙凤": r"D:\work2\Dreamforge\.zaomeng-web\runs\run-legacy\payloads\distill_王熙凤.json",
                 "史湘云": r"D:\work2\Dreamforge\.zaomeng-web\runs\run-legacy\payloads\distill_史湘云.json",
                 "晴雯": r"D:\work2\Dreamforge\.zaomeng-web\runs\run-legacy\payloads\distill_晴雯.json",
                 "袭人": r"D:\work2\Dreamforge\.zaomeng-web\runs\run-legacy\payloads\distill_袭人.json",
             }
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             items = service.list_runs()
 
@@ -1594,7 +1810,9 @@ class WebRunServiceTests(unittest.TestCase):
             with patch.object(service, "_start_background_run") as start_background_run:
                 payload = service.create_run(
                     novel_name="hongloumeng.txt",
-                    novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    novel_content_base64=base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     characters=["林黛玉", "贾宝玉"],
                     auto_run=True,
                 )
@@ -1603,7 +1821,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(payload["progress"]["stage"], "characters_locked")
             start_background_run.assert_called_once()
 
-    def test_restart_run_distill_reuses_existing_novel_and_starts_background_pipeline(self):
+    def test_restart_run_distill_reuses_existing_novel_and_starts_background_pipeline(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -1614,7 +1834,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             with patch.object(service, "_start_background_run") as start_background_run:
@@ -1631,7 +1853,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("增量蒸馏 2 人", refreshed["redistill"]["summary"])
             start_background_run.assert_called_once()
 
-    def test_restart_run_distill_accepts_new_source_segment_for_incremental_update(self):
+    def test_restart_run_distill_accepts_new_source_segment_for_incremental_update(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -1642,13 +1866,19 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng-1.txt",
-                novel_content_base64=base64.b64encode("第一章里林黛玉初见贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "第一章里林黛玉初见贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
-            persona_dir = run_dir / "artifacts" / "characters" / "hongloumeng-1" / "林黛玉"
+            persona_dir = (
+                run_dir / "artifacts" / "characters" / "hongloumeng-1" / "林黛玉"
+            )
             persona_dir.mkdir(parents=True, exist_ok=True)
-            (persona_dir / "PROFILE.generated.md").write_text("- name: 林黛玉\n", encoding="utf-8")
+            (persona_dir / "PROFILE.generated.md").write_text(
+                "- name: 林黛玉\n", encoding="utf-8"
+            )
             service.refresh_run(payload["run_id"])
 
             with patch.object(service, "_start_background_run") as start_background_run:
@@ -1656,21 +1886,29 @@ class WebRunServiceTests(unittest.TestCase):
                     payload["run_id"],
                     characters=["林黛玉", "薛宝钗"],
                     novel_name="hongloumeng-2.txt",
-                    novel_content_base64=base64.b64encode("第二章里宝钗登场，黛玉再见宝玉。".encode("utf-8")).decode("ascii"),
+                    novel_content_base64=base64.b64encode(
+                        "第二章里宝钗登场，黛玉再见宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                 )
 
             self.assertTrue(refreshed["redistill"]["used_new_source"])
             self.assertEqual(refreshed["redistill"]["existing_characters"], ["林黛玉"])
             self.assertEqual(refreshed["redistill"]["new_characters"], ["薛宝钗"])
-            self.assertEqual(refreshed["redistill"]["relation_characters"], ["林黛玉", "薛宝钗"])
+            self.assertEqual(
+                refreshed["redistill"]["relation_characters"], ["林黛玉", "薛宝钗"]
+            )
             self.assertIn("增量 1 人", refreshed["redistill"]["summary"])
             self.assertIn("updates", refreshed["novel_path"])
-            self.assertEqual(refreshed["novel_sources"][-1]["kind"], "incremental_update")
+            self.assertEqual(
+                refreshed["novel_sources"][-1]["kind"], "incremental_update"
+            )
             self.assertGreater(refreshed["novel_sources"][-1]["byte_size"], 0)
             self.assertGreater(refreshed["novel_sources"][-1]["char_count"], 0)
             start_background_run.assert_called_once()
 
-    def test_restart_run_distill_requeues_selected_existing_characters_when_reusing_source(self):
+    def test_restart_run_distill_requeues_selected_existing_characters_when_reusing_source(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -1681,13 +1919,19 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉先出场，后面宝钗还没来。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉先出场，后面宝钗还没来。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "薛宝钗"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
-            persona_dir = run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            persona_dir = (
+                run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            )
             persona_dir.mkdir(parents=True, exist_ok=True)
-            (persona_dir / "PROFILE.generated.md").write_text("- name: 林黛玉\n", encoding="utf-8")
+            (persona_dir / "PROFILE.generated.md").write_text(
+                "- name: 林黛玉\n", encoding="utf-8"
+            )
             service.refresh_run(payload["run_id"])
 
             with patch.object(service, "_start_background_run") as start_background_run:
@@ -1700,15 +1944,22 @@ class WebRunServiceTests(unittest.TestCase):
 
             self.assertFalse(refreshed["redistill"]["used_new_source"])
             self.assertEqual(refreshed["redistill"]["resume_completed_characters"], [])
-            self.assertEqual(refreshed["redistill"]["pending_characters"], ["林黛玉", "薛宝钗"])
+            self.assertEqual(
+                refreshed["redistill"]["pending_characters"], ["林黛玉", "薛宝钗"]
+            )
             self.assertEqual(refreshed["progress"]["completed_characters"], [])
             self.assertEqual(refreshed["progress"]["completed_count"], 0)
             self.assertEqual(refreshed["summary"]["characters_completed"], 0)
             self.assertIn("增量蒸馏 2 人", refreshed["redistill"]["summary"])
-            self.assertEqual(refreshed["capabilities"]["distill"]["outputs"]["update_mode"], "incremental")
+            self.assertEqual(
+                refreshed["capabilities"]["distill"]["outputs"]["update_mode"],
+                "incremental",
+            )
             start_background_run.assert_called_once()
 
-    def test_restart_run_distill_requeues_single_existing_character_for_incremental_redistill(self):
+    def test_restart_run_distill_requeues_single_existing_character_for_incremental_redistill(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -1719,13 +1970,19 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉先出场，后面宝钗还没来。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉先出场，后面宝钗还没来。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "薛宝钗"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
-            persona_dir = run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            persona_dir = (
+                run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            )
             persona_dir.mkdir(parents=True, exist_ok=True)
-            (persona_dir / "PROFILE.generated.md").write_text("- name: 林黛玉\n- core_identity: 才女\n", encoding="utf-8")
+            (persona_dir / "PROFILE.generated.md").write_text(
+                "- name: 林黛玉\n- core_identity: 才女\n", encoding="utf-8"
+            )
             service.refresh_run(payload["run_id"])
 
             with patch.object(service, "_start_background_run") as start_background_run:
@@ -1742,7 +1999,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("增量蒸馏 1 人", refreshed["redistill"]["summary"])
             start_background_run.assert_called_once()
 
-    def test_suggest_redistill_segments_returns_dialogue_heavy_windows_for_weak_profile(self):
+    def test_suggest_redistill_segments_returns_dialogue_heavy_windows_for_weak_profile(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -1765,7 +2024,9 @@ class WebRunServiceTests(unittest.TestCase):
                 characters=["林黛玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
-            persona_dir = run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            persona_dir = (
+                run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            )
             persona_dir.mkdir(parents=True, exist_ok=True)
             (persona_dir / "PROFILE.generated.md").write_text(
                 "- name: 林黛玉\n- core_identity: 贾府外来才女\n- story_role: 女主角之一\n- speech_style:\n- key_bonds:\n",
@@ -1773,7 +2034,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             service.refresh_run(payload["run_id"])
 
-            suggested = service.suggest_redistill_segments(payload["run_id"], "林黛玉", max_segments=2)
+            suggested = service.suggest_redistill_segments(
+                payload["run_id"], "林黛玉", max_segments=2
+            )
 
             self.assertEqual(suggested["character"], "林黛玉")
             self.assertEqual(suggested["source_name"], "hongloumeng.txt")
@@ -1797,7 +2060,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng-1.txt",
-                novel_content_base64=base64.b64encode("第一章里林黛玉出场。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "第一章里林黛玉出场。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
 
@@ -1816,7 +2081,9 @@ class WebRunServiceTests(unittest.TestCase):
                     ).decode("ascii"),
                 )
 
-            suggested = service.suggest_redistill_segments(payload["run_id"], "薛宝钗", max_segments=2)
+            suggested = service.suggest_redistill_segments(
+                payload["run_id"], "薛宝钗", max_segments=2
+            )
 
             self.assertTrue(str(suggested["source_name"]).endswith("hongloumeng-2.txt"))
             self.assertEqual(suggested["source_kind"], "incremental_update")
@@ -1834,29 +2101,42 @@ class WebRunServiceTests(unittest.TestCase):
             )
             first = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             second = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("宝钗也在场。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "宝钗也在场。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["薛宝钗"],
             )
             third = service.create_run(
                 novel_name="sanguo.txt",
-                novel_content_base64=base64.b64encode("刘备见关羽。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "刘备见关羽。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["刘备"],
             )
 
-            first_dialogue_dir = Path(tmp) / "runs" / first["run_id"] / "dialogue" / "dlg-a"
-            second_dialogue_dir = Path(tmp) / "runs" / second["run_id"] / "dialogue" / "dlg-b"
+            first_dialogue_dir = (
+                Path(tmp) / "runs" / first["run_id"] / "dialogue" / "dlg-a"
+            )
+            second_dialogue_dir = (
+                Path(tmp) / "runs" / second["run_id"] / "dialogue" / "dlg-b"
+            )
             first_dialogue_dir.mkdir(parents=True, exist_ok=True)
             second_dialogue_dir.mkdir(parents=True, exist_ok=True)
             for run in (first, second, third):
                 manifest_path = Path(tmp) / "runs" / run["run_id"] / "run_manifest.json"
                 payload = json.loads(manifest_path.read_text(encoding="utf-8"))
                 payload["status"] = "ready"
-                manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                manifest_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
 
             payload = service.delete_run_group(first["run_id"])
 
@@ -1879,7 +2159,9 @@ class WebRunServiceTests(unittest.TestCase):
             with patch.object(service, "_start_background_run"):
                 run = service.create_run(
                     novel_name="hongloumeng.txt",
-                    novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    novel_content_base64=base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     characters=["林黛玉"],
                     auto_run=True,
                 )
@@ -1899,7 +2181,9 @@ class WebRunServiceTests(unittest.TestCase):
             with patch.object(service, "_start_background_run"):
                 run = service.create_run(
                     novel_name="hongloumeng.txt",
-                    novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    novel_content_base64=base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     characters=["林黛玉"],
                     auto_run=True,
                 )
@@ -1913,7 +2197,10 @@ class WebRunServiceTests(unittest.TestCase):
             manifest_path = Path(tmp) / "runs" / run["run_id"] / "run_manifest.json"
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             payload["status"] = "ready"
-            manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             with self.assertRaisesRegex(ValueError, "只有正在蒸馏的书卷才能停止"):
                 service.stop_run(run["run_id"])
@@ -1929,7 +2216,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -1938,7 +2227,10 @@ class WebRunServiceTests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["control"]["stop_requested"] = True
             manifest["control"]["stop_requested_at"] = "2026-05-07T00:00:00Z"
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             with patch("src.web.workflow.build_runtime_parts") as build_parts:
                 fake_parts = Mock()
@@ -2041,7 +2333,9 @@ class WebRunServiceTests(unittest.TestCase):
             merged = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertTrue(merged["control"]["stop_requested"])
-            self.assertEqual(merged["control"]["stop_requested_at"], "2026-05-11T10:00:00Z")
+            self.assertEqual(
+                merged["control"]["stop_requested_at"], "2026-05-11T10:00:00Z"
+            )
 
     def test_stop_run_updates_latest_manifest_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2055,7 +2349,9 @@ class WebRunServiceTests(unittest.TestCase):
             with patch.object(service, "_start_background_run"):
                 run = service.create_run(
                     novel_name="hongloumeng.txt",
-                    novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    novel_content_base64=base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     characters=["林黛玉"],
                     auto_run=True,
                 )
@@ -2064,15 +2360,23 @@ class WebRunServiceTests(unittest.TestCase):
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             payload.setdefault("progress", {})["current_character"] = "林黛玉"
             payload["updated_at"] = "2026-05-11T12:00:00Z"
-            manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             stale_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             stale_manifest["progress"]["current_character"] = ""
             stale_manifest["updated_at"] = "2000-01-01T00:00:00Z"
             stale_manifest.pop("events", None)
 
-            with patch("src.web.service_facades.runs.stop_run_manifest", side_effect=lambda _manifest, *, utc_now: _manifest):
-                with patch.object(service, "_load_manifest", return_value=stale_manifest):
+            with patch(
+                "src.web.service_facades.runs.stop_run_manifest",
+                side_effect=lambda _manifest, *, utc_now: _manifest,
+            ):
+                with patch.object(
+                    service, "_load_manifest", return_value=stale_manifest
+                ):
                     stopped = service.stop_run(run["run_id"])
 
             self.assertEqual(stopped["progress"]["current_character"], "林黛玉")
@@ -2107,7 +2411,9 @@ class WebRunServiceTests(unittest.TestCase):
                     current.setdefault("control", {})["stop_requested"] = True
                     return current
 
-                result_holder["payload"] = service._update_manifest(manifest_path, updater)
+                result_holder["payload"] = service._update_manifest(
+                    manifest_path, updater
+                )
                 done.set()
 
             fresh_payload = {
@@ -2119,7 +2425,10 @@ class WebRunServiceTests(unittest.TestCase):
             with service._manifest_lock_context(manifest_path):
                 worker = threading.Thread(target=writer)
                 worker.start()
-                manifest_path.write_text(json.dumps(fresh_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                manifest_path.write_text(
+                    json.dumps(fresh_payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
 
             done.wait(timeout=3)
             worker.join(timeout=3)
@@ -2128,8 +2437,12 @@ class WebRunServiceTests(unittest.TestCase):
             persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["progress"]["current_character"], "薛宝钗")
             self.assertEqual(persisted["updated_at"], "2026-05-11T12:01:00Z")
-            self.assertTrue(bool(persisted.get("control", {}).get("stop_requested", False)))
-            self.assertEqual(result_holder["payload"]["progress"]["current_character"], "薛宝钗")
+            self.assertTrue(
+                bool(persisted.get("control", {}).get("stop_requested", False))
+            )
+            self.assertEqual(
+                result_holder["payload"]["progress"]["current_character"], "薛宝钗"
+            )
 
     def test_start_background_run_uses_latest_manifest_snapshot_under_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2159,7 +2472,9 @@ class WebRunServiceTests(unittest.TestCase):
             finished = threading.Event()
 
             def worker() -> None:
-                with patch("src.web.service_facades.runtime_support.start_background_thread"):
+                with patch(
+                    "src.web.service_facades.runtime_support.start_background_thread"
+                ):
                     service._start_background_run(
                         manifest_path=manifest_path,
                         novel_path=novel_path,
@@ -2177,7 +2492,10 @@ class WebRunServiceTests(unittest.TestCase):
                         {
                             "run_id": run_id,
                             "status": "running",
-                            "progress": {"stage": "characters_locked", "message": "fresh"},
+                            "progress": {
+                                "stage": "characters_locked",
+                                "message": "fresh",
+                            },
                             "summary": {"status_text": "fresh"},
                             "latest_marker": "keep-me",
                             "updated_at": "2026-05-11T12:01:00Z",
@@ -2196,9 +2514,13 @@ class WebRunServiceTests(unittest.TestCase):
             persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["latest_marker"], "keep-me")
             self.assertEqual(persisted["progress"]["stage"], "queued")
-            self.assertEqual(persisted["summary"]["status_text"], "waiting_for_payloads")
+            self.assertEqual(
+                persisted["summary"]["status_text"], "waiting_for_payloads"
+            )
 
-    def test_process_relation_graph_preserves_latest_relation_repairs_during_prepare(self):
+    def test_process_relation_graph_preserves_latest_relation_repairs_during_prepare(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             run_id = "run-relation-prepare"
@@ -2209,18 +2531,27 @@ class WebRunServiceTests(unittest.TestCase):
             payload_dir.mkdir(parents=True, exist_ok=True)
             novel_path = run_dir / "input" / "novel.txt"
             novel_path.parent.mkdir(parents=True, exist_ok=True)
-            novel_path.write_text("Alpha meets Beta. Alpha distrusts Gamma.", encoding="utf-8")
+            novel_path.write_text(
+                "Alpha meets Beta. Alpha distrusts Gamma.", encoding="utf-8"
+            )
             manifest_path.write_text(
                 json.dumps(
                     {
                         "run_id": run_id,
                         "novel_id": "novel",
                         "quality": {
-                            "excerpt_focus": {"matched_characters": [], "missing_characters": [], "strategy": ""},
+                            "excerpt_focus": {
+                                "matched_characters": [],
+                                "missing_characters": [],
+                                "strategy": "",
+                            },
                             "stage_presence": [],
                             "character_focus": {},
                             "profile_repairs": {"count": 0, "characters": []},
-                            "relation_repairs": {"count": 2, "pairs": ["Alpha_Beta", "Alpha_Gamma"]},
+                            "relation_repairs": {
+                                "count": 2,
+                                "pairs": ["Alpha_Beta", "Alpha_Gamma"],
+                            },
                         },
                     },
                     ensure_ascii=False,
@@ -2231,7 +2562,10 @@ class WebRunServiceTests(unittest.TestCase):
             )
 
             def write_json(path: Path, payload: dict[str, object]) -> None:
-                path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
 
             def update_manifest(path: Path, updater):
                 current = json.loads(path.read_text(encoding="utf-8"))
@@ -2257,12 +2591,16 @@ class WebRunServiceTests(unittest.TestCase):
                     update_manifest=update_manifest,
                     build_quality_snapshot=service._build_quality_snapshot,
                     update_manifest_chunk_progress=update_manifest_chunk_progress,
-                    generate_relation_markdown=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("stop after prepare")),
+                    generate_relation_markdown=lambda **kwargs: (_ for _ in ()).throw(
+                        RuntimeError("stop after prepare")
+                    ),
                     maybe_repair_generated_relations=lambda **kwargs: None,
                     load_relations_source=lambda path: {},
                     export_relations_source=lambda **kwargs: {},
                     utc_now=lambda: "2026-05-12T00:00:00Z",
-                    relation_repairs_getter=lambda current: (current.get("quality", {}) or {}).get("relation_repairs", {}),
+                    relation_repairs_getter=lambda current: (
+                        current.get("quality", {}) or {}
+                    ).get("relation_repairs", {}),
                     quality_matched=set(),
                     quality_missing=set(),
                     quality_focus={},
@@ -2287,14 +2625,19 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             run_id = payload["run_id"]
             manifest_path = Path(tmp) / "runs" / run_id / "run_manifest.json"
             latest = json.loads(manifest_path.read_text(encoding="utf-8"))
             latest["ingest_external_marker"] = "keep-character"
-            manifest_path.write_text(json.dumps(latest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             profile_text = "\n".join(
                 [
@@ -2307,7 +2650,9 @@ class WebRunServiceTests(unittest.TestCase):
             refreshed = service.ingest_character_result(
                 run_id,
                 character="林黛玉",
-                content_base64=base64.b64encode(profile_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(profile_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
             )
 
             persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2325,14 +2670,19 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = payload["run_id"]
             manifest_path = Path(tmp) / "runs" / run_id / "run_manifest.json"
             latest = json.loads(manifest_path.read_text(encoding="utf-8"))
             latest["ingest_external_marker"] = "keep-relation"
-            manifest_path.write_text(json.dumps(latest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             relations_text = "\n".join(
                 [
@@ -2347,7 +2697,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             refreshed = service.ingest_relation_result(
                 run_id,
-                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
                 filename="hongloumeng_relations.md",
             )
 
@@ -2366,7 +2718,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             run_id = payload["run_id"]
@@ -2376,7 +2730,10 @@ class WebRunServiceTests(unittest.TestCase):
             latest["status"] = "running"
             latest["summary"] = {"status_text": "running"}
             latest["updated_at"] = "2026-05-12T08:00:00Z"
-            manifest_path.write_text(json.dumps(latest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             stale_payload = dict(latest)
             stale_payload["updated_at"] = "2000-01-01T00:00:00Z"
@@ -2401,7 +2758,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="novel.txt",
-                novel_content_base64=base64.b64encode("Alpha meets Beta.".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "Alpha meets Beta.".encode("utf-8")
+                ).decode("ascii"),
                 characters=["Alpha"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -2418,7 +2777,12 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
@@ -2438,7 +2802,9 @@ class WebRunServiceTests(unittest.TestCase):
             real_update_manifest = service._update_manifest
             injected_before_finalize = {"value": False}
 
-            def wrapped_update_manifest(path: Path, updater, create_if_missing: bool = False):
+            def wrapped_update_manifest(
+                path: Path, updater, create_if_missing: bool = False
+            ):
                 if Path(path) == manifest_path and hasattr(updater, "__code__"):
                     names = set(getattr(updater.__code__, "co_names", ()))
                     if {
@@ -2447,14 +2813,27 @@ class WebRunServiceTests(unittest.TestCase):
                     } & names:
                         latest = json.loads(manifest_path.read_text(encoding="utf-8"))
                         latest["external_marker"] = "keep-me"
-                        manifest_path.write_text(json.dumps(latest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                        manifest_path.write_text(
+                            json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
                         injected_before_finalize["value"] = True
-                return real_update_manifest(path, updater, create_if_missing=create_if_missing)
+                return real_update_manifest(
+                    path, updater, create_if_missing=create_if_missing
+                )
 
             with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts):
-                with patch.object(service, "_maybe_repair_generated_profile", return_value=None):
-                    with patch.object(service, "_maybe_repair_generated_relations", return_value=None):
-                        with patch.object(service, "_update_manifest", side_effect=wrapped_update_manifest):
+                with patch.object(
+                    service, "_maybe_repair_generated_profile", return_value=None
+                ):
+                    with patch.object(
+                        service, "_maybe_repair_generated_relations", return_value=None
+                    ):
+                        with patch.object(
+                            service,
+                            "_update_manifest",
+                            side_effect=wrapped_update_manifest,
+                        ):
                             result = service._run_automatic_pipeline(
                                 manifest_path=manifest_path,
                                 novel_path=novel_path,
@@ -2479,7 +2858,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="novel.txt",
-                novel_content_base64=base64.b64encode("Alpha meets Beta.".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "Alpha meets Beta.".encode("utf-8")
+                ).decode("ascii"),
                 characters=["Alpha"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -2496,7 +2877,12 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
@@ -2517,20 +2903,38 @@ class WebRunServiceTests(unittest.TestCase):
             injected_before_step_update = {"value": False}
             update_call_count = {"value": 0}
 
-            def wrapped_update_manifest(path: Path, updater, create_if_missing: bool = False):
+            def wrapped_update_manifest(
+                path: Path, updater, create_if_missing: bool = False
+            ):
                 if Path(path) == manifest_path:
                     update_call_count["value"] += 1
-                    if update_call_count["value"] == 4 and not injected_before_step_update["value"]:
+                    if (
+                        update_call_count["value"] == 4
+                        and not injected_before_step_update["value"]
+                    ):
                         latest = json.loads(manifest_path.read_text(encoding="utf-8"))
                         latest["step_external_marker"] = "keep-step"
-                        manifest_path.write_text(json.dumps(latest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                        manifest_path.write_text(
+                            json.dumps(latest, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
                         injected_before_step_update["value"] = True
-                return real_update_manifest(path, updater, create_if_missing=create_if_missing)
+                return real_update_manifest(
+                    path, updater, create_if_missing=create_if_missing
+                )
 
             with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts):
-                with patch.object(service, "_maybe_repair_generated_profile", return_value=None):
-                    with patch.object(service, "_maybe_repair_generated_relations", return_value=None):
-                        with patch.object(service, "_update_manifest", side_effect=wrapped_update_manifest):
+                with patch.object(
+                    service, "_maybe_repair_generated_profile", return_value=None
+                ):
+                    with patch.object(
+                        service, "_maybe_repair_generated_relations", return_value=None
+                    ):
+                        with patch.object(
+                            service,
+                            "_update_manifest",
+                            side_effect=wrapped_update_manifest,
+                        ):
                             result = service._run_automatic_pipeline(
                                 manifest_path=manifest_path,
                                 novel_path=novel_path,
@@ -2556,7 +2960,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉，王熙凤后至。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉，王熙凤后至。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -2573,12 +2979,18 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
             fake_parts = Mock()
             fake_parts.path_provider = _FakePathProvider(run_dir)
+
             def fake_chat_completion(messages, **kwargs):
                 prompt = messages[1]["content"]
                 if "COMPLETION_TASK" in prompt:
@@ -2606,12 +3018,16 @@ class WebRunServiceTests(unittest.TestCase):
                     max_chars=50000,
                 )
 
-            relation_messages = fake_parts.llm.chat_completion.call_args_list[-1].args[0]
+            relation_messages = fake_parts.llm.chat_completion.call_args_list[-1].args[
+                0
+            ]
             self.assertIn("王熙凤", relation_messages[1]["content"])
             self.assertIn("贾宝玉", relation_messages[1]["content"])
             self.assertIn("林黛玉", relation_messages[1]["content"])
 
-    def test_automatic_pipeline_redistills_selected_existing_characters_on_same_source_restart(self):
+    def test_automatic_pipeline_redistills_selected_existing_characters_on_same_source_restart(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -2622,13 +3038,17 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉先出场，后来薛宝钗也来了。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉先出场，后来薛宝钗也来了。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "薛宝钗"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
             manifest_path = run_dir / "run_manifest.json"
             novel_path = run_dir / "input" / "hongloumeng.txt"
-            persona_dir = run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            persona_dir = (
+                run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            )
             persona_dir.mkdir(parents=True, exist_ok=True)
             (persona_dir / "PROFILE.generated.md").write_text(
                 "# PROFILE\n- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 才女\n",
@@ -2653,7 +3073,12 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
@@ -2689,7 +3114,11 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertTrue((run_dir / "payloads" / "distill_林黛玉.json").exists())
             self.assertTrue((run_dir / "payloads" / "distill_薛宝钗.json").exists())
-            first_payload = json.loads((run_dir / "payloads" / "distill_林黛玉.json").read_text(encoding="utf-8"))
+            first_payload = json.loads(
+                (run_dir / "payloads" / "distill_林黛玉.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertEqual(first_payload["request"]["update_mode"], "incremental")
             self.assertIn("林黛玉", first_payload["request"]["existing_profiles"])
             self.assertEqual(result["summary"]["characters_completed"], 2)
@@ -2704,12 +3133,15 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("core_identity", first_change["changed_fields"])
             self.assertTrue(
                 any(
-                    item.get("stage") == "redistill_character_updated" and item.get("character") == "林黛玉"
+                    item.get("stage") == "redistill_character_updated"
+                    and item.get("character") == "林黛玉"
                     for item in result["events"]
                 )
             )
 
-    def test_automatic_pipeline_relation_graph_failure_does_not_fail_chat_ready_state(self):
+    def test_automatic_pipeline_relation_graph_failure_does_not_fail_chat_ready_state(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -2720,7 +3152,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="novel.txt",
-                novel_content_base64=base64.b64encode("Alpha meets Beta.".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "Alpha meets Beta.".encode("utf-8")
+                ).decode("ascii"),
                 characters=["Alpha"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -2737,7 +3171,12 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
@@ -2747,7 +3186,9 @@ class WebRunServiceTests(unittest.TestCase):
             def fake_chat_completion(messages, **kwargs):
                 prompt = messages[1]["content"]
                 if "RELATION_GRAPH" in prompt:
-                    return {"content": "# RELATION_GRAPH\n\n这里不是可解析的关系图正文。"}
+                    return {
+                        "content": "# RELATION_GRAPH\n\n这里不是可解析的关系图正文。"
+                    }
                 return {
                     "content": "# PROFILE\n- name: Alpha\n- novel_id: novel\n- core_identity: 核心人物\n- soul_goal: 守住答案\n- speech_style: 先压低语气再落结论\n- cadence: 慢半拍后落点\n- signature_phrases: 先看清；别急着站位\n- typical_lines: 先看清再说；别急着站位\n- sentence_openers: 先；别急\n- sentence_endings: 再说；也罢\n- worldview: 先把局势看清，再决定站位。\n- belief_anchor: 关键时刻不能自乱阵脚。\n- moral_bottom_line: 不把同伴当代价随手抛掉。\n- restraint_threshold: 平时克制，底线被逼穿时才会失控。\n- stress_response: 压力越大越会先收声，再集中判断。\n"
                 }
@@ -2770,9 +3211,20 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(result["progress"]["graph_status"], "failed")
             self.assertIn("关系图谱生成失败", result["progress"]["message"])
             self.assertFalse(result["capabilities"]["export_graph"]["success"])
-            self.assertTrue((run_dir / "artifacts" / "characters" / "novel" / "Alpha" / "PROFILE.generated.md").exists())
+            self.assertTrue(
+                (
+                    run_dir
+                    / "artifacts"
+                    / "characters"
+                    / "novel"
+                    / "Alpha"
+                    / "PROFILE.generated.md"
+                ).exists()
+            )
 
-    def test_automatic_pipeline_uses_llm_generated_profiles_and_materializes_persona_bundle(self):
+    def test_automatic_pipeline_uses_llm_generated_profiles_and_materializes_persona_bundle(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -2783,7 +3235,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="novel.txt",
-                novel_content_base64=base64.b64encode("Alpha meets Beta.".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "Alpha meets Beta.".encode("utf-8")
+                ).decode("ascii"),
                 characters=["Alpha"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -2800,12 +3254,18 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
             fake_parts = Mock()
             fake_parts.path_provider = _FakePathProvider(run_dir)
+
             def fake_chat_completion(messages, **kwargs):
                 prompt = messages[1]["content"]
                 if "COMPLETION_TASK" in prompt:
@@ -2836,7 +3296,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertTrue((persona_dir / "PROFILE.generated.md").exists())
             self.assertTrue((persona_dir / "SOUL.generated.md").exists())
             self.assertTrue((run_dir / "payloads" / "distill_Alpha.json").exists())
-            self.assertTrue((run_dir / "payloads" / "relation_payload.auto.json").exists())
+            self.assertTrue(
+                (run_dir / "payloads" / "relation_payload.auto.json").exists()
+            )
             self.assertFalse(fake_parts.distiller.distill.called)
             distill_messages = fake_parts.llm.chat_completion.call_args_list[0].args[0]
             self.assertIn("PRIORITY_GUIDANCE", distill_messages[1]["content"])
@@ -2853,7 +3315,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("贾宝玉初入大观园。后来贾宝玉看破繁华。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "贾宝玉初入大观园。后来贾宝玉看破繁华。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["贾宝玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -2870,12 +3334,18 @@ class WebRunServiceTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
             fake_parts = Mock()
             fake_parts.path_provider = _FakePathProvider(run_dir)
+
             def fake_chat_completion(messages, **kwargs):
                 prompt = messages[1]["content"]
                 if "COMPLETION_TASK" in prompt:
@@ -2908,8 +3378,16 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertIn("elapsed_text", result["timing"])
             self.assertTrue(str(result["timing"]["elapsed_text"]).strip())
-            self.assertEqual(result["summary"]["elapsed_text"], result["timing"]["elapsed_text"])
-            profile_path = run_dir / "host_output" / "hongloumeng" / "贾宝玉" / "PROFILE.generated.md"
+            self.assertEqual(
+                result["summary"]["elapsed_text"], result["timing"]["elapsed_text"]
+            )
+            profile_path = (
+                run_dir
+                / "host_output"
+                / "hongloumeng"
+                / "贾宝玉"
+                / "PROFILE.generated.md"
+            )
             profile_text = profile_path.read_text(encoding="utf-8")
             self.assertIn("人情比功名更重", profile_text)
             self.assertNotIn("旧诗有云", profile_text)
@@ -2917,9 +3395,16 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("贾宝玉", result["quality"]["profile_repairs"]["characters"])
             self.assertIn("chunking", result["progress"])
             self.assertIn("distill", result["progress"]["chunking"])
-            self.assertEqual(result["progress"]["chunking"]["distill"]["status"], "complete")
+            self.assertEqual(
+                result["progress"]["chunking"]["distill"]["status"], "complete"
+            )
             self.assertIn("chunking", result["summary"])
-            self.assertTrue(any("本次整理耗时" in str(item.get("message", "")) for item in result.get("events", [])))
+            self.assertTrue(
+                any(
+                    "本次整理耗时" in str(item.get("message", ""))
+                    for item in result.get("events", [])
+                )
+            )
             repair_messages = next(
                 call.args[0]
                 for call in fake_parts.llm.chat_completion.call_args_list
@@ -2928,7 +3413,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("REPAIR_TASK", repair_messages[1]["content"])
             self.assertIn("剧情碎句", repair_messages[1]["content"])
 
-    def test_automatic_pipeline_surface_field_sanitizer_drops_transient_patch_values(self):
+    def test_automatic_pipeline_surface_field_sanitizer_drops_transient_patch_values(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             profile_path = Path(tmp) / "PROFILE.generated.md"
@@ -2946,8 +3433,16 @@ class WebRunServiceTests(unittest.TestCase):
             config = Mock(get=Mock(side_effect=lambda key, default=None: default))
             payload = {
                 "prompt": "system",
-                "references": {"output_schema": "", "style_differ": "", "logic_constraint": "", "validation_policy": ""},
-                "request": {"excerpt": "甲回头看了一眼。", "excerpt_stages": {"start": "", "mid": "", "end": ""}},
+                "references": {
+                    "output_schema": "",
+                    "style_differ": "",
+                    "logic_constraint": "",
+                    "validation_policy": "",
+                },
+                "request": {
+                    "excerpt": "甲回头看了一眼。",
+                    "excerpt_stages": {"start": "", "mid": "", "end": ""},
+                },
                 "meta": {"novel_id": "demo"},
             }
 
@@ -2975,7 +3470,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -2984,7 +3481,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -3007,15 +3506,49 @@ class WebRunServiceTests(unittest.TestCase):
                 service,
                 "_generate_dialogue_suggestion",
                 return_value="要不先让他们把刚才那句接下去？",
-            ):
+            ) as generate_suggestion:
                 result = service.suggest_dialogue_turn(
                     run_id,
                     session_id=session["session_id"],
                     seed_text="要不先让",
+                    direction="追问母亲生前之事",
                 )
 
             self.assertEqual(result["suggestion"], "要不先让他们把刚才那句接下去？")
-            refreshed_session = service.get_dialogue_session(run_id, session["session_id"])
+            self.assertEqual(
+                generate_suggestion.call_args.args[1]["selected_direction"],
+                "追问母亲生前之事",
+            )
+            with patch.object(
+                service,
+                "_generate_dialogue_associations",
+                return_value=[
+                    {
+                        "label": "追问旧事",
+                        "direction": "顺着刚才的话追问母亲生前的旧事",
+                    },
+                    {
+                        "label": "缓和气氛",
+                        "direction": "先回应对方的关心，让关系靠近一点",
+                    },
+                    {"label": "转向行动", "direction": "让角色提议立刻去查关键线索"},
+                ],
+            ) as generate_associations:
+                associations = service.associate_dialogue_turn(
+                    run_id,
+                    session_id=session["session_id"],
+                    option_count=3,
+                )
+            self.assertTrue(associations["show"])
+            self.assertEqual(len(associations["options"]), 3)
+            association_payload = generate_associations.call_args.args[1]
+            self.assertEqual(
+                association_payload["kind"], "zaomeng_dialogue_associations"
+            )
+            self.assertEqual(association_payload["instructions"]["option_count"], 3)
+            refreshed_session = service.get_dialogue_session(
+                run_id, session["session_id"]
+            )
             self.assertEqual(refreshed_session["history"], original_history)
             self.assertEqual(refreshed_session["pending_turn_summary"], {})
             self.assertEqual(refreshed_session["status"], "ready")
@@ -3028,19 +3561,297 @@ class WebRunServiceTests(unittest.TestCase):
             nested.parent.mkdir(parents=True, exist_ok=True)
             nested.write_text("{}", encoding="utf-8")
 
-            relative = service.dialogue._relative_to_run_dir(nested, Path(str(run_dir).upper()))
+            relative = service.dialogue._relative_to_run_dir(
+                nested, Path(str(run_dir).upper())
+            )
 
-            self.assertEqual(relative, Path("dialogue") / "dlg-1" / "turns" / "turn-1.payload.json")
+            self.assertEqual(
+                relative, Path("dialogue") / "dlg-1" / "turns" / "turn-1.payload.json"
+            )
 
     def test_parse_dialogue_suggestion_rejects_meta_explanation(self):
-        with self.assertRaisesRegex(ValueError, "explanation instead of a direct sendable line"):
+        with self.assertRaisesRegex(
+            ValueError, "explanation instead of a direct sendable line"
+        ):
             parse_dialogue_suggestion(
                 "我们作为“你”是误入此间的来客，当前场景是对方在生气，我们可以先安抚，再解释。"
             )
 
     def test_parse_dialogue_suggestion_rejects_generic_observe_wrapper(self):
-        with self.assertRaisesRegex(ValueError, "explanation instead of a direct sendable line"):
+        with self.assertRaisesRegex(
+            ValueError, "explanation instead of a direct sendable line"
+        ):
             parse_dialogue_suggestion("要不先让他们把刚才那句接下去？")
+
+    def test_parse_dialogue_associations_normalizes_and_deduplicates_options(self):
+        parsed = parse_dialogue_associations("""
+            {
+              "show": true,
+              "options": [
+                {"label": "追问旧事", "direction": "顺着刚才的话追问母亲生前的旧事"},
+                {"label": "缓和气氛", "direction": "先回应对方的关心，让关系靠近一点", "anchor_speaker": "林黛玉", "anchor_quote": "你别再逞强了"},
+                {"label": "追问旧事", "direction": "重复项不应保留"},
+                {"label": "转向行动", "direction": "提议立刻去查关键线索"}
+              ]
+            }
+            """)
+
+        self.assertEqual(
+            [item["label"] for item in parsed], ["追问旧事", "缓和气氛", "转向行动"]
+        )
+        self.assertEqual(parsed[1]["anchor_speaker"], "林黛玉")
+        self.assertEqual(parsed[1]["anchor_quote"], "你别再逞强了")
+
+    def test_dialogue_associations_retry_when_anchor_is_not_in_latest_reply(self):
+        payload = {
+            "mode": "act",
+            "input": {"speaker": "史湘云", "participants": ["史湘云", "王熙凤"]},
+            "latest_exchange": {
+                "user_turn": {"speaker": "史湘云", "message": "林姐姐也来押个彩头。"},
+                "replies": [
+                    {
+                        "speaker": "王熙凤",
+                        "message": "我这一笼螃蟹管够，输了可得讲一篓子故事。",
+                    }
+                ],
+            },
+            "instructions": {"option_count": 2},
+        }
+        chat_completion = Mock(
+            side_effect=[
+                {
+                    "content": json.dumps(
+                        {
+                            "options": [
+                                {
+                                    "label": "接下赌约",
+                                    "direction": "拿银簪作抵押，接下赌约",
+                                    "anchor_speaker": "王熙凤",
+                                    "anchor_quote": "银簪子先押着",
+                                },
+                                {
+                                    "label": "追问彩头",
+                                    "direction": "追问彩头是什么",
+                                    "anchor_speaker": "王熙凤",
+                                    "anchor_quote": "螃蟹管够",
+                                },
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                },
+                {
+                    "content": json.dumps(
+                        {
+                            "options": [
+                                {
+                                    "label": "应下螃蟹局",
+                                    "direction": "回应凤姐，爽快应下这场螃蟹局",
+                                    "anchor_speaker": "王熙凤",
+                                    "anchor_quote": "一笼螃蟹管够",
+                                },
+                                {
+                                    "label": "拿故事还价",
+                                    "direction": "围绕输后讲故事的条件与凤姐还价",
+                                    "anchor_speaker": "王熙凤",
+                                    "anchor_quote": "讲一篓子故事",
+                                },
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                },
+            ]
+        )
+
+        options = generate_dialogue_associations(
+            payload=payload,
+            temperature=0.7,
+            max_tokens=0,
+            chat_completion=chat_completion,
+            build_messages=lambda current, retry: build_dialogue_association_llm_messages(
+                current, retry_on_empty=retry
+            ),
+            parse_associations=parse_dialogue_associations,
+        )
+
+        self.assertEqual(chat_completion.call_count, 2)
+        self.assertEqual(
+            [item["label"] for item in options], ["应下螃蟹局", "拿故事还价"]
+        )
+
+    def test_dialogue_associations_retry_when_direction_reinvites_recent_speaker(self):
+        payload = {
+            "mode": "act",
+            "input": {
+                "speaker": "史湘云",
+                "participants": ["史湘云", "林黛玉", "贾宝玉"],
+            },
+            "history": [
+                {
+                    "speaker": "贾宝玉",
+                    "message": "你要赌也成，若你赢了，糕归你。",
+                }
+            ],
+            "latest_exchange": {
+                "replies": [
+                    {
+                        "speaker": "林黛玉",
+                        "message": "你便自个儿跟二哥哥赌去，我只管看热闹。",
+                    }
+                ],
+                "present_participants": ["史湘云", "林黛玉", "贾宝玉"],
+            },
+            "instructions": {"option_count": 2},
+        }
+        chat_completion = Mock(
+            side_effect=[
+                {
+                    "content": json.dumps(
+                        {
+                            "options": [
+                                {
+                                    "label": "拉宝玉来助阵",
+                                    "direction": "转向贾宝玉，请他当裁判或一起加入赌约",
+                                    "anchor_speaker": "林黛玉",
+                                    "anchor_quote": "跟二哥哥赌去",
+                                },
+                                {
+                                    "label": "回敬林姐姐",
+                                    "direction": "顺着黛玉的话笑着回敬她",
+                                    "anchor_speaker": "林黛玉",
+                                    "anchor_quote": "我只管看热闹",
+                                },
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                },
+                {
+                    "content": json.dumps(
+                        {
+                            "options": [
+                                {
+                                    "label": "回应宝玉赌注",
+                                    "direction": "接着回应宝玉已经提出的糕点赌注",
+                                    "anchor_speaker": "林黛玉",
+                                    "anchor_quote": "跟二哥哥赌去",
+                                },
+                                {
+                                    "label": "回敬林姐姐",
+                                    "direction": "顺着黛玉的话笑着回敬她",
+                                    "anchor_speaker": "林黛玉",
+                                    "anchor_quote": "我只管看热闹",
+                                },
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                },
+            ]
+        )
+
+        options = generate_dialogue_associations(
+            payload=payload,
+            temperature=0.7,
+            max_tokens=0,
+            chat_completion=chat_completion,
+            build_messages=lambda current, retry: build_dialogue_association_llm_messages(
+                current, retry_on_empty=retry
+            ),
+            parse_associations=parse_dialogue_associations,
+        )
+
+        self.assertEqual(chat_completion.call_count, 2)
+        self.assertEqual(options[0]["label"], "回应宝玉赌注")
+
+    def test_parse_dialogue_associations_rejects_empty_model_decision(self):
+        with self.assertRaisesRegex(ValueError, "enough distinct"):
+            parse_dialogue_associations('{"show":false,"options":[]}')
+
+    def test_parse_dialogue_associations_rejects_single_option(self):
+        with self.assertRaisesRegex(ValueError, "enough distinct"):
+            parse_dialogue_associations(
+                '{"show":true,"options":[{"label":"追问旧事","direction":"追问旧事"}]}'
+            )
+
+    def test_parse_dialogue_suggestion_accepts_complete_multi_sentence_copy(self):
+        content = (
+            "我原想着这件事不必再提，可你既问到了这里，我也不愿再拿一句轻飘飘的话敷衍过去。"
+            "当年的真相，我知道多少便会告诉你多少，只是你听完之后，别再说自己从未被人在意过。"
+        )
+
+        self.assertEqual(parse_dialogue_suggestion(content), content)
+
+    def test_generate_dialogue_suggestion_retries_when_model_hits_token_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            service.save_model_settings(
+                provider="openai-compatible",
+                model="deepseek-chat",
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+            )
+            run = service.create_run(
+                novel_name="hongloumeng.txt",
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
+                characters=["林黛玉", "贾宝玉"],
+            )
+            for name in ("林黛玉", "贾宝玉"):
+                service.ingest_character_result(
+                    run["run_id"],
+                    character=name,
+                    content_base64=base64.b64encode(
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
+                    ).decode("ascii"),
+                )
+            manifest = service._require_manifest(run["run_id"])
+            session = service.dialogue.create_session(
+                manifest,
+                mode="act",
+                participants=["林黛玉", "贾宝玉"],
+                controlled_character="林黛玉",
+                self_profile={},
+            )
+
+            with patch(
+                "src.web.service_facades.dialogue.build_runtime_parts"
+            ) as build_parts:
+                fake_parts = Mock()
+                fake_parts.llm.chat_completion.side_effect = [
+                    {
+                        "content": "我原想着这件事不必",
+                        "finish_reason": "length",
+                        "raw": {"choices": [{"finish_reason": "length"}]},
+                    },
+                    {
+                        "content": "我原想着这件事不必再提，可你既问了，我便把知道的都告诉你。",
+                        "finish_reason": "stop",
+                        "raw": {"choices": [{"finish_reason": "stop"}]},
+                    },
+                ]
+                build_parts.return_value = fake_parts
+
+                result = service.suggest_dialogue_turn(
+                    run["run_id"],
+                    session_id=session["session_id"],
+                    direction="坦白当年的真相",
+                )
+
+            self.assertTrue(result["suggestion"].endswith("。"))
+            self.assertEqual(fake_parts.llm.chat_completion.call_count, 2)
+            first_limit = fake_parts.llm.chat_completion.call_args_list[0].kwargs[
+                "max_tokens"
+            ]
+            second_limit = fake_parts.llm.chat_completion.call_args_list[1].kwargs[
+                "max_tokens"
+            ]
+            self.assertEqual(first_limit, 512)
+            self.assertGreater(second_limit, first_limit)
 
     def test_generate_dialogue_suggestion_retries_after_meta_explanation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3053,7 +3864,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3062,7 +3875,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -3079,10 +3894,15 @@ class WebRunServiceTests(unittest.TestCase):
                     self_profile={"display_name": "你", "scene_identity": "来客"},
                 )
 
-            with patch("src.web.service_facades.dialogue.build_runtime_parts") as build_parts:
+            with patch(
+                "src.web.service_facades.dialogue.build_runtime_parts"
+            ) as build_parts:
                 fake_parts = Mock()
                 fake_parts.llm.chat_completion.side_effect = [
-                    {"content": "我们作为“你”是误入此间的来客，当前场景是对方在生气，我们可以先安抚，再解释。", "raw": {}},
+                    {
+                        "content": "我们作为“你”是误入此间的来客，当前场景是对方在生气，我们可以先安抚，再解释。",
+                        "raw": {},
+                    },
                     {"content": "别生气，我刚才那句不是在呛你。", "raw": {}},
                 ]
                 build_parts.return_value = fake_parts
@@ -3096,7 +3916,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(result["suggestion"], "别生气，我刚才那句不是在呛你。")
             self.assertEqual(fake_parts.llm.chat_completion.call_count, 2)
 
-    def test_generate_dialogue_suggestion_retries_with_compact_payload_after_bad_request(self):
+    def test_generate_dialogue_suggestion_retries_with_compact_payload_after_bad_request(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -3107,7 +3929,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3136,7 +3960,9 @@ class WebRunServiceTests(unittest.TestCase):
             manifest = service._require_manifest(run_id)
             relation_path = Path(tmp) / "relations.md"
             relation_path.write_text("贾宝玉与林黛玉彼此牵挂。" * 400, encoding="utf-8")
-            manifest["artifact_index"]["relation_graph"] = {"relations_file": str(relation_path)}
+            manifest["artifact_index"]["relation_graph"] = {
+                "relations_file": str(relation_path)
+            }
             (service.runs_root / run_id / "run_manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
@@ -3160,17 +3986,30 @@ class WebRunServiceTests(unittest.TestCase):
                     "key_bonds": "自己；眼前局势；少数值得信的人；还没看透的人",
                 },
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             raw_session["history"] = [
-                {"speaker": "林黛玉", "message": f"第{i}句对话" * 20, "ts": "2026-05-09T00:00:00Z"}
+                {
+                    "speaker": "林黛玉",
+                    "message": f"第{i}句对话" * 20,
+                    "ts": "2026-05-09T00:00:00Z",
+                }
                 for i in range(8)
             ]
-            service.dialogue._write_json(service.dialogue._session_file(run_id, session["session_id"]), raw_session)
+            service.dialogue._write_json(
+                service.dialogue._session_file(run_id, session["session_id"]),
+                raw_session,
+            )
 
-            with patch("src.web.service_facades.dialogue.build_runtime_parts") as build_parts:
+            with patch(
+                "src.web.service_facades.dialogue.build_runtime_parts"
+            ) as build_parts:
                 fake_parts = Mock()
                 fake_parts.llm.chat_completion.side_effect = [
-                    LLMRequestError("LLM 请求失败: 400 Bad Request | prompt is too long"),
+                    LLMRequestError(
+                        "LLM 请求失败: 400 Bad Request | prompt is too long"
+                    ),
                     {"content": "你别急，我不是来添乱的。", "raw": {}},
                 ]
                 build_parts.return_value = fake_parts
@@ -3183,12 +4022,18 @@ class WebRunServiceTests(unittest.TestCase):
 
             self.assertEqual(result["suggestion"], "你别急，我不是来添乱的。")
             self.assertEqual(fake_parts.llm.chat_completion.call_count, 2)
-            first_prompt = fake_parts.llm.chat_completion.call_args_list[0].args[0][1]["content"]
-            second_prompt = fake_parts.llm.chat_completion.call_args_list[1].args[0][1]["content"]
+            first_prompt = fake_parts.llm.chat_completion.call_args_list[0].args[0][1][
+                "content"
+            ]
+            second_prompt = fake_parts.llm.chat_completion.call_args_list[1].args[0][1][
+                "content"
+            ]
             self.assertLess(len(second_prompt), len(first_prompt))
             self.assertIn("误入园中的来客", second_prompt)
 
-    def test_build_turn_payload_includes_memory_context_and_trims_relation_excerpt(self):
+    def test_build_turn_payload_includes_memory_context_and_trims_relation_excerpt(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -3199,7 +4044,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3230,7 +4077,9 @@ class WebRunServiceTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            manifest["artifact_index"]["relation_graph"] = {"relations_file": str(relation_path)}
+            manifest["artifact_index"]["relation_graph"] = {
+                "relations_file": str(relation_path)
+            }
             (service.runs_root / run_id / "run_manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
@@ -3247,22 +4096,38 @@ class WebRunServiceTests(unittest.TestCase):
                     "hidden_tension": "两人嘴硬心软",
                 },
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             raw_session["history"] = [
-                {"speaker": "林黛玉", "message": "你不要把这句说得这样轻巧。", "ts": "2026-05-12T00:00:00Z"},
-                {"speaker": "贾宝玉", "message": "我明晚会回来把误会说开。", "ts": "2026-05-12T00:00:01Z"},
+                {
+                    "speaker": "林黛玉",
+                    "message": "你不要把这句说得这样轻巧。",
+                    "ts": "2026-05-12T00:00:00Z",
+                },
+                {
+                    "speaker": "贾宝玉",
+                    "message": "我明晚会回来把误会说开。",
+                    "ts": "2026-05-12T00:00:01Z",
+                },
             ]
             raw_session["state"] = {
                 "memory": {
                     "summary": {
                         "summary": "两人前面已经因一句话生过闷气，但都还惦记对方。",
-                        "key_points": ["林黛玉嘴上轻冷，心里还在意。", "贾宝玉想解释，却总把话说得更乱。"],
+                        "key_points": [
+                            "林黛玉嘴上轻冷，心里还在意。",
+                            "贾宝玉想解释，却总把话说得更乱。",
+                        ],
                         "compressed_turns": 18,
                         "recent_turns_kept": 24,
                     }
                 }
             }
-            service.dialogue._write_json(service.dialogue._session_file(run_id, session["session_id"]), raw_session)
+            service.dialogue._write_json(
+                service.dialogue._session_file(run_id, session["session_id"]),
+                raw_session,
+            )
             store = service.dialogue._resolve_memory_store(run_id)
             assert store is not None
             store.append_long_term_memory(
@@ -3285,17 +4150,36 @@ class WebRunServiceTests(unittest.TestCase):
 
             memory_context = payload.get("memory_context", {})
             self.assertTrue(memory_context.get("session_summary", {}).get("recap"))
-            self.assertTrue(memory_context.get("session_summary", {}).get("recent_conflicts"))
-            self.assertTrue(memory_context.get("session_summary", {}).get("current_goal"))
-            self.assertTrue(memory_context.get("session_summary", {}).get("unresolved_threads"))
-            self.assertTrue(memory_context.get("session_summary", {}).get("current_location"))
-            self.assertTrue(memory_context.get("session_summary", {}).get("current_companions"))
-            self.assertTrue(memory_context.get("session_summary", {}).get("pending_commitments"))
-            self.assertEqual(memory_context.get("archived_summary", {}).get("compressed_turns"), 18)
+            self.assertTrue(
+                memory_context.get("session_summary", {}).get("recent_conflicts")
+            )
+            self.assertTrue(
+                memory_context.get("session_summary", {}).get("current_goal")
+            )
+            self.assertTrue(
+                memory_context.get("session_summary", {}).get("unresolved_threads")
+            )
+            self.assertTrue(
+                memory_context.get("session_summary", {}).get("current_location")
+            )
+            self.assertTrue(
+                memory_context.get("session_summary", {}).get("current_companions")
+            )
+            self.assertTrue(
+                memory_context.get("session_summary", {}).get("pending_commitments")
+            )
+            self.assertEqual(
+                memory_context.get("archived_summary", {}).get("compressed_turns"), 18
+            )
             self.assertTrue(memory_context.get("retrieved_memories"))
-            retrieved_text = " ".join(str(item.get("text", "")) for item in memory_context["retrieved_memories"])
+            retrieved_text = " ".join(
+                str(item.get("text", ""))
+                for item in memory_context["retrieved_memories"]
+            )
             self.assertIn("误会", retrieved_text)
-            relation_excerpt = str(payload.get("relation_context", {}).get("relations_excerpt", ""))
+            relation_excerpt = str(
+                payload.get("relation_context", {}).get("relations_excerpt", "")
+            )
             self.assertLess(len(relation_excerpt), 4000)
             self.assertIn("林黛玉_贾宝玉", relation_excerpt)
 
@@ -3310,7 +4194,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="demo.txt",
-                novel_content_base64=base64.b64encode("甲见了乙。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "甲见了乙。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["甲", "乙"],
             )
             run_id = run["run_id"]
@@ -3319,7 +4205,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: demo\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: demo\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
             manifest = service._require_manifest(run_id)
@@ -3336,22 +4224,45 @@ class WebRunServiceTests(unittest.TestCase):
                     "hidden_tension": "乙其实并不信甲",
                 },
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             raw_session["history"] = [
-                {"speaker": "甲", "message": "我明天会回来，把这件事亲自说清。", "ts": "2026-05-12T00:00:00Z"},
-                {"speaker": "乙", "message": "你不要再拿这种话来搪塞我。", "ts": "2026-05-12T00:00:01Z"},
-                {"speaker": "甲", "message": "（转身看向门外）我没有想躲。", "ts": "2026-05-12T00:00:02Z"},
-                {"speaker": "场景提示", "message": "雨声忽然压下来，回廊里安静得只剩呼吸。", "ts": "2026-05-12T00:00:03Z"},
+                {
+                    "speaker": "甲",
+                    "message": "我明天会回来，把这件事亲自说清。",
+                    "ts": "2026-05-12T00:00:00Z",
+                },
+                {
+                    "speaker": "乙",
+                    "message": "你不要再拿这种话来搪塞我。",
+                    "ts": "2026-05-12T00:00:01Z",
+                },
+                {
+                    "speaker": "甲",
+                    "message": "（转身看向门外）我没有想躲。",
+                    "ts": "2026-05-12T00:00:02Z",
+                },
+                {
+                    "speaker": "场景提示",
+                    "message": "雨声忽然压下来，回廊里安静得只剩呼吸。",
+                    "ts": "2026-05-12T00:00:03Z",
+                },
             ]
             raw_session["state"] = service.dialogue._empty_session_state()
             raw_session["state"]["signals"] = {
                 "recent": [
-                    {"kind": "atmosphere_shift", "cue": "雨声忽然压下来，回廊里安静得只剩呼吸。"},
+                    {
+                        "kind": "atmosphere_shift",
+                        "cue": "雨声忽然压下来，回廊里安静得只剩呼吸。",
+                    },
                 ],
                 "by_type": {},
                 "updated_at": "2026-05-12T00:00:03Z",
             }
-            summary = service.dialogue._build_session_memory_summary(run_id, raw_session, service.dialogue._serialize_transcript(raw_session))
+            summary = service.dialogue._build_session_memory_summary(
+                run_id, raw_session, service.dialogue._serialize_transcript(raw_session)
+            )
 
             self.assertIn("明天会回来", summary.get("recent_commitments", ""))
             self.assertIn("不要再拿这种话来搪塞我", summary.get("recent_conflicts", ""))
@@ -3374,7 +4285,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3404,14 +4317,20 @@ class WebRunServiceTests(unittest.TestCase):
             )
             relation_path.write_text(original_relation_text, encoding="utf-8")
             manifest = service._require_manifest(run_id)
-            manifest["artifact_index"]["relation_graph"] = {"relations_file": str(relation_path)}
+            manifest["artifact_index"]["relation_graph"] = {
+                "relations_file": str(relation_path)
+            }
             (service.runs_root / run_id / "run_manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
 
-            session_one = service.dialogue.create_session(manifest, mode="observe", participants=["林黛玉", "贾宝玉"])
-            session_two = service.dialogue.create_session(manifest, mode="observe", participants=["林黛玉", "贾宝玉"])
+            session_one = service.dialogue.create_session(
+                manifest, mode="observe", participants=["林黛玉", "贾宝玉"]
+            )
+            session_two = service.dialogue.create_session(
+                manifest, mode="observe", participants=["林黛玉", "贾宝玉"]
+            )
 
             pending_payload = {
                 "session_id": session_one["session_id"],
@@ -3424,30 +4343,58 @@ class WebRunServiceTests(unittest.TestCase):
             service._evolve_relations_from_turn(
                 run_id,
                 pending_payload,
-                [{"speaker": "贾宝玉", "message": "谢谢你愿意陪我一起，我不是不在意你。"}],
+                [
+                    {
+                        "speaker": "贾宝玉",
+                        "message": "谢谢你愿意陪我一起，我不是不在意你。",
+                    }
+                ],
             )
 
-            raw_one = service.dialogue._read_json(service.dialogue._session_file(run_id, session_one["session_id"]))
-            raw_two = service.dialogue._read_json(service.dialogue._session_file(run_id, session_two["session_id"]))
+            raw_one = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session_one["session_id"])
+            )
+            raw_two = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session_two["session_id"])
+            )
 
-            delta = raw_one.get("state", {}).get("relations", {}).get("delta", {}).get("林黛玉_贾宝玉", {})
+            delta = (
+                raw_one.get("state", {})
+                .get("relations", {})
+                .get("delta", {})
+                .get("林黛玉_贾宝玉", {})
+            )
             self.assertEqual(delta.get("trust"), 1)
             self.assertEqual(delta.get("affection"), 1)
             self.assertEqual(delta.get("hostility"), -1)
             self.assertEqual(delta.get("last_actor"), "贾宝玉")
             self.assertEqual(delta.get("last_target"), "林黛玉")
             self.assertGreaterEqual(int(delta.get("momentum", 0) or 0), 1)
-            snapshot = raw_one.get("state", {}).get("characters", {}).get("snapshots", {}).get("贾宝玉", {})
+            snapshot = (
+                raw_one.get("state", {})
+                .get("characters", {})
+                .get("snapshots", {})
+                .get("贾宝玉", {})
+            )
             self.assertEqual(snapshot.get("interaction_state"), "softening")
             self.assertEqual(snapshot.get("last_target"), "林黛玉")
             self.assertEqual(snapshot.get("present_state"), "onstage")
             self.assertTrue(bool(snapshot.get("updated_at", "")))
 
-            self.assertEqual(raw_two.get("state", {}).get("relations", {}).get("delta", {}), {})
-            untouched_snapshot = raw_two.get("state", {}).get("characters", {}).get("snapshots", {}).get("贾宝玉", {})
+            self.assertEqual(
+                raw_two.get("state", {}).get("relations", {}).get("delta", {}), {}
+            )
+            untouched_snapshot = (
+                raw_two.get("state", {})
+                .get("characters", {})
+                .get("snapshots", {})
+                .get("贾宝玉", {})
+            )
             self.assertEqual(untouched_snapshot.get("present_state"), "onstage")
             self.assertFalse(bool(untouched_snapshot.get("interaction_state", "")))
-            self.assertEqual(relation_path.read_text(encoding="utf-8"), original_relation_text)
+            self.assertEqual(
+                relation_path.read_text(encoding="utf-8"), original_relation_text
+            )
 
     def test_build_turn_payload_includes_session_relation_delta_and_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3460,7 +4407,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3482,12 +4431,19 @@ class WebRunServiceTests(unittest.TestCase):
                 mode="observe",
                 participants=["林黛玉", "贾宝玉"],
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             raw_session["state"] = {
                 **dict(raw_session.get("state", {}) or {}),
                 "relations": {
                     "matrix": {
-                        "林黛玉_贾宝玉": {"trust": 8, "affection": 8, "hostility": 1, "ambiguity": 3}
+                        "林黛玉_贾宝玉": {
+                            "trust": 8,
+                            "affection": 8,
+                            "hostility": 1,
+                            "ambiguity": 3,
+                        }
                     },
                     "delta": {
                         "林黛玉_贾宝玉": {
@@ -3519,13 +4475,22 @@ class WebRunServiceTests(unittest.TestCase):
             )
 
             memory_context = payload.get("memory_context", {})
-            self.assertTrue(memory_context.get("relation_delta", {}).get("林黛玉_贾宝玉"))
+            self.assertTrue(
+                memory_context.get("relation_delta", {}).get("林黛玉_贾宝玉")
+            )
             self.assertTrue(memory_context.get("character_snapshots", {}).get("贾宝玉"))
-            relation_excerpt = str(payload.get("relation_context", {}).get("relations_excerpt", ""))
+            relation_excerpt = str(
+                payload.get("relation_context", {}).get("relations_excerpt", "")
+            )
             self.assertIn("SESSION_RELATION_STATE", relation_excerpt)
             self.assertIn("session_delta", relation_excerpt)
-            detail_map = {item["name"]: item for item in payload.get("persona_contexts", [])}
-            self.assertEqual(detail_map["贾宝玉"]["session_snapshot"]["interaction_state"], "softening")
+            detail_map = {
+                item["name"]: item for item in payload.get("persona_contexts", [])
+            }
+            self.assertEqual(
+                detail_map["贾宝玉"]["session_snapshot"]["interaction_state"],
+                "softening",
+            )
             serialized = service.dialogue._serialize_session(run_id, raw_session)
             overview = dict(serialized.get("runtime_state_overview", {}) or {})
             self.assertTrue(bool(overview.get("relation_rows", [])))
@@ -3541,7 +4506,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3550,7 +4517,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -3559,7 +4528,9 @@ class WebRunServiceTests(unittest.TestCase):
                 mode="observe",
                 participants=["林黛玉", "贾宝玉"],
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             state = dict(raw_session.get("state", {}) or {})
 
             self.assertEqual(state.get("version"), 1)
@@ -3575,7 +4546,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("delta", dict(state.get("relations", {}) or {}))
             self.assertIn("snapshots", dict(state.get("characters", {}) or {}))
             self.assertIn("beat_maturity", dict(state.get("progression", {}) or {}))
-            self.assertIn("world_tension_summary", dict(state.get("progression", {}) or {}))
+            self.assertIn(
+                "world_tension_summary", dict(state.get("progression", {}) or {})
+            )
             overview = dict(session.get("runtime_state_overview", {}) or {})
             self.assertIn("present", overview)
             self.assertIn("offstage", overview)
@@ -3600,7 +4573,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3609,7 +4584,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -3653,13 +4630,80 @@ class WebRunServiceTests(unittest.TestCase):
                     [{"speaker": "贾宝玉", "message": "谢谢你愿意陪我一起。"}],
                 )
 
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
-            delta = raw_session.get("state", {}).get("relations", {}).get("delta", {}).get("林黛玉_贾宝玉", {})
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
+            delta = (
+                raw_session.get("state", {})
+                .get("relations", {})
+                .get("delta", {})
+                .get("林黛玉_贾宝玉", {})
+            )
             self.assertEqual(delta.get("trust"), 2)
             self.assertEqual(delta.get("affection"), 1)
             self.assertIn("明显更松", str(delta.get("last_event", "")))
-            snapshot = raw_session.get("state", {}).get("characters", {}).get("snapshots", {}).get("贾宝玉", {})
+            snapshot = (
+                raw_session.get("state", {})
+                .get("characters", {})
+                .get("snapshots", {})
+                .get("贾宝玉", {})
+            )
             self.assertEqual(snapshot.get("interaction_state"), "softening")
+
+    def test_dialogue_fast_response_skips_noncritical_llm_refinements(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            service.save_model_settings(
+                provider="openai-compatible",
+                model="deepseek-chat",
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+            )
+            run = service.create_run(
+                novel_name="hongloumeng.txt",
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
+                characters=["林黛玉", "贾宝玉"],
+            )
+            for name in ("林黛玉", "贾宝玉"):
+                service.ingest_character_result(
+                    run["run_id"],
+                    character=name,
+                    content_base64=base64.b64encode(
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
+                    ).decode("ascii"),
+                )
+            session = service.dialogue.create_session(
+                service._require_manifest(run["run_id"]),
+                mode="act",
+                participants=["林黛玉", "贾宝玉"],
+                controlled_character="林黛玉",
+            )
+
+            with patch.object(
+                service,
+                "_generate_dialogue_responses",
+                return_value=[{"speaker": "贾宝玉", "message": "你慢慢说，我听着。"}],
+            ), patch.object(
+                service, "_generate_dialogue_relation_state"
+            ) as relation_refinement, patch.object(
+                service, "_generate_dialogue_scene_progress"
+            ) as scene_refinement:
+                replied = service.reply_dialogue_turn(
+                    run["run_id"],
+                    session_id=session["session_id"],
+                    message="我有句话想问你。",
+                    fast_response=True,
+                )
+
+            relation_refinement.assert_not_called()
+            scene_refinement.assert_not_called()
+            self.assertEqual(replied["status"], "ready")
+            self.assertEqual(replied["transcript"][-1]["speaker"], "贾宝玉")
+            self.assertIn("scene_progress", replied)
 
     def test_dialogue_event_signals_capture_scene_and_inline_action_categories(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3672,7 +4716,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
             run_id = run["run_id"]
@@ -3681,7 +4727,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -3700,21 +4748,36 @@ class WebRunServiceTests(unittest.TestCase):
                     "active_participants": ["林黛玉", "贾宝玉", "薛宝钗"],
                 },
             }
-            with patch.object(service, "_generate_dialogue_relation_state", return_value={}):
+            with patch.object(
+                service, "_generate_dialogue_relation_state", return_value={}
+            ):
                 service._evolve_relations_from_turn(
                     run_id,
                     pending_payload,
                     responses=[
-                        {"speaker": "林黛玉", "message": "（低头笑了笑）那就进屋再说。"},
-                        {"speaker": "贾宝玉", "message": "屋里一下安静下来，我陪你进去。"},
+                        {
+                            "speaker": "林黛玉",
+                            "message": "（低头笑了笑）那就进屋再说。",
+                        },
+                        {
+                            "speaker": "贾宝玉",
+                            "message": "屋里一下安静下来，我陪你进去。",
+                        },
                     ],
                 )
 
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             event_signals = dict(raw_session.get("state", {}).get("signals", {}) or {})
             recent = list(event_signals.get("recent", []) or [])
             kinds = {str(item.get("kind", "")).strip() for item in recent}
-            overview = dict(service.dialogue._serialize_session(run_id, raw_session).get("runtime_state_overview", {}) or {})
+            overview = dict(
+                service.dialogue._serialize_session(run_id, raw_session).get(
+                    "runtime_state_overview", {}
+                )
+                or {}
+            )
             event_rows = list(overview.get("event_rows", []) or [])
 
             self.assertIn("time_change", kinds)
@@ -3725,7 +4788,11 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("atmosphere_shift", kinds)
             self.assertTrue(event_rows)
 
-            micro_action = next(item for item in recent if str(item.get("kind", "")).strip() == "micro_action")
+            micro_action = next(
+                item
+                for item in recent
+                if str(item.get("kind", "")).strip() == "micro_action"
+            )
             self.assertEqual(micro_action.get("actor"), "林黛玉")
             self.assertTrue(bool(micro_action.get("should_inline", False)))
 
@@ -3740,7 +4807,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗", "王熙凤", "史湘云", "探春"],
             )
             run_id = run["run_id"]
@@ -3763,11 +4832,25 @@ class WebRunServiceTests(unittest.TestCase):
                 mode="observe",
                 participants=["林黛玉", "贾宝玉", "薛宝钗", "王熙凤", "史湘云", "探春"],
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             raw_session["history"] = [
-                {"speaker": "旁白", "message": "薛宝钗告退回房，先离开了。", "ts": "2026-05-12T00:00:00Z"},
-                {"speaker": "林黛玉", "message": "那便先由我们说。", "ts": "2026-05-12T00:00:01Z"},
-                {"speaker": "王熙凤", "message": "你们慢慢说，我在旁边听着。", "ts": "2026-05-12T00:00:02Z"},
+                {
+                    "speaker": "旁白",
+                    "message": "薛宝钗告退回房，先离开了。",
+                    "ts": "2026-05-12T00:00:00Z",
+                },
+                {
+                    "speaker": "林黛玉",
+                    "message": "那便先由我们说。",
+                    "ts": "2026-05-12T00:00:01Z",
+                },
+                {
+                    "speaker": "王熙凤",
+                    "message": "你们慢慢说，我在旁边听着。",
+                    "ts": "2026-05-12T00:00:02Z",
+                },
             ]
 
             payload = service.dialogue._build_turn_payload(
@@ -3788,7 +4871,9 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertIn("soul_goal", detail_map["林黛玉"]["profile"])
             self.assertNotIn("soul_goal", detail_map["探春"]["profile"])
 
-    def test_build_suggestion_payload_keeps_controlled_character_full_persona_in_act_mode(self):
+    def test_build_suggestion_payload_keeps_controlled_character_full_persona_in_act_mode(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -3799,7 +4884,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
             run_id = run["run_id"]
@@ -3831,10 +4918,16 @@ class WebRunServiceTests(unittest.TestCase):
                 seed_text="你先听我说完。",
             )
 
-            controlled = next(item for item in payload["persona_contexts"] if item["name"] == "林黛玉")
+            controlled = next(
+                item for item in payload["persona_contexts"] if item["name"] == "林黛玉"
+            )
             self.assertEqual(controlled["detail_level"], "full")
-            self.assertEqual(payload["user_persona"]["source"], "controlled_character_persona")
-            self.assertEqual(payload["user_persona"]["profile"]["soul_goal"], "林黛玉想护住当前局面")
+            self.assertEqual(
+                payload["user_persona"]["source"], "controlled_character_persona"
+            )
+            self.assertEqual(
+                payload["user_persona"]["profile"]["soul_goal"], "林黛玉想护住当前局面"
+            )
 
     def test_compact_dialogue_suggestion_payload_trims_memory_context(self):
         payload = {
@@ -3853,12 +4946,27 @@ class WebRunServiceTests(unittest.TestCase):
                 },
                 "archived_summary": {
                     "summary": "旧冲突摘要" * 120,
-                    "key_points": ["要点一" * 40, "要点二" * 40, "要点三" * 40, "要点四" * 40],
+                    "key_points": [
+                        "要点一" * 40,
+                        "要点二" * 40,
+                        "要点三" * 40,
+                        "要点四" * 40,
+                    ],
                     "compressed_turns": 48,
                 },
                 "retrieved_memories": [
-                    {"text": "命中的长期记忆" * 60, "speaker": "林黛玉", "target": "贾宝玉", "kind": "dialogue"},
-                    {"text": "第二条长期记忆" * 60, "speaker": "贾宝玉", "target": "林黛玉", "kind": "dialogue"},
+                    {
+                        "text": "命中的长期记忆" * 60,
+                        "speaker": "林黛玉",
+                        "target": "贾宝玉",
+                        "kind": "dialogue",
+                    },
+                    {
+                        "text": "第二条长期记忆" * 60,
+                        "speaker": "贾宝玉",
+                        "target": "林黛玉",
+                        "kind": "dialogue",
+                    },
                     {"text": "第三条长期记忆" * 60},
                 ],
             },
@@ -3871,11 +4979,21 @@ class WebRunServiceTests(unittest.TestCase):
         compact_memory = compact.get("memory_context", {})
         self.assertTrue(compact_memory.get("session_summary", {}).get("recap"))
         self.assertTrue(compact_memory.get("session_summary", {}).get("current_goal"))
-        self.assertTrue(compact_memory.get("session_summary", {}).get("unresolved_threads"))
-        self.assertTrue(compact_memory.get("session_summary", {}).get("current_location"))
-        self.assertTrue(compact_memory.get("session_summary", {}).get("current_companions"))
-        self.assertTrue(compact_memory.get("session_summary", {}).get("pending_commitments"))
-        self.assertLessEqual(len(compact_memory.get("archived_summary", {}).get("summary", "")), 181)
+        self.assertTrue(
+            compact_memory.get("session_summary", {}).get("unresolved_threads")
+        )
+        self.assertTrue(
+            compact_memory.get("session_summary", {}).get("current_location")
+        )
+        self.assertTrue(
+            compact_memory.get("session_summary", {}).get("current_companions")
+        )
+        self.assertTrue(
+            compact_memory.get("session_summary", {}).get("pending_commitments")
+        )
+        self.assertLessEqual(
+            len(compact_memory.get("archived_summary", {}).get("summary", "")), 181
+        )
         self.assertLessEqual(len(compact_memory.get("retrieved_memories", [])), 2)
 
     def test_build_suggestion_payload_uses_self_insert_persona_in_insert_mode(self):
@@ -3889,7 +5007,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3898,7 +5018,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n- speech_style: 各有口气\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n- speech_style: 各有口气\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
             manifest = service._require_manifest(run_id)
@@ -3926,12 +5048,23 @@ class WebRunServiceTests(unittest.TestCase):
 
             self.assertEqual(payload["user_persona"]["source"], "self_insert_profile")
             self.assertEqual(payload["user_persona"]["speaker"], "阿眠")
-            self.assertEqual(payload["user_persona"]["profile"]["scene_identity"], "误入园中的来客")
-            self.assertEqual(payload["user_persona"]["profile"]["interaction_style"], "先软后稳")
-            self.assertEqual(payload["user_persona"]["profile"]["core_identity"], "不肯轻易交底的来客")
-            self.assertEqual(payload["user_persona"]["profile"]["soul_goal"], "先站稳再谈真心")
+            self.assertEqual(
+                payload["user_persona"]["profile"]["scene_identity"], "误入园中的来客"
+            )
+            self.assertEqual(
+                payload["user_persona"]["profile"]["interaction_style"], "先软后稳"
+            )
+            self.assertEqual(
+                payload["user_persona"]["profile"]["core_identity"],
+                "不肯轻易交底的来客",
+            )
+            self.assertEqual(
+                payload["user_persona"]["profile"]["soul_goal"], "先站稳再谈真心"
+            )
 
-    def test_build_dialogue_suggestion_messages_emphasize_self_insert_persona_priority(self):
+    def test_build_dialogue_suggestion_messages_emphasize_self_insert_persona_priority(
+        self,
+    ):
         payload = {
             "mode": "insert",
             "input": {
@@ -3974,9 +5107,14 @@ class WebRunServiceTests(unittest.TestCase):
         messages = WebRunService._build_dialogue_suggestion_llm_messages(payload)
 
         self.assertIn("不只参考上下文和别人刚才的回复", messages[0]["content"])
-        self.assertIn("优先服从 self-insert 的核心身份、故事位置、灵魂目标", messages[0]["content"])
+        self.assertIn(
+            "优先服从 self-insert 的核心身份、故事位置、灵魂目标",
+            messages[0]["content"],
+        )
 
-    def test_build_suggestion_payload_uses_controlled_character_persona_in_act_mode(self):
+    def test_build_suggestion_payload_uses_controlled_character_persona_in_act_mode(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -3987,7 +5125,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -3995,14 +5135,18 @@ class WebRunServiceTests(unittest.TestCase):
                 run_id,
                 character="贾宝玉",
                 content_base64=base64.b64encode(
-                    "- name: 贾宝玉\n- novel_id: hongloumeng\n- core_identity: 贾府公子\n- speech_style: 软中带刺\n- temperament_type: 多情敏感\n".encode("utf-8")
+                    "- name: 贾宝玉\n- novel_id: hongloumeng\n- core_identity: 贾府公子\n- speech_style: 软中带刺\n- temperament_type: 多情敏感\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             service.ingest_character_result(
                 run_id,
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             manifest = service._require_manifest(run_id)
@@ -4020,12 +5164,20 @@ class WebRunServiceTests(unittest.TestCase):
                 seed_text="",
             )
 
-            self.assertEqual(payload["user_persona"]["source"], "controlled_character_persona")
+            self.assertEqual(
+                payload["user_persona"]["source"], "controlled_character_persona"
+            )
             self.assertEqual(payload["user_persona"]["speaker"], "贾宝玉")
-            self.assertEqual(payload["user_persona"]["profile"]["speech_style"], "软中带刺")
-            self.assertEqual(payload["user_persona"]["profile"]["temperament_type"], "多情敏感")
+            self.assertEqual(
+                payload["user_persona"]["profile"]["speech_style"], "软中带刺"
+            )
+            self.assertEqual(
+                payload["user_persona"]["profile"]["temperament_type"], "多情敏感"
+            )
 
-    def test_build_suggestion_payload_uses_plot_push_observer_hint_in_observe_mode(self):
+    def test_build_suggestion_payload_uses_plot_push_observer_hint_in_observe_mode(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -4036,7 +5188,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -4045,7 +5199,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
             manifest = service._require_manifest(run_id)
@@ -4064,10 +5220,17 @@ class WebRunServiceTests(unittest.TestCase):
             )
 
             self.assertEqual(payload["user_persona"]["source"], "observer_hint")
-            self.assertEqual(payload["user_persona"]["profile"]["goal"], "push_plot_forward")
-            self.assertIn("introduce a new action", payload["user_persona"]["profile"]["preferred_moves"])
+            self.assertEqual(
+                payload["user_persona"]["profile"]["goal"], "push_plot_forward"
+            )
+            self.assertIn(
+                "introduce a new action",
+                payload["user_persona"]["profile"]["preferred_moves"],
+            )
             self.assertTrue(payload["user_persona"]["profile"]["avoid_patterns"])
-            self.assertIn("pushes the plot forward", payload["instructions"]["response_style"])
+            self.assertIn(
+                "pushes the plot forward", payload["instructions"]["response_style"]
+            )
 
     def test_build_suggestion_payload_observe_mode_carries_scene_shift_pressure(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4080,7 +5243,9 @@ class WebRunServiceTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_id = run["run_id"]
@@ -4089,7 +5254,9 @@ class WebRunServiceTests(unittest.TestCase):
                     run_id,
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
             manifest = service._require_manifest(run_id)
@@ -4112,12 +5279,25 @@ class WebRunServiceTests(unittest.TestCase):
                     "world_tension_summary": "两个人都知道下一句就该把局面带进新的地方",
                 },
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(run_id, session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
             raw_session["history"] = [
-                {"speaker": "林黛玉", "message": "你总要把这句话说清。", "ts": "2026-05-12T00:00:00Z"},
-                {"speaker": "贾宝玉", "message": "我明明有话，却还是迟了一拍。", "ts": "2026-05-12T00:00:01Z"},
+                {
+                    "speaker": "林黛玉",
+                    "message": "你总要把这句话说清。",
+                    "ts": "2026-05-12T00:00:00Z",
+                },
+                {
+                    "speaker": "贾宝玉",
+                    "message": "我明明有话，却还是迟了一拍。",
+                    "ts": "2026-05-12T00:00:01Z",
+                },
             ]
-            service.dialogue._write_json(service.dialogue._session_file(run_id, session["session_id"]), raw_session)
+            service.dialogue._write_json(
+                service.dialogue._session_file(run_id, session["session_id"]),
+                raw_session,
+            )
 
             payload = service.dialogue.build_suggestion_payload(
                 manifest,
@@ -4125,15 +5305,28 @@ class WebRunServiceTests(unittest.TestCase):
                 seed_text="",
             )
 
-            self.assertIn("turn the scene into its next beat naturally", payload["user_persona"]["profile"]["preferred_moves"])
-            self.assertEqual(payload["user_persona"]["profile"]["scene_shift_reason"], "雨势更大，再站在回廊里已经接不下去了")
+            self.assertIn(
+                "turn the scene into its next beat naturally",
+                payload["user_persona"]["profile"]["preferred_moves"],
+            )
+            self.assertEqual(
+                payload["user_persona"]["profile"]["scene_shift_reason"],
+                "雨势更大，再站在回廊里已经接不下去了",
+            )
             self.assertTrue(payload["user_persona"]["profile"]["anchor_lines"])
-            joined_anchors = " ".join(payload["user_persona"]["profile"]["anchor_lines"])
+            joined_anchors = " ".join(
+                payload["user_persona"]["profile"]["anchor_lines"]
+            )
             self.assertIn("回廊", joined_anchors)
-            self.assertIn("naturally turns this scene into its next beat", payload["host_prompt_brief"])
+            self.assertIn(
+                "naturally turns this scene into its next beat",
+                payload["host_prompt_brief"],
+            )
             self.assertIn("Current transition pressure", payload["host_prompt_brief"])
 
-    def test_build_dialogue_suggestion_messages_use_scene_progress_for_observe_mode(self):
+    def test_build_dialogue_suggestion_messages_use_scene_progress_for_observe_mode(
+        self,
+    ):
         payload = {
             "mode": "observe",
             "input": {
@@ -4186,8 +5379,37 @@ class WebRunServiceTests(unittest.TestCase):
         self.assertIn("下一下已经发生了", messages[0]["content"])
         self.assertIn("要不先让他们把刚才那句接下去", messages[1]["content"])
 
+    def test_build_dialogue_suggestion_messages_apply_selected_direction_as_intent(
+        self,
+    ):
+        payload = {
+            "mode": "act",
+            "input": {
+                "speaker": "林黛玉",
+                "message": "",
+                "participants": ["林黛玉", "贾宝玉"],
+            },
+            "selected_direction": "追问母亲生前之事",
+            "persona_contexts": [],
+            "user_persona": {"mode": "act", "speaker": "林黛玉"},
+            "relation_context": {},
+            "history": [],
+            "memory_context": {},
+            "scene_progress": {},
+            "instructions": {},
+            "host_action": {},
+            "scene_card": {},
+        }
 
-@unittest.skipIf(TestClient is None or create_app is None, "fastapi test dependencies unavailable")
+        messages = WebRunService._build_dialogue_suggestion_llm_messages(payload)
+
+        self.assertIn("selected_direction", messages[0]["content"])
+        self.assertIn("追问母亲生前之事", messages[1]["content"])
+
+
+@unittest.skipIf(
+    TestClient is None or create_app is None, "fastapi test dependencies unavailable"
+)
 class WebAppRouteTests(unittest.TestCase):
     def test_delete_run_route_removes_group(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4200,7 +5422,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             client = TestClient(create_app(service))
@@ -4222,7 +5446,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -4239,7 +5465,12 @@ class WebAppRouteTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
@@ -4269,7 +5500,9 @@ class WebAppRouteTests(unittest.TestCase):
                 )
 
             self.assertTrue(result["success"])
-            relation_path = run_dir / "artifacts" / "relations" / "hongloumeng_relations.md"
+            relation_path = (
+                run_dir / "artifacts" / "relations" / "hongloumeng_relations.md"
+            )
             relation_text = relation_path.read_text(encoding="utf-8")
             self.assertIn("反复波动", relation_text)
             self.assertNotIn("旧诗有云", relation_text)
@@ -4289,7 +5522,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="novel.txt",
-                novel_content_base64=base64.b64encode("Alpha meets Beta.".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "Alpha meets Beta.".encode("utf-8")
+                ).decode("ascii"),
                 characters=["Alpha"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -4306,7 +5541,12 @@ class WebAppRouteTests(unittest.TestCase):
                     return path
 
                 def relations_file(self, novel_id: str) -> Path:
-                    path = self.base_dir / "artifacts" / "relations" / f"{novel_id}_relations.md"
+                    path = (
+                        self.base_dir
+                        / "artifacts"
+                        / "relations"
+                        / f"{novel_id}_relations.md"
+                    )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     return path
 
@@ -4338,7 +5578,9 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("正在蒸馏 Alpha", messages)
             self.assertIn("正在落盘 Alpha", messages)
 
-    def test_build_distill_llm_messages_include_stage_evidence_and_field_priorities(self):
+    def test_build_distill_llm_messages_include_stage_evidence_and_field_priorities(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             payload = {
@@ -4369,7 +5611,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "meta": {"novel_id": "hongloumeng"},
             }
 
-            messages = service._build_distill_llm_messages(payload, character="贾宝玉", peer_characters=["林黛玉", "贾宝玉"])
+            messages = service._build_distill_llm_messages(
+                payload, character="贾宝玉", peer_characters=["林黛玉", "贾宝玉"]
+            )
             self.assertEqual(messages[0]["content"], "系统提示")
             self.assertIn("FIELD_GROUPS", messages[1]["content"])
             self.assertIn("### START", messages[1]["content"])
@@ -4407,7 +5651,10 @@ class WebAppRouteTests(unittest.TestCase):
             service = WebRunService(tmp)
             groups = service._collect_profile_completion_groups({}, repair_targets={})
 
-            self.assertEqual([name for name, _, _ in groups], ["Inner Core", "Decision Logic", "Emotion And Stress", "Voice"])
+            self.assertEqual(
+                [name for name, _, _ in groups],
+                ["Inner Core", "Decision Logic", "Emotion And Stress", "Voice"],
+            )
 
     def test_profile_completion_groups_treat_evidence_insufficient_as_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4416,7 +5663,10 @@ class WebAppRouteTests(unittest.TestCase):
                 {
                     "soul_goal": "证据不足",
                     "speech_style": "证据不足",
-                    "speech_habits": {"cadence": "证据不足", "signature_phrases": ["证据不足"]},
+                    "speech_habits": {
+                        "cadence": "证据不足",
+                        "signature_phrases": ["证据不足"],
+                    },
                     "emotion_profile": {"anger_style": "证据不足"},
                 },
                 repair_targets={},
@@ -4431,7 +5681,12 @@ class WebAppRouteTests(unittest.TestCase):
             service = WebRunService(tmp)
             payload = {
                 "prompt": "系统提示",
-                "references": {"output_schema": "schema", "style_differ": "style", "logic_constraint": "logic", "validation_policy": "policy"},
+                "references": {
+                    "output_schema": "schema",
+                    "style_differ": "style",
+                    "logic_constraint": "logic",
+                    "validation_policy": "policy",
+                },
                 "request": {"excerpt": "贾宝玉道：“你也不用哄我。”"},
                 "meta": {"novel_id": "hongloumeng"},
             }
@@ -4443,7 +5698,10 @@ class WebAppRouteTests(unittest.TestCase):
                 profile={"name": "贾宝玉", "novel_id": "hongloumeng"},
                 group_name="Voice",
                 fields=("speech_style", "cadence", "signature_phrases"),
-                repair_targets={"speech_style": "太泛，缺少对白味道 -> 冷静克制", "cadence": "为空"},
+                repair_targets={
+                    "speech_style": "太泛，缺少对白味道 -> 冷静克制",
+                    "cadence": "为空",
+                },
                 dialogue_evidence=["贾宝玉道：“你也不用哄我。”"],
             )
 
@@ -4466,7 +5724,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。薛宝钗也在场。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。薛宝钗也在场。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             run_dir = Path(tmp) / "runs" / payload["run_id"]
@@ -4488,15 +5748,25 @@ class WebAppRouteTests(unittest.TestCase):
             )
             relations_root = run_dir / "artifacts" / "relations"
             relations_root.mkdir(parents=True, exist_ok=True)
-            (relations_root / "hongloumeng_relations.html").write_text("<html></html>", encoding="utf-8")
-            (relations_root / "hongloumeng_relations.svg").write_text("<svg></svg>", encoding="utf-8")
-            (relations_root / "hongloumeng_relations.mermaid.md").write_text("graph LR", encoding="utf-8")
-            (relations_root / "hongloumeng_relations.md").write_text("## 林黛玉_贾宝玉", encoding="utf-8")
+            (relations_root / "hongloumeng_relations.html").write_text(
+                "<html></html>", encoding="utf-8"
+            )
+            (relations_root / "hongloumeng_relations.svg").write_text(
+                "<svg></svg>", encoding="utf-8"
+            )
+            (relations_root / "hongloumeng_relations.mermaid.md").write_text(
+                "graph LR", encoding="utf-8"
+            )
+            (relations_root / "hongloumeng_relations.md").write_text(
+                "## 林黛玉_贾宝玉", encoding="utf-8"
+            )
 
             refreshed = service.refresh_run(payload["run_id"])
             self.assertEqual(refreshed["summary"]["characters_completed"], 1)
             self.assertEqual(refreshed["summary"]["graph_status"], "complete")
-            self.assertEqual(refreshed["artifact_index"]["characters"][0]["name"], "林黛玉")
+            self.assertEqual(
+                refreshed["artifact_index"]["characters"][0]["name"], "林黛玉"
+            )
             self.assertIn("graph_html", refreshed["file_urls"])
             self.assertIn("graph_svg", refreshed["file_urls"])
 
@@ -4511,7 +5781,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             profile_text = "\n".join(
@@ -4527,12 +5799,25 @@ class WebAppRouteTests(unittest.TestCase):
             refreshed = service.ingest_character_result(
                 payload["run_id"],
                 character="林黛玉",
-                content_base64=base64.b64encode(profile_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(profile_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
             )
             self.assertEqual(refreshed["summary"]["characters_completed"], 1)
-            self.assertEqual(refreshed["artifact_index"]["characters"][0]["name"], "林黛玉")
+            self.assertEqual(
+                refreshed["artifact_index"]["characters"][0]["name"], "林黛玉"
+            )
             self.assertTrue(
-                (Path(tmp) / "runs" / payload["run_id"] / "artifacts" / "characters" / "hongloumeng" / "林黛玉" / "SOUL.generated.md").exists()
+                (
+                    Path(tmp)
+                    / "runs"
+                    / payload["run_id"]
+                    / "artifacts"
+                    / "characters"
+                    / "hongloumeng"
+                    / "林黛玉"
+                    / "SOUL.generated.md"
+                ).exists()
             )
 
     def test_ingest_relation_result_exports_graph(self):
@@ -4546,7 +5831,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             relations_text = "\n".join(
@@ -4562,7 +5849,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             refreshed = service.ingest_relation_result(
                 payload["run_id"],
-                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
                 filename="hongloumeng_relations.md",
             )
             self.assertEqual(refreshed["summary"]["graph_status"], "complete")
@@ -4579,7 +5868,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             profile_text = "\n".join(
@@ -4600,7 +5891,9 @@ class WebAppRouteTests(unittest.TestCase):
             service.ingest_character_result(
                 payload["run_id"],
                 character="林黛玉",
-                content_base64=base64.b64encode(profile_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(profile_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
             )
 
             review = service.get_persona_review(payload["run_id"], "林黛玉")
@@ -4640,14 +5933,18 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 payload["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 贾府外来才女\n- speech_style: 清冷带刺\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 贾府外来才女\n- speech_style: 清冷带刺\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
 
@@ -4664,12 +5961,19 @@ class WebAppRouteTests(unittest.TestCase):
 
             run = service.get_run(payload["run_id"])
             review_event = next(
-                item for item in reversed(run["events"]) if item.get("stage") == "persona_review_saved" and item.get("character") == "林黛玉"
+                item
+                for item in reversed(run["events"])
+                if item.get("stage") == "persona_review_saved"
+                and item.get("character") == "林黛玉"
             )
-            self.assertEqual(review_event["review_source"], "character_overview_autofill")
+            self.assertEqual(
+                review_event["review_source"], "character_overview_autofill"
+            )
             self.assertEqual(review_event["review_note"], "model_knowledge")
             self.assertEqual(review_event["message"], "林黛玉 的人物补全已写回")
-            self.assertEqual(review_event["changed_fields"], ["core_identity", "speech_style"])
+            self.assertEqual(
+                review_event["changed_fields"], ["core_identity", "speech_style"]
+            )
 
     def test_persona_field_autofill_uses_web_references_and_does_not_force_save(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4682,31 +5986,48 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉初入贾府。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉初入贾府。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
             fake_parts.llm.chat_completion = Mock(
                 side_effect=[
-                    {"content": '{"status":"insufficient","value":"","reason":"我对这个角色的把握不够稳定。"}'},
-                    {"content": '{"status":"filled","value":"对真心极敏感，也极重自尊。","reason":"多条人物分析都强调其真心与自尊。"}'},
+                    {
+                        "content": '{"status":"insufficient","value":"","reason":"我对这个角色的把握不够稳定。"}'
+                    },
+                    {
+                        "content": '{"status":"filled","value":"对真心极敏感，也极重自尊。","reason":"多条人物分析都强调其真心与自尊。"}'
+                    },
                 ]
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
                 return_value=[
-                    {"title": "林黛玉人物分析", "snippet": "林黛玉敏感而自尊极重，极重真情。", "source": "Bing", "query": "林黛玉 红楼梦 人物分析"}
+                    {
+                        "title": "林黛玉人物分析",
+                        "snippet": "林黛玉敏感而自尊极重，极重真情。",
+                        "source": "Bing",
+                        "query": "林黛玉 红楼梦 人物分析",
+                    }
                 ],
             ):
-                payload = service.suggest_persona_field(run["run_id"], "林黛玉", "identity_anchor")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "林黛玉", "identity_anchor"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertIn("真心", payload["value"])
@@ -4726,26 +6047,36 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉初入贾府。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉初入贾府。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
             fake_parts.llm.chat_completion = Mock(
-                return_value={"content": '{"status":"insufficient","value":"","reason":"我对这个角色的把握不够稳定。"}'}
+                return_value={
+                    "content": '{"status":"insufficient","value":"","reason":"我对这个角色的把握不够稳定。"}'
+                }
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
                 return_value=[],
             ):
-                payload = service.suggest_persona_field(run["run_id"], "林黛玉", "identity_anchor")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "林黛玉", "identity_anchor"
+                )
 
             self.assertEqual(payload["status"], "insufficient")
             self.assertIn("把握不够稳定", payload["message"])
@@ -4763,26 +6094,38 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉初入贾府。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉初入贾府。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
             fake_parts.llm.chat_completion = Mock(
-                return_value={"content": '{"status":"filled","value":"把真心和自尊看得极重。","reason":"经典角色知识稳定。"}'}
+                return_value={
+                    "content": '{"status":"filled","value":"把真心和自尊看得极重。","reason":"经典角色知识稳定。"}'
+                }
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
-                side_effect=AssertionError("web fallback should not run when model knowledge succeeds"),
+                side_effect=AssertionError(
+                    "web fallback should not run when model knowledge succeeds"
+                ),
             ):
-                payload = service.suggest_persona_field(run["run_id"], "林黛玉", "identity_anchor")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "林黛玉", "identity_anchor"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertEqual(payload["source_mode"], "model_knowledge")
@@ -4800,24 +6143,36 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉初入贾府。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉初入贾府。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
-            fake_parts.llm.chat_completion = Mock(return_value={"content": "把真心和自尊看得极重。"})
+            fake_parts.llm.chat_completion = Mock(
+                return_value={"content": "把真心和自尊看得极重。"}
+            )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
-                side_effect=AssertionError("web fallback should not run when plaintext model knowledge succeeds"),
+                side_effect=AssertionError(
+                    "web fallback should not run when plaintext model knowledge succeeds"
+                ),
             ):
-                payload = service.suggest_persona_field(run["run_id"], "林黛玉", "identity_anchor")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "林黛玉", "identity_anchor"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertIn("真心", payload["value"])
@@ -4834,14 +6189,18 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉初入贾府。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉初入贾府。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
@@ -4852,11 +6211,17 @@ class WebAppRouteTests(unittest.TestCase):
                 ]
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
-                side_effect=AssertionError("web fallback should not run when retry succeeds"),
+                side_effect=AssertionError(
+                    "web fallback should not run when retry succeeds"
+                ),
             ):
-                payload = service.suggest_persona_field(run["run_id"], "林黛玉", "identity_anchor")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "林黛玉", "identity_anchor"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertIn("真心", payload["value"])
@@ -4874,29 +6239,43 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="modao.txt",
-                novel_content_base64=base64.b64encode("江澄站在船头。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "江澄站在船头。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["江澄"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="江澄",
                 content_base64=base64.b64encode(
-                    "- name: 江澄\n- novel_id: 魔道祖师\n- core_identity: 云梦江氏宗主\n".encode("utf-8")
+                    "- name: 江澄\n- novel_id: 魔道祖师\n- core_identity: 云梦江氏宗主\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
             fake_parts.llm.chat_completion = Mock(
                 side_effect=[
-                    {"content": '"value": "魏无羡（前师弟/宿敌）；江厌离（姐姐）；金凌（外甥）；蓝忘机（对立者/前'},
-                    {"content": "魏无羡（前师弟/宿敌）；江厌离（姐姐/精神支柱）；金凌（外甥）；蓝忘机（对立者）。"},
+                    {
+                        "content": '"value": "魏无羡（前师弟/宿敌）；江厌离（姐姐）；金凌（外甥）；蓝忘机（对立者/前'
+                    },
+                    {
+                        "content": "魏无羡（前师弟/宿敌）；江厌离（姐姐/精神支柱）；金凌（外甥）；蓝忘机（对立者）。"
+                    },
                 ]
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
-                side_effect=AssertionError("web fallback should not run when retry succeeds"),
+                side_effect=AssertionError(
+                    "web fallback should not run when retry succeeds"
+                ),
             ):
-                payload = service.suggest_persona_field(run["run_id"], "江澄", "key_bonds")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "江澄", "key_bonds"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertNotIn('"value":', payload["value"])
@@ -4914,14 +6293,18 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="modao.txt",
-                novel_content_base64=base64.b64encode("江澄站在船头。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "江澄站在船头。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["江澄"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="江澄",
                 content_base64=base64.b64encode(
-                    "- name: 江澄\n- novel_id: 魔道祖师\n- core_identity: 云梦江氏宗主\n".encode("utf-8")
+                    "- name: 江澄\n- novel_id: 魔道祖师\n- core_identity: 云梦江氏宗主\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
@@ -4931,17 +6314,25 @@ class WebAppRouteTests(unittest.TestCase):
                 }
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
-                side_effect=AssertionError("web fallback should not run when extraction succeeds"),
+                side_effect=AssertionError(
+                    "web fallback should not run when extraction succeeds"
+                ),
             ):
-                payload = service.suggest_persona_field(run["run_id"], "江澄", "key_bonds")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "江澄", "key_bonds"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertIn("魏无羡", payload["value"])
             self.assertNotIn("我们被要求", payload["value"])
 
-    def test_persona_field_autofill_retries_when_meta_reasoning_has_no_final_answer(self):
+    def test_persona_field_autofill_retries_when_meta_reasoning_has_no_final_answer(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -4952,29 +6343,43 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="modao.txt",
-                novel_content_base64=base64.b64encode("江澄站在船头。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "江澄站在船头。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["江澄"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="江澄",
                 content_base64=base64.b64encode(
-                    "- name: 江澄\n- novel_id: 魔道祖师\n- core_identity: 云梦江氏宗主\n".encode("utf-8")
+                    "- name: 江澄\n- novel_id: 魔道祖师\n- core_identity: 云梦江氏宗主\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
             fake_parts.llm.chat_completion = Mock(
                 side_effect=[
-                    {"content": "我们被要求补全江澄的重要牵系。我知道他和魏无羡、金凌、江厌离关系都很重要。我觉得需要提取最关键的那些。"},
-                    {"content": "魏无羡（师弟/宿敌）；金凌（外甥）；江厌离（亡姐）；虞紫鸢（亡母）。"},
+                    {
+                        "content": "我们被要求补全江澄的重要牵系。我知道他和魏无羡、金凌、江厌离关系都很重要。我觉得需要提取最关键的那些。"
+                    },
+                    {
+                        "content": "魏无羡（师弟/宿敌）；金凌（外甥）；江厌离（亡姐）；虞紫鸢（亡母）。"
+                    },
                 ]
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
-                side_effect=AssertionError("web fallback should not run when retry succeeds"),
+                side_effect=AssertionError(
+                    "web fallback should not run when retry succeeds"
+                ),
             ):
-                payload = service.suggest_persona_field(run["run_id"], "江澄", "key_bonds")
+                payload = service.suggest_persona_field(
+                    run["run_id"], "江澄", "key_bonds"
+                )
 
             self.assertEqual(payload["status"], "filled")
             self.assertIn("魏无羡", payload["value"])
@@ -4992,7 +6397,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             relations_text = "\n".join(
@@ -5010,7 +6417,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             service.ingest_relation_result(
                 payload["run_id"],
-                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
                 filename="hongloumeng_relations.md",
             )
 
@@ -5019,7 +6428,14 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(details["items"][0]["relationship_type"], "爱情")
             self.assertTrue(details["items"][0]["evidence_lines"])
             self.assertTrue(
-                (Path(tmp) / "runs" / payload["run_id"] / "artifacts" / "relations" / "hongloumeng_relations.html").exists()
+                (
+                    Path(tmp)
+                    / "runs"
+                    / payload["run_id"]
+                    / "artifacts"
+                    / "relations"
+                    / "hongloumeng_relations.html"
+                ).exists()
             )
 
     def test_relation_details_patch_updates_relation_and_conflicts(self):
@@ -5033,7 +6449,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             relations_text = "\n".join(
@@ -5049,7 +6467,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             service.ingest_relation_result(
                 payload["run_id"],
-                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode("ascii"),
+                content_base64=base64.b64encode(relations_text.encode("utf-8")).decode(
+                    "ascii"
+                ),
                 filename="hongloumeng_relations.md",
             )
             client = TestClient(create_app(service))
@@ -5077,21 +6497,27 @@ class WebAppRouteTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             service.ingest_character_result(
                 payload["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 才女\n- soul_goal: 守住真心\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 才女\n- soul_goal: 守住真心\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             service.ingest_character_result(
                 payload["run_id"],
                 character="贾宝玉",
                 content_base64=base64.b64encode(
-                    "- name: 贾宝玉\n- novel_id: hongloumeng\n- core_identity: 公子\n- soul_goal: 护住眼前人\n".encode("utf-8")
+                    "- name: 贾宝玉\n- novel_id: hongloumeng\n- core_identity: 公子\n- soul_goal: 护住眼前人\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
 
@@ -5113,9 +6539,13 @@ class WebAppRouteTests(unittest.TestCase):
             )
             self.assertEqual(prepared["status"], "waiting_for_host_reply")
             self.assertIn("pending_turn_payload", prepared["file_urls"])
-            self.assertEqual(prepared["session_card"]["self_insert"]["display_name"], "Self")
+            self.assertEqual(
+                prepared["session_card"]["self_insert"]["display_name"], "Self"
+            )
             self.assertEqual(prepared["pending_turn_summary"]["speaker"], "Self")
-            self.assertEqual(prepared["pending_turn_summary"]["message_kind"], "dialogue")
+            self.assertEqual(
+                prepared["pending_turn_summary"]["message_kind"], "dialogue"
+            )
 
             completed = service.ingest_dialogue_turn(
                 payload["run_id"],
@@ -5135,6 +6565,7 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("你以", memory_summary.get("perspective", ""))
             self.assertTrue(memory_summary.get("world"))
 
+
 @unittest.skipUnless(TestClient and create_app, "fastapi test client is unavailable")
 class WebAppRouteTests(unittest.TestCase):
     def test_persona_review_route_accepts_extended_fields(self):
@@ -5148,14 +6579,18 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             client = TestClient(create_app(service))
@@ -5179,9 +6614,14 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertIn("冷意", fields["anger_style"])
             run_payload = service.get_run(run["run_id"])
             review_event = next(
-                item for item in reversed(run_payload["events"]) if item.get("stage") == "persona_review_saved" and item.get("character") == "林黛玉"
+                item
+                for item in reversed(run_payload["events"])
+                if item.get("stage") == "persona_review_saved"
+                and item.get("character") == "林黛玉"
             )
-            self.assertEqual(review_event["review_source"], "character_overview_autofill")
+            self.assertEqual(
+                review_event["review_source"], "character_overview_autofill"
+            )
             self.assertEqual(review_event["review_note"], "web_fallback")
 
     def test_persona_field_autofill_route_returns_generated_value(self):
@@ -5195,26 +6635,39 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉初入贾府。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉初入贾府。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉"],
             )
             service.ingest_character_result(
                 run["run_id"],
                 character="林黛玉",
                 content_base64=base64.b64encode(
-                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode("utf-8")
+                    "- name: 林黛玉\n- novel_id: 红楼梦\n- core_identity: 贾府外来才女\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
             fake_parts = Mock()
             fake_parts.llm.chat_completion = Mock(
-                return_value={"content": '{"status":"filled","value":"对真心极敏感，也极重自尊。","reason":"证据足够。"}'}
+                return_value={
+                    "content": '{"status":"filled","value":"对真心极敏感，也极重自尊。","reason":"证据足够。"}'
+                }
             )
             client = TestClient(create_app(service))
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts), patch(
+            with patch(
+                "src.web.workflow.build_runtime_parts", return_value=fake_parts
+            ), patch(
                 "src.web.service_facades.artifacts.collect_persona_web_references",
                 return_value=[
-                    {"title": "林黛玉人物分析", "snippet": "林黛玉敏感而自尊极重，极重真情。", "source": "Bing", "query": "林黛玉 红楼梦 人物分析"}
+                    {
+                        "title": "林黛玉人物分析",
+                        "snippet": "林黛玉敏感而自尊极重，极重真情。",
+                        "source": "Bing",
+                        "query": "林黛玉 红楼梦 人物分析",
+                    }
                 ],
             ):
                 response = client.post(
@@ -5280,7 +6733,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -5291,7 +6746,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -5334,7 +6791,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("镜中两人相见。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "镜中两人相见。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -5345,7 +6804,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -5430,7 +6891,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("镜中两人相见。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "镜中两人相见。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉"],
                 },
             )
@@ -5471,7 +6934,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng-1.txt",
-                    "novel_content_base64": base64.b64encode("第一章里林黛玉出场。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "第一章里林黛玉出场。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉"],
                 },
             )
@@ -5483,7 +6948,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "characters": ["林黛玉", "薛宝钗"],
                         "novel_name": "hongloumeng-2.txt",
-                        "novel_content_base64": base64.b64encode("第二章里宝钗登场。".encode("utf-8")).decode("ascii"),
+                        "novel_content_base64": base64.b64encode(
+                            "第二章里宝钗登场。".encode("utf-8")
+                        ).decode("ascii"),
                         "max_sentences": 120,
                         "max_chars": 50000,
                     },
@@ -5513,7 +6980,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng-1.txt",
-                    "novel_content_base64": base64.b64encode("第一章里林黛玉出场。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "第一章里林黛玉出场。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉"],
                 },
             )
@@ -5566,7 +7035,9 @@ class WebAppRouteTests(unittest.TestCase):
                     "/api/web/runs",
                     json={
                         "novel_name": "hongloumeng.txt",
-                        "novel_content_base64": base64.b64encode("镜中两人相见。".encode("utf-8")).decode("ascii"),
+                        "novel_content_base64": base64.b64encode(
+                            "镜中两人相见。".encode("utf-8")
+                        ).decode("ascii"),
                         "characters": ["林黛玉"],
                         "auto_run": True,
                     },
@@ -5597,15 +7068,21 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉"],
                 },
             )
             payload = create_response.json()
             run_dir = Path(tmp) / "runs" / payload["run_id"]
-            profile_dir = run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            profile_dir = (
+                run_dir / "artifacts" / "characters" / "hongloumeng" / "林黛玉"
+            )
             profile_dir.mkdir(parents=True, exist_ok=True)
-            (profile_dir / "PROFILE.generated.md").write_text("- name: 林黛玉\n- core_identity: 才女\n", encoding="utf-8")
+            (profile_dir / "PROFILE.generated.md").write_text(
+                "- name: 林黛玉\n- core_identity: 才女\n", encoding="utf-8"
+            )
 
             refresh_response = client.post(f"/api/web/runs/{payload['run_id']}/refresh")
             self.assertEqual(refresh_response.status_code, 200)
@@ -5629,23 +7106,31 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
             run = create_response.json()
 
-            profile_text = "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 才女\n"
+            profile_text = (
+                "- name: 林黛玉\n- novel_id: hongloumeng\n- core_identity: 才女\n"
+            )
             character_response = client.post(
                 f"/api/web/runs/{run['run_id']}/ingest/character",
                 json={
                     "character": "林黛玉",
-                    "content_base64": base64.b64encode(profile_text.encode("utf-8")).decode("ascii"),
+                    "content_base64": base64.b64encode(
+                        profile_text.encode("utf-8")
+                    ).decode("ascii"),
                     "filename": "PROFILE.generated.md",
                 },
             )
             self.assertEqual(character_response.status_code, 200)
-            self.assertEqual(character_response.json()["summary"]["characters_completed"], 1)
+            self.assertEqual(
+                character_response.json()["summary"]["characters_completed"], 1
+            )
             self.assertIn("character_林黛玉", character_response.json()["file_urls"])
 
             relations_text = "\n".join(
@@ -5660,12 +7145,16 @@ class WebAppRouteTests(unittest.TestCase):
             relation_response = client.post(
                 f"/api/web/runs/{run['run_id']}/ingest/relation",
                 json={
-                    "content_base64": base64.b64encode(relations_text.encode("utf-8")).decode("ascii"),
+                    "content_base64": base64.b64encode(
+                        relations_text.encode("utf-8")
+                    ).decode("ascii"),
                     "filename": "hongloumeng_relations.md",
                 },
             )
             self.assertEqual(relation_response.status_code, 200)
-            self.assertEqual(relation_response.json()["summary"]["graph_status"], "complete")
+            self.assertEqual(
+                relation_response.json()["summary"]["graph_status"], "complete"
+            )
 
     def test_dialogue_routes_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5684,7 +7173,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -5695,7 +7186,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -5722,8 +7215,12 @@ class WebAppRouteTests(unittest.TestCase):
                 json={"message": "两个人先聊起来吧。"},
             )
             self.assertEqual(prepare_response.status_code, 200)
-            self.assertEqual(prepare_response.json()["status"], "waiting_for_host_reply")
-            self.assertEqual(prepare_response.json()["pending_turn_summary"]["speaker"], "User")
+            self.assertEqual(
+                prepare_response.json()["status"], "waiting_for_host_reply"
+            )
+            self.assertEqual(
+                prepare_response.json()["pending_turn_summary"]["speaker"], "User"
+            )
 
             ingest_response = client.post(
                 f"/api/web/runs/{run['run_id']}/dialogue/sessions/{session['session_id']}/ingest",
@@ -5731,7 +7228,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             self.assertEqual(ingest_response.status_code, 200)
             self.assertEqual(ingest_response.json()["status"], "ready")
-            self.assertEqual(ingest_response.json()["transcript"][0]["role"], "director")
+            self.assertEqual(
+                ingest_response.json()["transcript"][0]["role"], "director"
+            )
 
     def test_dialogue_reply_route_generates_and_ingests(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5751,7 +7250,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -5762,7 +7263,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -5785,7 +7288,9 @@ class WebAppRouteTests(unittest.TestCase):
             with patch.object(
                 WebRunService,
                 "_generate_dialogue_responses",
-                return_value=[{"speaker": "林黛玉", "message": "你既来了，先坐下说话。"}],
+                return_value=[
+                    {"speaker": "林黛玉", "message": "你既来了，先坐下说话。"}
+                ],
             ):
                 reply_response = client.post(
                     f"/api/web/runs/{run['run_id']}/dialogue/sessions/{session['session_id']}/reply",
@@ -5815,7 +7320,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -5826,7 +7333,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -5865,7 +7374,12 @@ class WebAppRouteTests(unittest.TestCase):
             transcript = list(payload.get("transcript", []) or [])
             self.assertEqual(payload.get("status"), "ready")
             self.assertEqual(transcript[-1]["speaker"], "贾宝玉")
-            self.assertFalse(any(str(item.get("message", "")).strip() == "继续聊。" for item in transcript))
+            self.assertFalse(
+                any(
+                    str(item.get("message", "")).strip() == "继续聊。"
+                    for item in transcript
+                )
+            )
 
     def test_dialogue_reply_uses_shared_long_term_memory_store(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5878,7 +7392,9 @@ class WebAppRouteTests(unittest.TestCase):
             )
             run = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -5886,7 +7402,9 @@ class WebAppRouteTests(unittest.TestCase):
                     run["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -5904,7 +7422,9 @@ class WebAppRouteTests(unittest.TestCase):
             with patch.object(
                 service,
                 "_generate_dialogue_responses",
-                return_value=[{"speaker": "林黛玉", "message": "我们的目标还没改，你先别急。"}],
+                return_value=[
+                    {"speaker": "林黛玉", "message": "我们的目标还没改，你先别急。"}
+                ],
             ):
                 replied = service.reply_dialogue_turn(
                     run["run_id"],
@@ -5913,14 +7433,20 @@ class WebAppRouteTests(unittest.TestCase):
                     message_kind="narration",
                 )
 
-            config = service._build_runtime_config_for_run(run_dir=service.runs_root / run["run_id"])
+            config = service._build_runtime_config_for_run(
+                run_dir=service.runs_root / run["run_id"]
+            )
             parts = service._build_runtime_parts(config)
-            hits = parts.session_store.search_long_term_memory(session["session_id"], "目标", top_k=5)
+            hits = parts.session_store.search_long_term_memory(
+                session["session_id"], "目标", top_k=5
+            )
 
             self.assertTrue(hits)
             hit_texts = " ".join(str(item.get("text", "")) for item in hits)
             self.assertIn("目标", hit_texts)
-            self.assertIn("长期记忆", replied["session_memory_summary"]["relation_drift"])
+            self.assertIn(
+                "长期记忆", replied["session_memory_summary"]["relation_drift"]
+            )
 
     def test_dialogue_suggest_route_returns_suggestion_without_mutating_session(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5940,7 +7466,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -5951,7 +7479,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -5984,7 +7514,27 @@ class WebAppRouteTests(unittest.TestCase):
                 )
 
             self.assertEqual(suggest_response.status_code, 200)
-            self.assertEqual(suggest_response.json()["suggestion"], "要不先让他们把刚才那句接下去？")
+            self.assertEqual(
+                suggest_response.json()["suggestion"], "要不先让他们把刚才那句接下去？"
+            )
+
+            with patch.object(
+                WebRunService,
+                "_generate_dialogue_associations",
+                return_value=[
+                    {"label": "追问旧事", "direction": "顺着刚才的话追问旧事"},
+                    {"label": "缓和气氛", "direction": "先回应对方的关心"},
+                    {"label": "转向行动", "direction": "提议立刻去查线索"},
+                ],
+            ):
+                association_response = client.post(
+                    f"/api/web/runs/{run['run_id']}/dialogue/sessions/{session['session_id']}/associations",
+                    json={"option_count": 3},
+                )
+
+            self.assertEqual(association_response.status_code, 200)
+            self.assertTrue(association_response.json()["show"])
+            self.assertEqual(len(association_response.json()["options"]), 3)
 
             refreshed_session = client.get(
                 f"/api/web/runs/{run['run_id']}/dialogue/sessions/{session['session_id']}"
@@ -5992,7 +7542,6 @@ class WebAppRouteTests(unittest.TestCase):
             self.assertEqual(refreshed_session["history"], initial_history)
             self.assertEqual(refreshed_session["pending_turn_summary"], {})
             self.assertEqual(refreshed_session["status"], "ready")
-
 
     def test_dialogue_reply_route_returns_friendly_model_subscription_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -6012,7 +7561,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("镜中两人相见。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "镜中两人相见。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -6023,7 +7574,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -6076,7 +7629,9 @@ class WebAppRouteTests(unittest.TestCase):
                 "/api/web/runs",
                 json={
                     "novel_name": "hongloumeng.txt",
-                    "novel_content_base64": base64.b64encode("镜中两人相见。".encode("utf-8")).decode("ascii"),
+                    "novel_content_base64": base64.b64encode(
+                        "镜中两人相见。".encode("utf-8")
+                    ).decode("ascii"),
                     "characters": ["林黛玉", "贾宝玉"],
                 },
             )
@@ -6087,7 +7642,9 @@ class WebAppRouteTests(unittest.TestCase):
                     json={
                         "character": name,
                         "content_base64": base64.b64encode(
-                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                            f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                                "utf-8"
+                            )
                         ).decode("ascii"),
                     },
                 )
@@ -6110,12 +7667,17 @@ class WebAppRouteTests(unittest.TestCase):
             with patch.object(
                 WebRunService,
                 "_build_dialogue_llm_messages",
-                side_effect=lambda payload, retry_on_empty=False: [{"role": "user", "content": "retry" if retry_on_empty else "first"}],
+                side_effect=lambda payload, retry_on_empty=False: [
+                    {"role": "user", "content": "retry" if retry_on_empty else "first"}
+                ],
             ), patch("src.web.workflow.build_runtime_parts") as build_parts:
                 fake_parts = Mock()
                 fake_parts.llm.chat_completion.side_effect = [
                     {"content": "", "raw": {}},
-                    {"content": '[{"speaker":"林黛玉","message":"你既开口了，我便回你一句。"}]', "raw": {}},
+                    {
+                        "content": '[{"speaker":"林黛玉","message":"你既开口了，我便回你一句。"}]',
+                        "raw": {},
+                    },
                 ]
                 build_parts.return_value = fake_parts
                 reply_response = client.post(
@@ -6139,7 +7701,9 @@ class RunPackageTests(unittest.TestCase):
         )
         run = service.create_run(
             novel_name="hongloumeng.txt",
-            novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+            novel_content_base64=base64.b64encode(
+                "林黛玉见了贾宝玉。".encode("utf-8")
+            ).decode("ascii"),
             characters=["林黛玉", "贾宝玉"],
         )
         for name in ("林黛玉", "贾宝玉"):
@@ -6147,7 +7711,9 @@ class RunPackageTests(unittest.TestCase):
                 run["run_id"],
                 character=name,
                 content_base64=base64.b64encode(
-                    f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                    f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                        "utf-8"
+                    )
                 ).decode("ascii"),
             )
         manifest_path = service._manifest_path(run["run_id"])
@@ -6175,7 +7741,9 @@ class RunPackageTests(unittest.TestCase):
             self.assertTrue(Path(exported["path"]).exists())
             self.assertTrue(str(exported["filename"]).endswith(".zaomeng-run.zip"))
 
-            encoded = base64.b64encode(Path(exported["path"]).read_bytes()).decode("ascii")
+            encoded = base64.b64encode(Path(exported["path"]).read_bytes()).decode(
+                "ascii"
+            )
             imported = service.import_run_package(
                 filename=exported["filename"],
                 content_base64=encoded,
@@ -6218,7 +7786,9 @@ class RunPackageTests(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["novel_id"], "hongloumeng")
 
-    @unittest.skipIf(TestClient is None or create_app is None, "fastapi test client not installed")
+    @unittest.skipIf(
+        TestClient is None or create_app is None, "fastapi test client not installed"
+    )
     def test_run_package_routes_support_builtin_list_clone_import_and_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
@@ -6234,7 +7804,9 @@ class RunPackageTests(unittest.TestCase):
             items = builtin_response.json()["items"]
             self.assertEqual(len(items), 1)
 
-            clone_response = client.post(f"/api/web/builtin-novels/{items[0]['package_id']}/clone")
+            clone_response = client.post(
+                f"/api/web/builtin-novels/{items[0]['package_id']}/clone"
+            )
             self.assertEqual(clone_response.status_code, 200)
             self.assertEqual(clone_response.json()["entrypoint"], "builtin")
 
@@ -6246,19 +7818,25 @@ class RunPackageTests(unittest.TestCase):
                 "/api/web/runs/import",
                 json={
                     "filename": exported["filename"],
-                    "content_base64": base64.b64encode(Path(exported["path"]).read_bytes()).decode("ascii"),
+                    "content_base64": base64.b64encode(
+                        Path(exported["path"]).read_bytes()
+                    ).decode("ascii"),
                 },
             )
             self.assertEqual(import_response.status_code, 200)
             self.assertEqual(import_response.json()["novel_id"], "hongloumeng")
 
-            publish_response = client.post(f"/api/web/runs/{run['run_id']}/publish-builtin")
+            publish_response = client.post(
+                f"/api/web/runs/{run['run_id']}/publish-builtin"
+            )
             self.assertEqual(publish_response.status_code, 200)
             self.assertTrue(Path(publish_response.json()["package_path"]).exists())
 
 
 class DialogueTurnBehaviorTests(unittest.TestCase):
-    def test_dialogue_prompt_prefers_inline_parenthetical_actions_over_standalone_narration(self):
+    def test_dialogue_prompt_prefers_inline_parenthetical_actions_over_standalone_narration(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -6269,7 +7847,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -6277,7 +7857,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -6287,14 +7869,18 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 mode="observe",
                 participants=["林黛玉", "贾宝玉"],
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(payload["run_id"], session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(payload["run_id"], session["session_id"])
+            )
             turn_payload = service.dialogue._build_turn_payload(
                 manifest,
                 raw_session,
                 turn_id="turn-inline-action",
                 message="你们继续说。",
             )
-            llm_messages = service._build_dialogue_llm_messages(turn_payload, retry_on_empty=False)
+            llm_messages = service._build_dialogue_llm_messages(
+                turn_payload, retry_on_empty=False
+            )
             system_prompt = llm_messages[0]["content"]
 
             self.assertIn("括号动作", system_prompt)
@@ -6311,7 +7897,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
             for name in ("林黛玉", "贾宝玉", "薛宝钗"):
@@ -6319,7 +7907,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -6489,7 +8079,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
             for name in ("林黛玉", "贾宝玉", "薛宝钗"):
@@ -6497,7 +8089,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -6531,7 +8125,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 session_id=session["session_id"],
                 message="你们接着说。",
             )
-            active = prepared.get("pending_turn_summary", {}).get("active_participants", [])
+            active = prepared.get("pending_turn_summary", {}).get(
+                "active_participants", []
+            )
             self.assertIn("林黛玉", active)
             self.assertIn("贾宝玉", active)
             self.assertNotIn("薛宝钗", active)
@@ -6547,7 +8143,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
             for name in ("林黛玉", "贾宝玉", "薛宝钗"):
@@ -6555,7 +8153,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -6563,7 +8163,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 service,
                 "_generate_dialogue_responses",
                 return_value=[{"speaker": "场景提示", "message": "开场。"}],
-            ), patch.object(service, "_generate_dialogue_scene_progress", return_value={}):
+            ), patch.object(
+                service, "_generate_dialogue_scene_progress", return_value={}
+            ):
                 session = service.create_dialogue_session(
                     payload["run_id"],
                     mode="observe",
@@ -6599,8 +8201,12 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
 
             self.assertEqual(updated["scene_progress"]["location"], "私人影院")
             self.assertEqual(updated["scene_progress"]["time_hint"], "夜里")
-            self.assertEqual(updated["scene_progress"]["present_participants"], ["林黛玉", "贾宝玉"])
-            self.assertEqual(updated["scene_progress"]["offstage_participants"], ["薛宝钗"])
+            self.assertEqual(
+                updated["scene_progress"]["present_participants"], ["林黛玉", "贾宝玉"]
+            )
+            self.assertEqual(
+                updated["scene_progress"]["offstage_participants"], ["薛宝钗"]
+            )
             self.assertTrue(updated["scene_progress"]["atmosphere_summary"])
             self.assertGreater(updated["scene_progress"]["beat_maturity"], 0)
             self.assertTrue(updated["scene_progress"]["world_tension_summary"])
@@ -6612,7 +8218,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 session_id=session["session_id"],
                 message="你们继续看电影。",
             )
-            active = prepared.get("pending_turn_summary", {}).get("active_participants", [])
+            active = prepared.get("pending_turn_summary", {}).get(
+                "active_participants", []
+            )
             self.assertEqual(active, ["林黛玉", "贾宝玉"])
 
     def test_scene_progress_can_flag_natural_scene_shift_after_longer_turn(self):
@@ -6626,7 +8234,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉"],
             )
             for name in ("林黛玉", "贾宝玉"):
@@ -6634,7 +8244,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
 
@@ -6642,7 +8254,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 service,
                 "_generate_dialogue_responses",
                 return_value=[{"speaker": "场景提示", "message": "开场。"}],
-            ), patch.object(service, "_generate_dialogue_scene_progress", return_value={}):
+            ), patch.object(
+                service, "_generate_dialogue_scene_progress", return_value={}
+            ):
                 session = service.create_dialogue_session(
                     payload["run_id"],
                     mode="observe",
@@ -6693,7 +8307,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             )
             payload = service.create_run(
                 novel_name="hongloumeng.txt",
-                novel_content_base64=base64.b64encode("林黛玉见了贾宝玉。".encode("utf-8")).decode("ascii"),
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
                 characters=["林黛玉", "贾宝玉", "薛宝钗"],
             )
             for name in ("林黛玉", "贾宝玉", "薛宝钗"):
@@ -6701,7 +8317,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                     payload["run_id"],
                     character=name,
                     content_base64=base64.b64encode(
-                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode("utf-8")
+                        f"- name: {name}\n- novel_id: hongloumeng\n- core_identity: 人物\n".encode(
+                            "utf-8"
+                        )
                     ).decode("ascii"),
                 )
             manifest = service._require_manifest(payload["run_id"])
@@ -6710,10 +8328,20 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 mode="observe",
                 participants=["林黛玉", "贾宝玉", "薛宝钗"],
             )
-            raw_session = service.dialogue._read_json(service.dialogue._session_file(payload["run_id"], session["session_id"]))
+            raw_session = service.dialogue._read_json(
+                service.dialogue._session_file(payload["run_id"], session["session_id"])
+            )
             raw_session["history"] = [
-                {"speaker": "场景提示", "message": "薛宝钗先回房，只剩林黛玉和贾宝玉在花厅。", "ts": "2026-05-12T00:00:00Z"},
-                {"speaker": "林黛玉", "message": "我们先把这句话说完。", "ts": "2026-05-12T00:00:01Z"},
+                {
+                    "speaker": "场景提示",
+                    "message": "薛宝钗先回房，只剩林黛玉和贾宝玉在花厅。",
+                    "ts": "2026-05-12T00:00:00Z",
+                },
+                {
+                    "speaker": "林黛玉",
+                    "message": "我们先把这句话说完。",
+                    "ts": "2026-05-12T00:00:01Z",
+                },
             ]
             service.dialogue._set_session_scene_progress(
                 raw_session,
@@ -6744,7 +8372,11 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 "participants": ["林黛玉", "贾宝玉"],
                 "scene_card": {"time_hint": "傍晚"},
                 "history": [
-                    {"speaker": "场景提示", "message": "过了一会，灯都亮了。", "ts": "2026-05-12T00:00:00Z"},
+                    {
+                        "speaker": "场景提示",
+                        "message": "过了一会，灯都亮了。",
+                        "ts": "2026-05-12T00:00:00Z",
+                    },
                 ],
                 "state": service.dialogue._empty_session_state(),
             }
@@ -6758,7 +8390,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 },
             )
 
-            advanced = service.dialogue._merge_scene_progress_state(session, {"time_hint": ""})
+            advanced = service.dialogue._merge_scene_progress_state(
+                session, {"time_hint": ""}
+            )
             self.assertEqual(advanced["time_hint"], "晚上")
 
             regressed = service.dialogue._merge_scene_progress_state(
@@ -6773,8 +8407,16 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             session = {
                 "participants": ["林黛玉", "贾宝玉", "薛宝钗"],
                 "history": [
-                    {"speaker": "场景提示", "message": "薛宝钗先回房，只剩林黛玉和贾宝玉在花厅。", "ts": "2026-05-12T00:00:00Z"},
-                    {"speaker": "场景提示", "message": "过了一会，薛宝钗推门进来，轻声问他们可说完了。", "ts": "2026-05-12T00:01:00Z"},
+                    {
+                        "speaker": "场景提示",
+                        "message": "薛宝钗先回房，只剩林黛玉和贾宝玉在花厅。",
+                        "ts": "2026-05-12T00:00:00Z",
+                    },
+                    {
+                        "speaker": "场景提示",
+                        "message": "过了一会，薛宝钗推门进来，轻声问他们可说完了。",
+                        "ts": "2026-05-12T00:01:00Z",
+                    },
                 ],
                 "state": service.dialogue._empty_session_state(),
             }
@@ -6797,7 +8439,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(merged["present_participants"], ["林黛玉", "贾宝玉", "薛宝钗"])
+            self.assertEqual(
+                merged["present_participants"], ["林黛玉", "贾宝玉", "薛宝钗"]
+            )
             self.assertEqual(merged["offstage_participants"], [])
 
     def test_scene_progress_offers_scene_shift_after_departure_reduces_cast(self):
@@ -6806,10 +8450,26 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             session = {
                 "participants": ["林黛玉", "贾宝玉", "薛宝钗"],
                 "history": [
-                    {"speaker": "场景提示", "message": "薛宝钗先回房，只剩林黛玉与贾宝玉留在花厅。", "ts": "2026-05-12T00:00:00Z"},
-                    {"speaker": "林黛玉", "message": "那便到这里吧。", "ts": "2026-05-12T00:00:01Z"},
-                    {"speaker": "贾宝玉", "message": "我送你回去。", "ts": "2026-05-12T00:00:02Z"},
-                    {"speaker": "场景提示", "message": "花厅里一下静了下来。", "ts": "2026-05-12T00:00:03Z"},
+                    {
+                        "speaker": "场景提示",
+                        "message": "薛宝钗先回房，只剩林黛玉与贾宝玉留在花厅。",
+                        "ts": "2026-05-12T00:00:00Z",
+                    },
+                    {
+                        "speaker": "林黛玉",
+                        "message": "那便到这里吧。",
+                        "ts": "2026-05-12T00:00:01Z",
+                    },
+                    {
+                        "speaker": "贾宝玉",
+                        "message": "我送你回去。",
+                        "ts": "2026-05-12T00:00:02Z",
+                    },
+                    {
+                        "speaker": "场景提示",
+                        "message": "花厅里一下静了下来。",
+                        "ts": "2026-05-12T00:00:03Z",
+                    },
                 ],
                 "state": service.dialogue._empty_session_state(),
             }
@@ -6845,7 +8505,9 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
                 },
             )
 
-            derived = service.dialogue._derive_scene_progress_state(session, service.dialogue._serialize_transcript(session))
+            derived = service.dialogue._derive_scene_progress_state(
+                session, service.dialogue._serialize_transcript(session)
+            )
 
             self.assertTrue(derived["should_offer_scene_shift"])
             self.assertIn("薛宝钗已经离场", derived["scene_shift_reason"])

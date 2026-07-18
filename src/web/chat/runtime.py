@@ -13,7 +13,9 @@ def load_pending_turn_payload(
 ) -> dict[str, Any]:
     session_path = runs_root / run_id / "dialogue" / session_id / "session.json"
     session_payload = load_json_file(session_path) or {}
-    pending_path_text = str(session_payload.get("pending_turn", {}).get("payload_path", "")).strip()
+    pending_path_text = str(
+        session_payload.get("pending_turn", {}).get("payload_path", "")
+    ).strip()
     if not pending_path_text:
         raise ValueError("Pending turn payload was not created.")
     pending_path = Path(pending_path_text)
@@ -38,7 +40,9 @@ def generate_dialogue_responses_for_run(
     if not hasattr(parts.llm, "chat_completion"):
         raise ValueError("Configured model does not support chat generation.")
 
-    allowed_speakers = [str(item.get("name", "")).strip() for item in payload.get("responder_hints", [])]
+    allowed_speakers = [
+        str(item.get("name", "")).strip() for item in payload.get("responder_hints", [])
+    ]
     allowed_speakers.extend(["旁白", "场景提示"])
     return generate_dialogue_responses(
         payload=payload,
@@ -65,7 +69,9 @@ def generate_dialogue_suggestion_for_run(
     build_runtime_config_for_run: Callable[..., Any],
     build_runtime_parts: Callable[[Any], Any],
     generate_dialogue_suggestion: Callable[..., str],
-    build_dialogue_suggestion_llm_messages: Callable[[dict[str, Any], bool], list[dict[str, str]]],
+    build_dialogue_suggestion_llm_messages: Callable[
+        [dict[str, Any], bool], list[dict[str, str]]
+    ],
     parse_dialogue_suggestion: Callable[[str], str],
 ) -> str:
     config = build_runtime_config_for_run(run_dir=run_dir)
@@ -73,10 +79,11 @@ def generate_dialogue_suggestion_for_run(
     if not hasattr(parts.llm, "chat_completion"):
         raise ValueError("Configured model does not support chat generation.")
 
+    configured_max_tokens = int(config.get("llm.max_tokens", 0) or 0)
     return generate_dialogue_suggestion(
         payload=payload,
         temperature=float(config.get("llm.temperature", 0.45) or 0.45),
-        max_tokens=int(config.get("llm.max_tokens", 180) or 180),
+        max_tokens=max(configured_max_tokens, 512),
         chat_completion=lambda messages, temperature, max_tokens: parts.llm.chat_completion(
             messages,
             temperature=temperature,
@@ -87,4 +94,39 @@ def generate_dialogue_suggestion_for_run(
             retry_on_empty,
         ),
         parse_suggestion=parse_dialogue_suggestion,
+    )
+
+
+def generate_dialogue_associations_for_run(
+    *,
+    run_dir: Path,
+    payload: dict[str, Any],
+    build_runtime_config_for_run: Callable[..., Any],
+    build_runtime_parts: Callable[[Any], Any],
+    generate_dialogue_associations: Callable[..., list[dict[str, str]]],
+    build_dialogue_association_llm_messages: Callable[
+        [dict[str, Any], bool], list[dict[str, str]]
+    ],
+    parse_dialogue_associations: Callable[[str], list[dict[str, str]]],
+) -> list[dict[str, str]]:
+    config = build_runtime_config_for_run(run_dir=run_dir)
+    parts = build_runtime_parts(config)
+    if not hasattr(parts.llm, "chat_completion"):
+        raise ValueError("Configured model does not support chat generation.")
+
+    configured_max_tokens = int(config.get("llm.max_tokens", 0) or 0)
+    return generate_dialogue_associations(
+        payload=payload,
+        temperature=float(config.get("llm.temperature", 0.5) or 0.5),
+        max_tokens=max(configured_max_tokens, 512),
+        chat_completion=lambda messages, temperature, max_tokens: parts.llm.chat_completion(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        ),
+        build_messages=lambda current_payload, retry_on_empty: build_dialogue_association_llm_messages(
+            current_payload,
+            retry_on_empty,
+        ),
+        parse_associations=parse_dialogue_associations,
     )

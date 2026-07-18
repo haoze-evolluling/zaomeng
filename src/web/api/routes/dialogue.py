@@ -9,6 +9,7 @@ from src.web.api.deps import get_run_service
 from src.web.api.schemas import (
     BranchDialogueSessionRequest,
     CreateDialogueSessionRequest,
+    DialogueAssociationsRequest,
     IngestDialogueTurnRequest,
     PrepareDialogueTurnRequest,
     SuggestDialogueTurnRequest,
@@ -20,7 +21,9 @@ router = APIRouter()
 
 
 @router.get("/api/web/runs/{run_id}/dialogue/sessions")
-def list_dialogue_sessions(run_id: str, run_service: WebRunService = Depends(get_run_service)) -> dict[str, Any]:
+def list_dialogue_sessions(
+    run_id: str, run_service: WebRunService = Depends(get_run_service)
+) -> dict[str, Any]:
     try:
         return {"items": run_service.list_dialogue_sessions(run_id)}
     except FileNotFoundError as exc:
@@ -129,6 +132,7 @@ def reply_dialogue_turn(
             message=payload.message,
             message_kind=payload.message_kind,
             suppress_transcript_message=payload.suppress_transcript_message,
+            fast_response=True,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
@@ -144,7 +148,31 @@ def suggest_dialogue_turn(
     run_service: WebRunService = Depends(get_run_service),
 ) -> dict[str, str]:
     try:
-        return run_service.suggest_dialogue_turn(run_id, session_id=session_id, seed_text=payload.seed_text)
+        return run_service.suggest_dialogue_turn(
+            run_id,
+            session_id=session_id,
+            seed_text=payload.seed_text,
+            direction=payload.direction,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/associations")
+def associate_dialogue_turn(
+    run_id: str,
+    session_id: str,
+    payload: DialogueAssociationsRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.associate_dialogue_turn(
+            run_id,
+            session_id=session_id,
+            option_count=payload.option_count,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     except ValueError as exc:
@@ -173,7 +201,9 @@ def switch_dialogue_scene_card(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/scene-card/recommend")
+@router.post(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/scene-card/recommend"
+)
 def recommend_dialogue_scene_card(
     run_id: str,
     session_id: str,

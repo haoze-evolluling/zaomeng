@@ -4,7 +4,13 @@ import unittest
 
 from pydantic import ValidationError
 
-from src.web.api.schemas import CreateRunRequest, DeleteSessionsRequest, DialogueResponseItem, IngestDialogueTurnRequest
+from src.web.api.schemas import (
+    CreateRunRequest,
+    DeleteSessionsRequest,
+    DialogueAssociationsRequest,
+    DialogueResponseItem,
+    IngestDialogueTurnRequest,
+)
 
 
 class WebApiSchemasTests(unittest.TestCase):
@@ -30,6 +36,13 @@ class WebApiSchemasTests(unittest.TestCase):
     def test_delete_sessions_request_requires_items(self) -> None:
         with self.assertRaises(ValidationError):
             DeleteSessionsRequest(items=[])
+
+    def test_dialogue_association_request_limits_option_count(self):
+        self.assertEqual(DialogueAssociationsRequest().option_count, 3)
+        with self.assertRaises(ValidationError):
+            DialogueAssociationsRequest(option_count=1)
+        with self.assertRaises(ValidationError):
+            DialogueAssociationsRequest(option_count=5)
 
 
 if __name__ == "__main__":

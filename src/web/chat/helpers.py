@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import re
 from typing import Any, Callable
 
 from src.core.exceptions import LLMRequestError
@@ -60,11 +61,17 @@ def _canonical_scene_progress(session: dict[str, Any]) -> dict[str, Any]:
         "location": str(scene.get("location", "")).strip(),
         "atmosphere_summary": str(scene.get("atmosphere_summary", "")).strip(),
         "progression_note": str(scene.get("progression_note", "")).strip(),
-        "should_offer_scene_shift": bool(progression.get("should_offer_scene_shift", False)),
+        "should_offer_scene_shift": bool(
+            progression.get("should_offer_scene_shift", False)
+        ),
         "scene_shift_reason": str(progression.get("scene_shift_reason", "")).strip(),
-        "turns_in_current_scene": int(progression.get("turns_in_current_scene", 0) or 0),
+        "turns_in_current_scene": int(
+            progression.get("turns_in_current_scene", 0) or 0
+        ),
         "beat_maturity": int(progression.get("beat_maturity", 0) or 0),
-        "world_tension_summary": str(progression.get("world_tension_summary", "")).strip(),
+        "world_tension_summary": str(
+            progression.get("world_tension_summary", "")
+        ).strip(),
         "updated_at": (
             str(progression.get("updated_at", "")).strip()
             or str(presence.get("updated_at", "")).strip()
@@ -73,7 +80,11 @@ def _canonical_scene_progress(session: dict[str, Any]) -> dict[str, Any]:
     }
     merged = dict(derived)
     merged.update(dict(session.get("scene_progress", {}) or {}))
-    return {key: value for key, value in merged.items() if value not in ("", [], False, 0, None)}
+    return {
+        key: value
+        for key, value in merged.items()
+        if value not in ("", [], False, 0, None)
+    }
 
 
 def _canonical_relation_delta(session: dict[str, Any]) -> dict[str, Any]:
@@ -85,7 +96,9 @@ def _canonical_relation_delta(session: dict[str, Any]) -> dict[str, Any]:
 def _canonical_character_snapshots(session: dict[str, Any]) -> dict[str, Any]:
     state = _session_state(session)
     characters = dict(state.get("characters", {}) or {})
-    return dict(session.get("character_snapshots", {}) or characters.get("snapshots", {}) or {})
+    return dict(
+        session.get("character_snapshots", {}) or characters.get("snapshots", {}) or {}
+    )
 
 
 def _canonical_event_signals(session: dict[str, Any]) -> dict[str, Any]:
@@ -96,7 +109,11 @@ def _canonical_event_signals(session: dict[str, Any]) -> dict[str, Any]:
 def build_dialogue_opening_message(session: dict[str, Any]) -> str:
     return build_scene_opening_message(
         mode=str(session.get("mode", "observe")).strip() or "observe",
-        participants=[str(item).strip() for item in session.get("participants", []) if str(item).strip()],
+        participants=[
+            str(item).strip()
+            for item in session.get("participants", [])
+            if str(item).strip()
+        ],
         scene_card=dict(session.get("scene_card", {}) or {}),
         controlled_character=str(session.get("controlled_character", "")).strip(),
         self_profile=dict(session.get("self_insert", {}) or {}),
@@ -106,9 +123,26 @@ def build_dialogue_opening_message(session: dict[str, Any]) -> str:
 def friendly_dialogue_llm_error(exc: Exception) -> str:
     message = str(exc or "").strip()
     lowered = message.lower()
-    if any(token in lowered for token in ("invalidsubscription", "codingplan", "subscription has expired", "does not have a valid")):
+    if any(
+        token in lowered
+        for token in (
+            "invalidsubscription",
+            "codingplan",
+            "subscription has expired",
+            "does not have a valid",
+        )
+    ):
         return "当前模型账号没有可用的对话生成订阅权限，请更换可用模型，或检查并续订当前账号权限。"
-    if any(token in lowered for token in ("maximum context", "context length", "prompt is too long", "too many tokens", "max context")):
+    if any(
+        token in lowered
+        for token in (
+            "maximum context",
+            "context length",
+            "prompt is too long",
+            "too many tokens",
+            "max context",
+        )
+    ):
         return "当前模型拒绝了这次续写建议请求，通常是上下文太长。系统已尝试自动压缩；如果仍失败，请减少参与角色或先清空一部分聊天上下文后重试。"
     return message or "当前模型调用失败，请检查模型配置后重试。"
 
@@ -138,18 +172,27 @@ def compact_dialogue_suggestion_payload(payload: dict[str, Any]) -> dict[str, An
     compact["history"] = list(compact.get("history", []) or [])[-4:]
 
     input_block = dict(compact.get("input", {}) or {})
-    input_block["message"] = _trim_text(str(input_block.get("message", "")).strip(), 120)
+    input_block["message"] = _trim_text(
+        str(input_block.get("message", "")).strip(), 120
+    )
     compact["input"] = input_block
 
     relation_context = dict(compact.get("relation_context", {}) or {})
-    relation_context["relations_excerpt"] = _trim_text(str(relation_context.get("relations_excerpt", "")).strip(), 1200)
+    relation_context["relations_excerpt"] = _trim_text(
+        str(relation_context.get("relations_excerpt", "")).strip(), 1200
+    )
     compact["relation_context"] = relation_context
-    compact["memory_context"] = _compact_memory_context(dict(compact.get("memory_context", {}) or {}))
+    compact["memory_context"] = _compact_memory_context(
+        dict(compact.get("memory_context", {}) or {})
+    )
 
     compact["persona_contexts"] = [
-        _compact_persona_context(item) for item in list(compact.get("persona_contexts", []) or [])[:4]
+        _compact_persona_context(item)
+        for item in list(compact.get("persona_contexts", []) or [])[:4]
     ]
-    compact["user_persona"] = _compact_user_persona(dict(compact.get("user_persona", {}) or {}))
+    compact["user_persona"] = _compact_user_persona(
+        dict(compact.get("user_persona", {}) or {})
+    )
     return compact
 
 
@@ -163,7 +206,9 @@ def _compact_persona_context(item: dict[str, Any]) -> dict[str, Any]:
             "display_name": str(preview.get("display_name", "")).strip(),
             "core_identity": str(preview.get("core_identity", "")).strip(),
             "speech_style": str(preview.get("speech_style", "")).strip(),
-            "appearance_feature": _trim_text(str(preview.get("appearance_feature", "")).strip(), 80),
+            "appearance_feature": _trim_text(
+                str(preview.get("appearance_feature", "")).strip(), 80
+            ),
         }.items()
         if _has_meaningful_value(value)
     }
@@ -174,8 +219,12 @@ def _compact_persona_context(item: dict[str, Any]) -> dict[str, Any]:
             "story_role": str(profile.get("story_role", "")).strip(),
             "gender": str(profile.get("gender", "")).strip(),
             "age_stage": str(profile.get("age_stage", "")).strip(),
-            "appearance_feature": _trim_text(str(profile.get("appearance_feature", "")).strip(), 100),
-            "habit_action": _trim_text(str(profile.get("habit_action", "")).strip(), 80),
+            "appearance_feature": _trim_text(
+                str(profile.get("appearance_feature", "")).strip(), 100
+            ),
+            "habit_action": _trim_text(
+                str(profile.get("habit_action", "")).strip(), 80
+            ),
             "speech_style": str(profile.get("speech_style", "")).strip(),
             "temperament_type": str(profile.get("temperament_type", "")).strip(),
             "stress_response": str(profile.get("stress_response", "")).strip(),
@@ -216,13 +265,21 @@ def _compact_user_persona(persona: dict[str, Any]) -> dict[str, Any]:
             "story_role": str(profile.get("story_role", "")).strip(),
             "gender": str(profile.get("gender", "")).strip(),
             "age_stage": str(profile.get("age_stage", "")).strip(),
-            "appearance_feature": _trim_text(str(profile.get("appearance_feature", "")).strip(), 100),
-            "habit_action": _trim_text(str(profile.get("habit_action", "")).strip(), 80),
+            "appearance_feature": _trim_text(
+                str(profile.get("appearance_feature", "")).strip(), 100
+            ),
+            "habit_action": _trim_text(
+                str(profile.get("habit_action", "")).strip(), 80
+            ),
             "soul_goal": str(profile.get("soul_goal", "")).strip(),
             "speech_style": str(profile.get("speech_style", "")).strip(),
             "worldview": _trim_text(str(profile.get("worldview", "")).strip(), 120),
-            "belief_anchor": _trim_text(str(profile.get("belief_anchor", "")).strip(), 120),
-            "stress_response": _trim_text(str(profile.get("stress_response", "")).strip(), 120),
+            "belief_anchor": _trim_text(
+                str(profile.get("belief_anchor", "")).strip(), 120
+            ),
+            "stress_response": _trim_text(
+                str(profile.get("stress_response", "")).strip(), 120
+            ),
             "key_bonds": _normalize_short_list(profile.get("key_bonds")),
             "preference_like": _normalize_short_list(profile.get("preference_like")),
             "dislike_hate": _normalize_short_list(profile.get("dislike_hate")),
@@ -240,10 +297,18 @@ def _compact_user_persona(persona: dict[str, Any]) -> dict[str, Any]:
             "title": str(scene_card.get("title", "")).strip(),
             "location": str(scene_card.get("location", "")).strip(),
             "atmosphere": str(scene_card.get("atmosphere", "")).strip(),
-            "opening_situation": _trim_text(str(scene_card.get("opening_situation", "")).strip(), 140),
-            "public_goal": _trim_text(str(scene_card.get("public_goal", "")).strip(), 140),
-            "hidden_tension": _trim_text(str(scene_card.get("hidden_tension", "")).strip(), 140),
-            "scene_drive": _trim_text(str(scene_card.get("scene_drive", "")).strip(), 140),
+            "opening_situation": _trim_text(
+                str(scene_card.get("opening_situation", "")).strip(), 140
+            ),
+            "public_goal": _trim_text(
+                str(scene_card.get("public_goal", "")).strip(), 140
+            ),
+            "hidden_tension": _trim_text(
+                str(scene_card.get("hidden_tension", "")).strip(), 140
+            ),
+            "scene_drive": _trim_text(
+                str(scene_card.get("scene_drive", "")).strip(), 140
+            ),
             "expected_rhythm": str(scene_card.get("expected_rhythm", "")).strip(),
         }.items()
         if _has_meaningful_value(value)
@@ -262,7 +327,9 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
     compact_archived = {
         key: value
         for key, value in {
-            "summary": _trim_text(str(archived_summary.get("summary", "")).strip(), 180),
+            "summary": _trim_text(
+                str(archived_summary.get("summary", "")).strip(), 180
+            ),
             "key_points": [
                 _trim_text(str(item).strip(), 80)
                 for item in list(archived_summary.get("key_points", []) or [])[:3]
@@ -325,7 +392,11 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
             },
             "event_signals": [
                 {
-                    key: (_trim_text(str(value).strip(), 80) if isinstance(value, str) else value)
+                    key: (
+                        _trim_text(str(value).strip(), 80)
+                        if isinstance(value, str)
+                        else value
+                    )
                     for key, value in dict(item or {}).items()
                     if value not in ("", [], None, False)
                 }
@@ -344,7 +415,9 @@ def _normalize_short_list(value: Any) -> list[str] | str:
     text = str(value or "").strip()
     if not text:
         return ""
-    parts = [part.strip() for part in text.replace("；", ";").split(";") if part.strip()]
+    parts = [
+        part.strip() for part in text.replace("；", ";").split(";") if part.strip()
+    ]
     return parts[:4] if parts else text
 
 
@@ -361,16 +434,53 @@ def _trim_text(text: str, limit: int) -> str:
     return cleaned[: max(1, limit - 1)].rstrip() + "…"
 
 
-def build_dialogue_llm_messages(payload: dict[str, Any], *, retry_on_empty: bool = False) -> list[dict[str, str]]:
+def build_dialogue_llm_messages(
+    payload: dict[str, Any], *, retry_on_empty: bool = False
+) -> list[dict[str, str]]:
     input_block = dict(payload.get("input", {}) or {})
     session_mode = str(payload.get("mode", "")).strip() or "observe"
-    message_kind = str(input_block.get("message_kind", "dialogue")).strip() or "dialogue"
-    participants = [str(item).strip() for item in input_block.get("participants", []) if str(item).strip()]
-    active_participants = [str(item).strip() for item in input_block.get("active_participants", []) if str(item).strip()]
-    persona_contexts = payload.get("persona_contexts", [])
-    relation_excerpt = str(payload.get("relation_context", {}).get("relations_excerpt", "")).strip()
-    history = payload.get("history", [])
-    memory_context = dict(payload.get("memory_context", {}) or {})
+    message_kind = (
+        str(input_block.get("message_kind", "dialogue")).strip() or "dialogue"
+    )
+    participants = [
+        str(item).strip()
+        for item in input_block.get("participants", [])
+        if str(item).strip()
+    ]
+    active_participants = [
+        str(item).strip()
+        for item in input_block.get("active_participants", [])
+        if str(item).strip()
+    ]
+    raw_personas = list(payload.get("persona_contexts", []) or [])
+    persona_map = {
+        str(item.get("name", "")).strip(): item
+        for item in raw_personas
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+    ordered_persona_names: list[str] = []
+    for name in [*active_participants, *participants]:
+        if name in persona_map and name not in ordered_persona_names:
+            ordered_persona_names.append(name)
+    persona_contexts = [
+        _compact_persona_context(persona_map[name])
+        for name in ordered_persona_names[:6]
+    ]
+    relation_excerpt = _trim_text(
+        str(
+            payload.get("relation_context", {}).get("relations_excerpt", "")
+        ).strip(),
+        1200,
+    )
+    history = list(payload.get("history", []) or [])[-6:]
+    memory_context = _compact_memory_context(
+        dict(payload.get("memory_context", {}) or {})
+    )
+    memory_context.pop("relation_delta", None)
+    memory_context.pop("character_snapshots", None)
+    memory_context["event_signals"] = list(
+        memory_context.get("event_signals", []) or []
+    )[-3:]
     instructions = dict(payload.get("instructions", {}) or {})
     host_action = dict(payload.get("host_action", {}) or {})
     scene_card = dict(payload.get("scene_card", {}) or {})
@@ -390,7 +500,9 @@ def build_dialogue_llm_messages(payload: dict[str, Any], *, retry_on_empty: bool
         "只返回 JSON 数组，每项必须包含 speaker 和 message。",
     ]
     if retry_on_empty:
-        system_parts.append('这次至少返回 1 条可用回复；只有在确实需要场景切换、人物进退场或环境变化时，才返回 speaker 为“旁白”或“场景提示”的一条提示。')
+        system_parts.append(
+            "这次至少返回 1 条可用回复；只有在确实需要场景切换、人物进退场或环境变化时，才返回 speaker 为“旁白”或“场景提示”的一条提示。"
+        )
     system_prompt = "\n".join(part for part in system_parts if part)
 
     user_payload = {
@@ -406,7 +518,9 @@ def build_dialogue_llm_messages(payload: dict[str, Any], *, retry_on_empty: bool
         "persona_contexts": persona_contexts,
         "history": history,
         "relation_excerpt": relation_excerpt,
-        "expected_output": host_action.get("expected_output", [{"speaker": "角色名", "message": "回复内容"}]),
+        "expected_output": host_action.get(
+            "expected_output", [{"speaker": "角色名", "message": "回复内容"}]
+        ),
         "retry_on_empty": retry_on_empty,
     }
     user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
@@ -423,16 +537,27 @@ def build_dialogue_suggestion_llm_messages(
 ) -> list[dict[str, str]]:
     input_block = dict(payload.get("input", {}) or {})
     session_mode = str(payload.get("mode", "")).strip() or "observe"
-    participants = [str(item).strip() for item in input_block.get("participants", []) if str(item).strip()]
+    participants = [
+        str(item).strip()
+        for item in input_block.get("participants", [])
+        if str(item).strip()
+    ]
     persona_contexts = payload.get("persona_contexts", [])
     user_persona = dict(payload.get("user_persona", {}) or {})
-    relation_excerpt = str(payload.get("relation_context", {}).get("relations_excerpt", "")).strip()
+    relation_excerpt = str(
+        payload.get("relation_context", {}).get("relations_excerpt", "")
+    ).strip()
     history = payload.get("history", [])
     memory_context = dict(payload.get("memory_context", {}) or {})
-    scene_progress = dict(payload.get("scene_progress", {}) or memory_context.get("scene_progress", {}) or {})
+    scene_progress = dict(
+        payload.get("scene_progress", {})
+        or memory_context.get("scene_progress", {})
+        or {}
+    )
     instructions = dict(payload.get("instructions", {}) or {})
     host_action = dict(payload.get("host_action", {}) or {})
     scene_card = dict(payload.get("scene_card", {}) or {})
+    selected_direction = str(payload.get("selected_direction", "")).strip()
 
     system_parts = [
         str(payload.get("host_prompt_brief", "")).strip(),
@@ -454,12 +579,20 @@ def build_dialogue_suggestion_llm_messages(
         "如果 user_persona.profile.anchor_lines 里有当前目标、未收线或最近冲突，就优先咬住这些锚点来推进，不要另起一条太泛的新线。",
         "offstage_participants 里的人不要被你无端写回来，除非这句提示本身就在明确推动他们重新入场。",
         "如果 scene_card 存在，优先服从它给出的地点、气氛、开场局面、明面目标、暗线张力与推进方向。",
-        "只输出一句最终可发送的成品台词，不要解释上下文，不要总结历史，不要提供建议理由，不要写“作为/当前场景/我们可以/你可以/建议/回复：”这类分析话术。",
-        "不要分段，不要项目符号，不要加引号，不要加说话人标签。",
+        "只输出一段完整、可直接发送的成品文案；根据所选方向需要，可以写一至三句，但不能在语义未完成处收尾。",
+        "不要解释上下文，不要总结历史，不要提供建议理由，不要写“作为/当前场景/我们可以/你可以/建议/回复：”这类分析话术。",
+        "不要分段，不要项目符号，不要加包裹整段的引号，不要加说话人标签。",
     ]
+    if selected_direction:
+        system_parts.extend(
+            [
+                "用户已经点选了一个剧情推进方向。必须把 selected_direction 落实成当前角色或观察者下一句真正会发出的成品文案。",
+                "selected_direction 是写作意图，不是要照抄的台词；不要复述选项标题，也不要解释你如何落实它。",
+            ]
+        )
     if retry_on_empty:
         system_parts.append(
-            "上一次你的输出不是可直接发送的台词。重来：只给一句短而自然的话，像聊天框里马上要发出去的内容。"
+            "上一次输出不可用或在中途被截断。重来：给出语义完整、可直接发送的一至三句话，结尾必须完整。"
         )
     system_prompt = "\n".join(part for part in system_parts if part)
 
@@ -467,6 +600,7 @@ def build_dialogue_suggestion_llm_messages(
         "mode": session_mode,
         "speaker": str(input_block.get("speaker", "")).strip(),
         "seed_text": str(input_block.get("message", "")).strip(),
+        "selected_direction": selected_direction,
         "scene_card": scene_card,
         "scene_progress": scene_progress,
         "memory_context": memory_context,
@@ -475,7 +609,9 @@ def build_dialogue_suggestion_llm_messages(
         "persona_contexts": persona_contexts,
         "history": history,
         "relation_excerpt": relation_excerpt,
-        "response_shape": host_action.get("expected_output", {"suggestion": "一句可直接发送的话"}),
+        "response_shape": host_action.get(
+            "expected_output", {"suggestion": "一段完整、可直接发送的文案"}
+        ),
         "good_examples": {
             "act_or_insert": [
                 "抱歉，我刚才那句说重了。",
@@ -506,7 +642,80 @@ def build_dialogue_suggestion_llm_messages(
     ]
 
 
-def build_dialogue_scene_progress_messages(session: dict[str, Any]) -> list[dict[str, str]]:
+def build_dialogue_association_llm_messages(
+    payload: dict[str, Any],
+    *,
+    retry_on_empty: bool = False,
+) -> list[dict[str, str]]:
+    input_block = dict(payload.get("input", {}) or {})
+    memory_context = dict(payload.get("memory_context", {}) or {})
+    instructions = dict(payload.get("instructions", {}) or {})
+    host_action = dict(payload.get("host_action", {}) or {})
+    option_count = max(2, min(int(instructions.get("option_count", 3) or 3), 4))
+    system_parts = [
+        "你是互动小说的剧情分支编辑，负责在角色回复后给用户少量、明确的推进方向。",
+        "本接口只会在一轮角色回复完成后调用，此刻就是向用户提供推进方向的时机；不要返回空列表，也不要拒绝推荐。",
+        "latest_exchange 是刚刚完成的一轮，优先级高于 history、memory_context、人物关系和场景摘要；旧上下文只能帮助理解，不能覆盖最新进展。",
+        "每个选项必须直接承接 latest_exchange.replies 中至少一名角色刚说出的具体内容。用户刚做过的事、角色刚完成的动作与刚说过的话都已经发生，绝不能再次写成下一步。",
+        "recent_completed_history 按时间顺序记录了近期已经发生的内容。生成前必须检查它：已经发起或接受的赌约、邀请、入局、承诺、交付和角色动作不得再次作为新方向。",
+        "present_participants 和 speakers_who_just_replied 中的人已经在场；不得建议让他们入场、加入对话或首次开口。offstage_participants 中的人未明确回归前不得直接参与。",
+        "不得补写上下文中没有的道具、赌注、约定、秘密、地点或人物动机。direction 只能说明用户角色下一句如何回应、追问、选择或行动，不得偷偷替故事新增前提。",
+        f"返回恰好 {option_count} 个选项。每个 label 用 4-10 个中文字符概括用户能理解的行动或关注点；direction 用一句明确写作意图说明下一句应怎样推动剧情。",
+        "选项必须彼此有实质差异，可分别偏向追问信息、关系或情绪变化、行动或场景变化，但不要机械凑类别。",
+        "只使用上下文中已经成立的事实，不剧透，不凭空引入核心秘密，不把成品台词直接放进 label。",
+        "选项要符合当前 mode：act/insert 是用户所扮演角色能采取的表达或行动，observe 是观察者可施加的场景推进。",
+        "每个选项都要提供 anchor_speaker 和 anchor_quote。anchor_quote 必须从该角色在 latest_exchange.replies 里的原话连续摘录 4-20 个字，不得改写；这是事实校验字段，不会显示给用户。",
+        '只返回合法 JSON，不要 markdown，不要解释。格式为：{"options":[{"label":"追问旧事","direction":"让当前用户角色顺着对方刚提到的旧事继续追问","anchor_speaker":"林黛玉","anchor_quote":"当年的事你还记得"}]}。',
+        str(instructions.get("generation_goal", "")).strip(),
+        str(host_action.get("output_rule", "")).strip(),
+    ]
+    if retry_on_empty:
+        system_parts.append(
+            "上一次输出无法解析或不完整。重来：严格返回 JSON，并给足指定数量且不重复的选项。"
+        )
+    system_prompt = "\n".join(part for part in system_parts if part)
+    user_payload = {
+        "mode": str(payload.get("mode", "")).strip() or "observe",
+        "speaker": str(input_block.get("speaker", "")).strip(),
+        "latest_exchange": dict(payload.get("latest_exchange", {}) or {}),
+        "participants": [
+            str(item).strip()
+            for item in input_block.get("participants", [])
+            if str(item).strip()
+        ],
+        "recent_completed_history": list(payload.get("history", []) or [])[-8:],
+        "scene_card": dict(payload.get("scene_card", {}) or {}),
+        "scene_progress": dict(
+            payload.get("scene_progress", {})
+            or memory_context.get("scene_progress", {})
+            or {}
+        ),
+        "user_persona": _compact_user_persona(
+            dict(payload.get("user_persona", {}) or {})
+        ),
+        "persona_contexts": [
+            _compact_persona_context(item)
+            for item in list(payload.get("persona_contexts", []) or [])[:4]
+        ],
+        "relation_excerpt": str(
+            payload.get("relation_context", {}).get("relations_excerpt", "")
+        ).strip(),
+        "response_shape": host_action.get("expected_output", {}),
+        "option_count": option_count,
+        "retry_on_empty": retry_on_empty,
+    }
+    return [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": json.dumps(user_payload, ensure_ascii=False, indent=2),
+        },
+    ]
+
+
+def build_dialogue_scene_progress_messages(
+    session: dict[str, Any],
+) -> list[dict[str, str]]:
     transcript = list(session.get("transcript", []) or [])
     recent: list[dict[str, str]] = []
     for item in transcript[-12:]:
@@ -524,8 +733,16 @@ def build_dialogue_scene_progress_messages(session: dict[str, Any]) -> list[dict
         )
     payload = {
         "mode": str(session.get("mode", "observe")).strip() or "observe",
-        "participants": [str(item).strip() for item in list(session.get("participants", []) or []) if str(item).strip()],
-        "scene_card": dict(session.get("session_card", {}).get("scene_card", {}) or session.get("scene_card", {}) or {}),
+        "participants": [
+            str(item).strip()
+            for item in list(session.get("participants", []) or [])
+            if str(item).strip()
+        ],
+        "scene_card": dict(
+            session.get("session_card", {}).get("scene_card", {})
+            or session.get("scene_card", {})
+            or {}
+        ),
         "session_memory_summary": dict(session.get("session_memory_summary", {}) or {}),
         "recent_transcript": recent,
         "current_scene_progress": _canonical_scene_progress(session),
@@ -544,7 +761,7 @@ def build_dialogue_scene_progress_messages(session: dict[str, Any]) -> list[dict
             "event_signals 里如果出现 scene_transition / cast_enter / cast_exit / atmosphere_shift / time_change / environment_change / beat_complete，要把它们纳入判断。",
             "should_offer_scene_shift 只在这一幕已经聊出明显一拍、适合自然转场时返回 true。",
             "只返回 JSON 对象，不要解释。",
-            "格式：{\"present_participants\":[],\"offstage_participants\":[],\"time_hint\":\"\",\"location\":\"\",\"atmosphere_summary\":\"\",\"progression_note\":\"\",\"beat_maturity\":0,\"world_tension_summary\":\"\",\"should_offer_scene_shift\":false,\"scene_shift_reason\":\"\"}",
+            '格式：{"present_participants":[],"offstage_participants":[],"time_hint":"","location":"","atmosphere_summary":"","progression_note":"","beat_maturity":0,"world_tension_summary":"","should_offer_scene_shift":false,"scene_shift_reason":""}',
         ]
     )
     return [
@@ -579,13 +796,29 @@ def build_dialogue_relation_state_messages(
         "event_signals": _canonical_event_signals(session),
     }
     payload = {
-        "participants": [str(item).strip() for item in list(session.get("participants", []) or []) if str(item).strip()],
+        "participants": [
+            str(item).strip()
+            for item in list(session.get("participants", []) or [])
+            if str(item).strip()
+        ],
         "pending_input": {
-            "speaker": str(dict(pending_payload.get("input", {}) or {}).get("speaker", "")).strip(),
-            "message": _trim_text(str(dict(pending_payload.get("input", {}) or {}).get("message", "")).strip(), 120),
+            "speaker": str(
+                dict(pending_payload.get("input", {}) or {}).get("speaker", "")
+            ).strip(),
+            "message": _trim_text(
+                str(
+                    dict(pending_payload.get("input", {}) or {}).get("message", "")
+                ).strip(),
+                120,
+            ),
             "active_participants": [
                 str(item).strip()
-                for item in list(dict(pending_payload.get("input", {}) or {}).get("active_participants", []) or [])
+                for item in list(
+                    dict(pending_payload.get("input", {}) or {}).get(
+                        "active_participants", []
+                    )
+                    or []
+                )
                 if str(item).strip()
             ],
         },
@@ -596,7 +829,8 @@ def build_dialogue_relation_state_messages(
                 "message": _trim_text(str(item.get("message", "")).strip(), 120),
             }
             for item in list(responses or [])
-            if str(item.get("speaker", "")).strip() and str(item.get("message", "")).strip()
+            if str(item.get("speaker", "")).strip()
+            and str(item.get("message", "")).strip()
         ],
         "current_state": current_state,
     }
@@ -609,7 +843,7 @@ def build_dialogue_relation_state_messages(
             "event_signals 是统一事件层：场景进入/退出、角色登场/离场、明显动作、氛围突变、时间/环境变化、关系变化、互动重心变化、拍点完成都会记在这里。",
             "如果一句话不足以支持明显变化，就宁可保守，不要过拟合。",
             "只返回 JSON 对象，不要解释。",
-            "格式：{\"relation_delta\":{},\"character_snapshots\":{}}",
+            '格式：{"relation_delta":{},"character_snapshots":{}}',
         ]
     )
     return [
@@ -618,7 +852,9 @@ def build_dialogue_relation_state_messages(
     ]
 
 
-def parse_dialogue_scene_progress(content: str, participants: list[str]) -> dict[str, Any]:
+def parse_dialogue_scene_progress(
+    content: str, participants: list[str]
+) -> dict[str, Any]:
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty scene progress state.")
@@ -641,7 +877,11 @@ def parse_dialogue_scene_progress(content: str, participants: list[str]) -> dict
         return names
 
     present = clean_names(parsed.get("present_participants", []))
-    offstage = [name for name in clean_names(parsed.get("offstage_participants", [])) if name not in present]
+    offstage = [
+        name
+        for name in clean_names(parsed.get("offstage_participants", []))
+        if name not in present
+    ]
     try:
         beat_maturity = max(0, min(100, int(parsed.get("beat_maturity", 0) or 0)))
     except Exception:
@@ -652,16 +892,26 @@ def parse_dialogue_scene_progress(content: str, participants: list[str]) -> dict
         "offstage_participants": offstage,
         "time_hint": _trim_text(str(parsed.get("time_hint", "")).strip(), 40),
         "location": _trim_text(str(parsed.get("location", "")).strip(), 40),
-        "atmosphere_summary": _trim_text(str(parsed.get("atmosphere_summary", "")).strip(), 80),
-        "progression_note": _trim_text(str(parsed.get("progression_note", "")).strip(), 120),
+        "atmosphere_summary": _trim_text(
+            str(parsed.get("atmosphere_summary", "")).strip(), 80
+        ),
+        "progression_note": _trim_text(
+            str(parsed.get("progression_note", "")).strip(), 120
+        ),
         "beat_maturity": beat_maturity,
-        "world_tension_summary": _trim_text(str(parsed.get("world_tension_summary", "")).strip(), 120),
+        "world_tension_summary": _trim_text(
+            str(parsed.get("world_tension_summary", "")).strip(), 120
+        ),
         "should_offer_scene_shift": bool(parsed.get("should_offer_scene_shift", False)),
-        "scene_shift_reason": _trim_text(str(parsed.get("scene_shift_reason", "")).strip(), 120),
+        "scene_shift_reason": _trim_text(
+            str(parsed.get("scene_shift_reason", "")).strip(), 120
+        ),
     }
 
 
-def parse_dialogue_relation_state(content: str, participants: list[str]) -> dict[str, Any]:
+def parse_dialogue_relation_state(
+    content: str, participants: list[str]
+) -> dict[str, Any]:
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty relation state.")
@@ -698,7 +948,14 @@ def parse_dialogue_relation_state(content: str, participants: list[str]) -> dict
                 amount = 0
             if amount:
                 normalized[field] = max(-3, min(3, amount))
-        for field in ("last_event", "relation_change", "typical_interaction", "last_actor", "last_target", "updated_at"):
+        for field in (
+            "last_event",
+            "relation_change",
+            "typical_interaction",
+            "last_actor",
+            "last_target",
+            "updated_at",
+        ):
             value = _trim_text(str(item.get(field, "")).strip(), 120)
             if value:
                 normalized[field] = value
@@ -719,14 +976,18 @@ def parse_dialogue_relation_state(content: str, participants: list[str]) -> dict
             relation_delta[key] = normalized
 
     character_snapshots: dict[str, Any] = {}
-    for raw_name, raw_value in dict(parsed.get("character_snapshots", {}) or {}).items():
+    for raw_name, raw_value in dict(
+        parsed.get("character_snapshots", {}) or {}
+    ).items():
         name = str(raw_name).strip()
         if not name or name not in allowed_set:
             continue
         item = dict(raw_value or {})
         normalized = {
             "mood": _trim_text(str(item.get("mood", "")).strip(), 40),
-            "interaction_state": _trim_text(str(item.get("interaction_state", "")).strip(), 40),
+            "interaction_state": _trim_text(
+                str(item.get("interaction_state", "")).strip(), 40
+            ),
             "focus": _trim_text(str(item.get("focus", "")).strip(), 40),
             "last_target": _trim_text(str(item.get("last_target", "")).strip(), 40),
             "last_message": _trim_text(str(item.get("last_message", "")).strip(), 180),
@@ -734,7 +995,10 @@ def parse_dialogue_relation_state(content: str, participants: list[str]) -> dict
         }
         normalized = {key: value for key, value in normalized.items() if value}
         if normalized:
-            if normalized.get("last_target") and normalized["last_target"] not in allowed_set:
+            if (
+                normalized.get("last_target")
+                and normalized["last_target"] not in allowed_set
+            ):
                 normalized.pop("last_target", None)
             character_snapshots[name] = normalized
 
@@ -744,7 +1008,9 @@ def parse_dialogue_relation_state(content: str, participants: list[str]) -> dict
     }
 
 
-def parse_dialogue_responses(content: str, allowed_speakers: list[str]) -> list[dict[str, str]]:
+def parse_dialogue_responses(
+    content: str, allowed_speakers: list[str]
+) -> list[dict[str, str]]:
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned an empty reply.")
@@ -781,7 +1047,7 @@ def _looks_like_meta_suggestion(text: str) -> bool:
         return True
     if "\n" in str(text or ""):
         return True
-    if len(normalized) > 90:
+    if len(normalized) > 600:
         return True
 
     meta_tokens = (
@@ -805,7 +1071,9 @@ def _looks_like_meta_suggestion(text: str) -> bool:
     lowered = normalized.lower()
     if any(token in normalized for token in meta_tokens):
         return True
-    if any(token in lowered for token in ("context", "suggestion", "reply:", "analysis")):
+    if any(
+        token in lowered for token in ("context", "suggestion", "reply:", "analysis")
+    ):
         return True
     generic_observe_wrappers = (
         "要不先让他们",
@@ -850,8 +1118,70 @@ def parse_dialogue_suggestion(content: str) -> str:
     if not text:
         raise ValueError("Model reply did not contain a usable suggestion.")
     if _looks_like_meta_suggestion(text):
-        raise ValueError("Model reply looked like explanation instead of a direct sendable line.")
+        raise ValueError(
+            "Model reply looked like explanation instead of a direct sendable line."
+        )
     return text
+
+
+def parse_dialogue_associations(content: str) -> list[dict[str, str]]:
+    text = str(content or "").strip()
+    if not text:
+        raise ValueError("Model returned empty dialogue associations.")
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Model reply did not contain valid dialogue association JSON."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Dialogue association reply must be a JSON object.")
+    raw_options = parsed.get("options", [])
+    if not isinstance(raw_options, list):
+        raise ValueError("Dialogue association options must be a list.")
+
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_options:
+        if isinstance(item, str):
+            label = " ".join(item.split()).strip()
+            direction = label
+        elif isinstance(item, dict):
+            label = " ".join(str(item.get("label", "")).split()).strip()
+            direction = " ".join(str(item.get("direction", "")).split()).strip()
+            anchor_speaker = " ".join(
+                str(item.get("anchor_speaker", "")).split()
+            ).strip()
+            anchor_quote = " ".join(str(item.get("anchor_quote", "")).split()).strip()
+        else:
+            continue
+        label = label.strip("，。！？；：,.!?;:、 ")[:24].strip()
+        direction = direction[:240].strip()
+        if not label or not direction:
+            continue
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        option = {"label": label, "direction": direction}
+        if isinstance(item, dict) and anchor_speaker and anchor_quote:
+            option["anchor_speaker"] = anchor_speaker[:24].strip()
+            option["anchor_quote"] = anchor_quote[:80].strip()
+        options.append(option)
+        if len(options) >= 4:
+            break
+    if len(options) < 2:
+        raise ValueError(
+            "Model reply did not contain enough distinct dialogue associations."
+        )
+    return options
 
 
 def generate_dialogue_responses(
@@ -881,7 +1211,12 @@ def generate_dialogue_responses(
             responses = parse_responses(content, allowed_speakers)
             normalized = _normalize_dialogue_responses(
                 responses,
-                response_limit=int(dict(payload.get("host_action", {}) or {}).get("response_limit_hint", 0) or 0),
+                response_limit=int(
+                    dict(payload.get("host_action", {}) or {}).get(
+                        "response_limit_hint", 0
+                    )
+                    or 0
+                ),
             )
             return _reorder_plot_push_responses(normalized, payload)
         except (ValueError, json.JSONDecodeError) as exc:
@@ -901,14 +1236,22 @@ def generate_dialogue_suggestion(
     build_messages: Callable[[dict[str, Any], bool], list[dict[str, str]]],
     parse_suggestion: Callable[[str], str],
 ) -> str:
+    initial_max_tokens = max(256, int(max_tokens or 0))
     attempts = (
-        build_messages(payload, False),
-        build_messages(payload, True),
+        (build_messages(payload, False), initial_max_tokens),
+        (build_messages(payload, True), max(initial_max_tokens * 2, 768)),
     )
     last_error: Exception | None = None
-    for index, llm_messages in enumerate(attempts):
-        llm_result = chat_completion(llm_messages, temperature, max_tokens)
+    for index, (llm_messages, attempt_max_tokens) in enumerate(attempts):
+        llm_result = chat_completion(llm_messages, temperature, attempt_max_tokens)
         content = str(llm_result.get("content", "")).strip()
+        if _llm_result_was_truncated(llm_result):
+            last_error = ValueError(
+                "Model suggestion was truncated by the output token limit."
+            )
+            if index + 1 < len(attempts):
+                continue
+            break
         if not content:
             last_error = ValueError("Model returned an empty suggestion.")
             if index + 1 < len(attempts):
@@ -963,8 +1306,147 @@ def _reorder_plot_push_responses(
     else:
         characters.insert(0, controlled_item)
     return characters + meta
+def generate_dialogue_associations(
+    *,
+    payload: dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+    chat_completion: Callable[[list[dict[str, str]], float, int], dict[str, Any]],
+    build_messages: Callable[[dict[str, Any], bool], list[dict[str, str]]],
+    parse_associations: Callable[[str], list[dict[str, str]]],
+) -> list[dict[str, str]]:
+    initial_max_tokens = max(768, int(max_tokens or 0))
+    attempts = (
+        (build_messages(payload, False), initial_max_tokens),
+        (build_messages(payload, True), max(initial_max_tokens * 2, 1536)),
+    )
+    last_error: Exception | None = None
+    for index, (llm_messages, attempt_max_tokens) in enumerate(attempts):
+        llm_result = chat_completion(llm_messages, temperature, attempt_max_tokens)
+        content = str(llm_result.get("content", "")).strip()
+        if _llm_result_was_truncated(llm_result):
+            last_error = ValueError(
+                "Dialogue associations were truncated by the output token limit."
+            )
+            if index + 1 < len(attempts):
+                continue
+            break
+        if not content:
+            last_error = ValueError("Model returned empty dialogue associations.")
+            if index + 1 < len(attempts):
+                continue
+            break
+        try:
+            options = parse_associations(content)
+            expected_count = max(
+                2,
+                min(
+                    int(
+                        dict(payload.get("instructions", {}) or {}).get(
+                            "option_count", 3
+                        )
+                        or 3
+                    ),
+                    4,
+                ),
+            )
+            if len(options) != expected_count:
+                raise ValueError(
+                    f"Model returned {len(options)} dialogue associations; expected {expected_count}."
+                )
+            _validate_dialogue_association_grounding(options, payload)
+            return options
+        except ValueError as exc:
+            last_error = exc
+            if index + 1 < len(attempts):
+                continue
+            raise
+    raise ValueError("模型没有返回可用的剧情联想。") from last_error
 
 
+def _validate_dialogue_association_grounding(
+    options: list[dict[str, str]], payload: dict[str, Any]
+) -> None:
+    latest_exchange = dict(payload.get("latest_exchange", {}) or {})
+    sources = [
+        dict(item)
+        for item in list(latest_exchange.get("replies", []) or [])
+        if isinstance(item, dict) and str(item.get("message", "")).strip()
+    ]
+    if not sources:
+        user_turn = dict(latest_exchange.get("user_turn", {}) or {})
+        if str(user_turn.get("message", "")).strip():
+            sources = [user_turn]
+    if not sources:
+        return
+
+    def normalized(value: Any) -> str:
+        return "".join(
+            re.findall(r"[\w\u4e00-\u9fff]", str(value or ""), flags=re.UNICODE)
+        )
+
+    for option in options:
+        anchor_speaker = str(option.get("anchor_speaker", "")).strip()
+        anchor_quote = normalized(option.get("anchor_quote", ""))
+        if not anchor_speaker or len(anchor_quote) < 4:
+            raise ValueError(
+                "Dialogue association is missing a usable latest-reply anchor."
+            )
+        speaker_sources = [
+            normalized(item.get("message", ""))
+            for item in sources
+            if str(item.get("speaker", "")).strip() == anchor_speaker
+        ]
+        if not speaker_sources or not any(
+            anchor_quote in source for source in speaker_sources
+        ):
+            raise ValueError(
+                "Dialogue association anchor was not found in the latest replies."
+            )
+
+    recent_speakers = {
+        str(item.get("speaker", "")).strip()
+        for item in list(payload.get("history", []) or [])[-8:]
+        if isinstance(item, dict) and str(item.get("speaker", "")).strip()
+    }
+    already_participating = recent_speakers & {
+        str(item).strip()
+        for item in list(latest_exchange.get("present_participants", []) or [])
+        if str(item).strip()
+    }
+    stale_invitation_pattern = re.compile(
+        r"(?:拉|邀请|邀|请|叫|招呼).{0,16}(?:入局|加入|助阵|入场|进场|开口|参与)"
+    )
+    for option in options:
+        option_text = normalized(
+            f"{option.get('label', '')}{option.get('direction', '')}"
+        )
+        if not stale_invitation_pattern.search(option_text):
+            continue
+        for character in already_participating:
+            aliases = {character}
+            if len(character) >= 3:
+                aliases.add(character[-2:])
+            if any(alias and alias in option_text for alias in aliases):
+                raise ValueError(
+                    "Dialogue association tries to re-invite a character who already participated."
+                )
+
+
+def _llm_result_was_truncated(result: dict[str, Any]) -> bool:
+    raw = result.get("raw", {})
+    raw_payload = raw if isinstance(raw, dict) else {}
+    reasons = [
+        result.get("finish_reason", ""),
+        raw_payload.get("finish_reason", ""),
+        raw_payload.get("stop_reason", ""),
+        raw_payload.get("done_reason", ""),
+    ]
+    choices = raw_payload.get("choices", [])
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        reasons.append(choices[0].get("finish_reason", ""))
+    normalized = {str(reason or "").strip().lower() for reason in reasons}
+    return bool(normalized & {"length", "max_tokens", "max_output_tokens"})
 def _normalize_dialogue_responses(
     responses: list[dict[str, str]],
     *,

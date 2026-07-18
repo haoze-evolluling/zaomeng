@@ -2,30 +2,35 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.web.service_facades.scene_cards import SceneCardServiceMixin
 import src.web.chat.scene_signals as _scene_signals
 from src.web.chat import (
+    associate_dialogue_turn_payload,
+    build_dialogue_association_llm_messages,
     build_dialogue_llm_messages,
+    build_dialogue_opening_message,
     build_dialogue_relation_state_messages,
     build_dialogue_scene_progress_messages,
     build_dialogue_suggestion_llm_messages,
-    build_dialogue_opening_message,
     compact_dialogue_suggestion_payload,
     continue_dialogue_scene_opening_payload,
     create_dialogue_session_payload,
     friendly_dialogue_llm_error,
-    generate_dialogue_suggestion,
+    generate_dialogue_associations,
+    generate_dialogue_associations_for_run,
     generate_dialogue_responses,
     generate_dialogue_responses_for_run,
+    generate_dialogue_suggestion,
     generate_dialogue_suggestion_for_run,
-    parse_dialogue_scene_progress,
-    parse_dialogue_suggestion,
+    parse_dialogue_associations,
     parse_dialogue_responses,
     parse_dialogue_relation_state,
+    parse_dialogue_scene_progress,
+    parse_dialogue_suggestion,
     reply_dialogue_turn_payload,
     should_retry_suggestion_with_compact_payload,
     suggest_dialogue_turn_payload,
 )
+from src.web.service_facades.scene_cards import SceneCardServiceMixin
 
 
 def build_runtime_parts(config: Any) -> Any:
@@ -95,7 +100,9 @@ class DialogueServiceMixin:
         self._ensure_run_exists(run_id)
         return self.dialogue.get_session(run_id, session_id)
 
-    def branch_dialogue_session_from_scene(self, run_id: str, *, session_id: str, scene_index: int) -> dict[str, Any]:
+    def branch_dialogue_session_from_scene(
+        self, run_id: str, *, session_id: str, scene_index: int
+    ) -> dict[str, Any]:
         manifest = self._require_manifest(run_id)
         return self.dialogue.branch_session_from_scene(
             manifest,
@@ -147,8 +154,12 @@ class DialogueServiceMixin:
             refresh_scene_progress=self._refresh_dialogue_scene_progress,
         )
 
-    def recommend_dialogue_scene_card(self, run_id: str, *, session_id: str) -> dict[str, Any]:
-        return SceneCardServiceMixin.recommend_dialogue_scene_card(self, run_id, session_id=session_id)
+    def recommend_dialogue_scene_card(
+        self, run_id: str, *, session_id: str
+    ) -> dict[str, Any]:
+        return SceneCardServiceMixin.recommend_dialogue_scene_card(
+            self, run_id, session_id=session_id
+        )
 
     def delete_dialogue_session(self, run_id: str, session_id: str) -> None:
         self._ensure_run_exists(run_id)
@@ -180,8 +191,31 @@ class DialogueServiceMixin:
         message: str,
         message_kind: str = "dialogue",
         suppress_transcript_message: bool = False,
+        fast_response: bool = False,
     ) -> dict[str, Any]:
         manifest = self._require_manifest(run_id)
+
+        def evolve_relations(
+            current_run_id: str,
+            pending_payload: dict[str, Any],
+            responses: list[dict[str, str]],
+        ) -> None:
+            self._evolve_relations_from_turn(
+                current_run_id,
+                pending_payload,
+                responses,
+                refine_with_llm=not fast_response,
+            )
+
+        def refresh_scene(
+            current_run_id: str, session: dict[str, Any]
+        ) -> dict[str, Any]:
+            return self._refresh_dialogue_scene_progress(
+                current_run_id,
+                session,
+                use_llm=not fast_response,
+            )
+
         return reply_dialogue_turn_payload(
             run_id=run_id,
             session_id=session_id,
@@ -193,19 +227,45 @@ class DialogueServiceMixin:
             load_pending_turn_payload=self._load_pending_turn_payload,
             generate_dialogue_responses=self._generate_dialogue_responses,
             friendly_dialogue_llm_error=friendly_dialogue_llm_error,
-            evolve_relations_from_turn=self._evolve_relations_from_turn,
-            refresh_scene_progress=self._refresh_dialogue_scene_progress,
+            evolve_relations_from_turn=evolve_relations,
+            refresh_scene_progress=refresh_scene,
         )
 
-    def suggest_dialogue_turn(self, run_id: str, *, session_id: str, seed_text: str = "") -> dict[str, str]:
+    def suggest_dialogue_turn(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        seed_text: str = "",
+        direction: str = "",
+    ) -> dict[str, str]:
         manifest = self._require_manifest(run_id)
         return suggest_dialogue_turn_payload(
             run_id=run_id,
             session_id=session_id,
             seed_text=seed_text,
+            direction=direction,
             manifest=manifest,
             dialogue=self.dialogue,
             generate_dialogue_suggestion=self._generate_dialogue_suggestion,
+            friendly_dialogue_llm_error=friendly_dialogue_llm_error,
+        )
+
+    def associate_dialogue_turn(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        option_count: int = 3,
+    ) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        return associate_dialogue_turn_payload(
+            run_id=run_id,
+            session_id=session_id,
+            option_count=option_count,
+            manifest=manifest,
+            dialogue=self.dialogue,
+            generate_dialogue_associations=self._generate_dialogue_associations,
             friendly_dialogue_llm_error=friendly_dialogue_llm_error,
         )
 
@@ -225,7 +285,9 @@ class DialogueServiceMixin:
         )
         return self._refresh_dialogue_scene_progress(run_id, session)
 
-    def _generate_dialogue_responses(self, run_id: str, payload: dict[str, Any]) -> list[dict[str, str]]:
+    def _generate_dialogue_responses(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> list[dict[str, str]]:
         return generate_dialogue_responses_for_run(
             run_dir=self.runs_root / run_id,
             payload=payload,
@@ -239,7 +301,9 @@ class DialogueServiceMixin:
             parse_dialogue_responses=self._parse_dialogue_responses,
         )
 
-    def _generate_dialogue_suggestion(self, run_id: str, payload: dict[str, Any]) -> str:
+    def _generate_dialogue_suggestion(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> str:
         try:
             return generate_dialogue_suggestion_for_run(
                 run_dir=self.runs_root / run_id,
@@ -270,8 +334,43 @@ class DialogueServiceMixin:
                 parse_dialogue_suggestion=self._parse_dialogue_suggestion,
             )
 
+    def _generate_dialogue_associations(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        try:
+            return generate_dialogue_associations_for_run(
+                run_dir=self.runs_root / run_id,
+                payload=payload,
+                build_runtime_config_for_run=self._build_runtime_config_for_run,
+                build_runtime_parts=build_runtime_parts,
+                generate_dialogue_associations=generate_dialogue_associations,
+                build_dialogue_association_llm_messages=lambda current_payload, retry_on_empty: self._build_dialogue_association_llm_messages(
+                    current_payload,
+                    retry_on_empty=retry_on_empty,
+                ),
+                parse_dialogue_associations=self._parse_dialogue_associations,
+            )
+        except Exception as exc:
+            if not should_retry_suggestion_with_compact_payload(exc):
+                raise
+            compact_payload = compact_dialogue_suggestion_payload(payload)
+            return generate_dialogue_associations_for_run(
+                run_dir=self.runs_root / run_id,
+                payload=compact_payload,
+                build_runtime_config_for_run=self._build_runtime_config_for_run,
+                build_runtime_parts=build_runtime_parts,
+                generate_dialogue_associations=generate_dialogue_associations,
+                build_dialogue_association_llm_messages=lambda current_payload, retry_on_empty: self._build_dialogue_association_llm_messages(
+                    current_payload,
+                    retry_on_empty=retry_on_empty,
+                ),
+                parse_dialogue_associations=self._parse_dialogue_associations,
+            )
+
     @staticmethod
-    def _build_dialogue_llm_messages(payload: dict[str, Any], *, retry_on_empty: bool = False) -> list[dict[str, str]]:
+    def _build_dialogue_llm_messages(
+        payload: dict[str, Any], *, retry_on_empty: bool = False
+    ) -> list[dict[str, str]]:
         return build_dialogue_llm_messages(payload, retry_on_empty=retry_on_empty)
 
     @staticmethod
@@ -280,24 +379,50 @@ class DialogueServiceMixin:
         *,
         retry_on_empty: bool = False,
     ) -> list[dict[str, str]]:
-        return build_dialogue_suggestion_llm_messages(payload, retry_on_empty=retry_on_empty)
+        return build_dialogue_suggestion_llm_messages(
+            payload, retry_on_empty=retry_on_empty
+        )
 
     @staticmethod
-    def _parse_dialogue_responses(content: str, allowed_speakers: list[str]) -> list[dict[str, str]]:
+    def _build_dialogue_association_llm_messages(
+        payload: dict[str, Any],
+        *,
+        retry_on_empty: bool = False,
+    ) -> list[dict[str, str]]:
+        return build_dialogue_association_llm_messages(
+            payload, retry_on_empty=retry_on_empty
+        )
+
+    @staticmethod
+    def _parse_dialogue_responses(
+        content: str, allowed_speakers: list[str]
+    ) -> list[dict[str, str]]:
         return parse_dialogue_responses(content, allowed_speakers)
 
     @staticmethod
     def _parse_dialogue_suggestion(content: str) -> str:
         return parse_dialogue_suggestion(content)
 
-    def _refresh_dialogue_scene_progress(self, run_id: str, session: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _parse_dialogue_associations(content: str) -> list[dict[str, str]]:
+        return parse_dialogue_associations(content)
+
+    def _refresh_dialogue_scene_progress(
+        self,
+        run_id: str,
+        session: dict[str, Any],
+        *,
+        use_llm: bool = True,
+    ) -> dict[str, Any]:
         session_id = str((session or {}).get("session_id", "")).strip()
         if not session_id:
             return session
-        try:
-            generated = self._generate_dialogue_scene_progress(run_id, session)
-        except Exception:
-            generated = {}
+        generated: dict[str, Any] = {}
+        if use_llm:
+            try:
+                generated = self._generate_dialogue_scene_progress(run_id, session)
+            except Exception:
+                generated = {}
         try:
             return self.dialogue.update_scene_progress_state(
                 run_id,
@@ -307,8 +432,14 @@ class DialogueServiceMixin:
         except Exception:
             return session
 
-    def _generate_dialogue_scene_progress(self, run_id: str, session: dict[str, Any]) -> dict[str, Any]:
-        participants = [str(item).strip() for item in list((session or {}).get("participants", []) or []) if str(item).strip()]
+    def _generate_dialogue_scene_progress(
+        self, run_id: str, session: dict[str, Any]
+    ) -> dict[str, Any]:
+        participants = [
+            str(item).strip()
+            for item in list((session or {}).get("participants", []) or [])
+            if str(item).strip()
+        ]
         if not participants:
             return {}
         config = self._build_runtime_config_for_run(run_dir=self.runs_root / run_id)
@@ -369,6 +500,8 @@ class DialogueServiceMixin:
         run_id: str,
         pending_payload: dict[str, Any],
         responses: list[dict[str, str]],
+        *,
+        refine_with_llm: bool = True,
     ) -> None:
         if not responses:
             return
@@ -383,11 +516,21 @@ class DialogueServiceMixin:
             event_signals = self.dialogue._session_event_signals(session)
             input_block = dict(pending_payload.get("input", {}) or {})
             speaker = str(input_block.get("speaker", "")).strip()
-            participants = [str(item).strip() for item in input_block.get("participants", []) if str(item).strip()]
-            active = [str(item).strip() for item in input_block.get("active_participants", []) if str(item).strip()]
+            participants = [
+                str(item).strip()
+                for item in input_block.get("participants", [])
+                if str(item).strip()
+            ]
+            active = [
+                str(item).strip()
+                for item in input_block.get("active_participants", [])
+                if str(item).strip()
+            ]
             candidates = active or participants
             pending_message = str(input_block.get("message", "")).strip()
-            pending_kind = str(input_block.get("message_kind", "")).strip() or "dialogue"
+            pending_kind = (
+                str(input_block.get("message_kind", "")).strip() or "dialogue"
+            )
             detected_events: list[dict[str, Any]] = []
             detected_events.extend(
                 self._extract_dialogue_event_signals(
@@ -414,7 +557,11 @@ class DialogueServiceMixin:
                     current = dict(relation_delta.get(key, {}) or {})
                     delta = self._infer_relation_delta_from_message(message)
                     for field, amount in delta.items():
-                        if field not in {"trust", "affection", "hostility", "ambiguity"} or not amount:
+                        if (
+                            field
+                            not in {"trust", "affection", "hostility", "ambiguity"}
+                            or not amount
+                        ):
                             continue
                         current[field] = int(current.get(field, 0) or 0) + int(amount)
                     current["last_event"] = message[:220]
@@ -431,7 +578,10 @@ class DialogueServiceMixin:
                         abs(int(current.get("ambiguity", 0) or 0)),
                     )
                     relation_delta[key] = current
-                    if any(int(current.get(field, 0) or 0) for field in ("trust", "affection", "hostility", "ambiguity")):
+                    if any(
+                        int(current.get(field, 0) or 0)
+                        for field in ("trust", "affection", "hostility", "ambiguity")
+                    ):
                         detected_events.append(
                             {
                                 "kind": "relationship_shift",
@@ -453,7 +603,11 @@ class DialogueServiceMixin:
                     )
                 else:
                     snapshot = dict(character_snapshots.get(responder, {}) or {})
-                    snapshot.update(self._infer_character_snapshot(responder=responder, target=target, message=message))
+                    snapshot.update(
+                        self._infer_character_snapshot(
+                            responder=responder, target=target, message=message
+                        )
+                    )
                     character_snapshots[responder] = snapshot
 
                 detected_events.extend(
@@ -462,18 +616,26 @@ class DialogueServiceMixin:
                         speaker=responder,
                         message=message,
                         source="response",
-                        message_kind="narration" if responder in {"旁白", "场景提示"} else "dialogue",
+                        message_kind=(
+                            "narration"
+                            if responder in {"旁白", "场景提示"}
+                            else "dialogue"
+                        ),
                         target=target,
                     )
                 )
 
-            refined_state = self._generate_dialogue_relation_state(
-                run_id,
-                session=session,
-                pending_payload=pending_payload,
-                responses=responses,
-                relation_delta=relation_delta,
-                character_snapshots=character_snapshots,
+            refined_state = (
+                self._generate_dialogue_relation_state(
+                    run_id,
+                    session=session,
+                    pending_payload=pending_payload,
+                    responses=responses,
+                    relation_delta=relation_delta,
+                    character_snapshots=character_snapshots,
+                )
+                if refine_with_llm
+                else {}
             )
             relation_delta = self._merge_relation_delta(
                 relation_delta,
@@ -512,7 +674,11 @@ class DialogueServiceMixin:
         relation_delta: dict[str, Any],
         character_snapshots: dict[str, Any],
     ) -> dict[str, Any]:
-        participants = [str(item).strip() for item in list((session or {}).get("participants", []) or []) if str(item).strip()]
+        participants = [
+            str(item).strip()
+            for item in list((session or {}).get("participants", []) or [])
+            if str(item).strip()
+        ]
         if not participants:
             return {}
         config = self._build_runtime_config_for_run(run_dir=self.runs_root / run_id)
@@ -528,7 +694,9 @@ class DialogueServiceMixin:
         attempts = (
             build_dialogue_relation_state_messages(payload, pending_payload, responses),
             [
-                *build_dialogue_relation_state_messages(payload, pending_payload, responses),
+                *build_dialogue_relation_state_messages(
+                    payload, pending_payload, responses
+                ),
                 {
                     "role": "user",
                     "content": "请重新只返回完整 JSON，并且仅做轻量修正，不要重写全部状态。",
@@ -551,8 +719,14 @@ class DialogueServiceMixin:
         return {}
 
     @staticmethod
-    def _merge_relation_delta(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-        merged = {str(key).strip(): dict(value or {}) for key, value in dict(base or {}).items() if str(key).strip()}
+    def _merge_relation_delta(
+        base: dict[str, Any], incoming: dict[str, Any]
+    ) -> dict[str, Any]:
+        merged = {
+            str(key).strip(): dict(value or {})
+            for key, value in dict(base or {}).items()
+            if str(key).strip()
+        }
         for key, value in dict(incoming or {}).items():
             normalized_key = str(key).strip()
             if not normalized_key:
@@ -565,7 +739,14 @@ class DialogueServiceMixin:
                         current[field] = int(next_value.get(field, 0) or 0)
                     except Exception:
                         pass
-            for field in ("last_event", "relation_change", "typical_interaction", "last_actor", "last_target", "updated_at"):
+            for field in (
+                "last_event",
+                "relation_change",
+                "typical_interaction",
+                "last_actor",
+                "last_target",
+                "updated_at",
+            ):
                 text = str(next_value.get(field, "")).strip()
                 if text:
                     current[field] = text
@@ -586,8 +767,14 @@ class DialogueServiceMixin:
         return merged
 
     @staticmethod
-    def _merge_character_snapshots(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-        merged = {str(key).strip(): dict(value or {}) for key, value in dict(base or {}).items() if str(key).strip()}
+    def _merge_character_snapshots(
+        base: dict[str, Any], incoming: dict[str, Any]
+    ) -> dict[str, Any]:
+        merged = {
+            str(key).strip(): dict(value or {})
+            for key, value in dict(base or {}).items()
+            if str(key).strip()
+        }
         for key, value in dict(incoming or {}).items():
             normalized_key = str(key).strip()
             if not normalized_key:
@@ -615,7 +802,10 @@ class DialogueServiceMixin:
         if not text:
             return []
         compact = "".join(text.split())
-        is_scene_level = str(message_kind or "").strip() == "narration" or speaker in {"旁白", "场景提示"}
+        is_scene_level = str(message_kind or "").strip() == "narration" or speaker in {
+            "旁白",
+            "场景提示",
+        }
         events: list[dict[str, Any]] = []
 
         def push(
@@ -650,15 +840,30 @@ class DialogueServiceMixin:
 
         time_hint = _scene_signals.infer_time_hint([{"message": text}])
         if time_hint:
-            push("time_change", f"时间推进到{time_hint}", scope="scene", actor=speaker if is_scene_level else "", time_hint=time_hint)
+            push(
+                "time_change",
+                f"时间推进到{time_hint}",
+                scope="scene",
+                actor=speaker if is_scene_level else "",
+                time_hint=time_hint,
+            )
 
         if any(token in text for token in _scene_signals.ENVIRONMENT_TOKENS):
             push("environment_change", text, scope="scene")
         if any(token in text for token in _scene_signals.ATMOSPHERE_TOKENS):
             push("atmosphere_shift", text, scope="scene")
 
-        if any(token in compact for token in _scene_signals.SCENE_ENTER_TOKENS + _scene_signals.SCENE_EXIT_TOKENS):
-            push("scene_transition", text, scope="scene", location_hint=self._extract_location_hint(text))
+        if any(
+            token in compact
+            for token in _scene_signals.SCENE_ENTER_TOKENS
+            + _scene_signals.SCENE_EXIT_TOKENS
+        ):
+            push(
+                "scene_transition",
+                text,
+                scope="scene",
+                location_hint=self._extract_location_hint(text),
+            )
 
         for name in participants:
             if name not in text:
@@ -668,21 +873,76 @@ class DialogueServiceMixin:
             elif _scene_signals.contains_return_signal(text, name):
                 push("cast_enter", f"{name}返场", scope="scene", actor=name)
 
-        if not is_scene_level and any(token in text for token in _scene_signals.ACTION_TOKENS):
-            push("micro_action", text, scope="character", actor=speaker, target_name=target, should_inline=True)
+        if not is_scene_level and any(
+            token in text for token in _scene_signals.ACTION_TOKENS
+        ):
+            push(
+                "micro_action",
+                text,
+                scope="character",
+                actor=speaker,
+                target_name=target,
+                should_inline=True,
+            )
 
-        if any(token in text for token in ("说开了", "到这里", "该换个地方", "该走下一幕", "下一幕", "先到这", "这幕先收住", "可以转到")):
+        if any(
+            token in text
+            for token in (
+                "说开了",
+                "到这里",
+                "该换个地方",
+                "该走下一幕",
+                "下一幕",
+                "先到这",
+                "这幕先收住",
+                "可以转到",
+            )
+        ):
             push("beat_complete", text, scope="scene")
 
-        if not is_scene_level and target and any(token in text for token in ("只你我", "单独", "私下", "我们两个", "随我来", "跟我走", "留下")):
-            push("focus_shift", text, scope="relationship", actor=speaker, target_name=target)
+        if (
+            not is_scene_level
+            and target
+            and any(
+                token in text
+                for token in (
+                    "只你我",
+                    "单独",
+                    "私下",
+                    "我们两个",
+                    "随我来",
+                    "跟我走",
+                    "留下",
+                )
+            )
+        ):
+            push(
+                "focus_shift",
+                text,
+                scope="relationship",
+                actor=speaker,
+                target_name=target,
+            )
 
         return events
 
     @staticmethod
     def _extract_location_hint(text: str) -> str:
         value = str(text or "").strip()
-        matchers = ("花厅", "回廊", "偏厅", "房中", "屋里", "门外", "院中", "亭下", "船上", "私人影院", "影院", "家里")
+        matchers = (
+            "花厅",
+            "回廊",
+            "偏厅",
+            "房中",
+            "屋里",
+            "门外",
+            "院中",
+            "亭下",
+            "船上",
+            "私人影院",
+            "影院",
+            "家里",
+        )
         for item in matchers:
             if item in value:
                 return item
@@ -692,17 +952,39 @@ class DialogueServiceMixin:
     def _infer_relation_delta_from_message(message: str) -> dict[str, int]:
         text = str(message or "").strip()
         delta = {"trust": 0, "affection": 0, "hostility": 0, "ambiguity": 0}
-        if any(token in text for token in ("谢谢", "抱歉", "理解", "关心", "在意", "一起", "陪你", "我陪", "别怕", "护着")):
+        if any(
+            token in text
+            for token in (
+                "谢谢",
+                "抱歉",
+                "理解",
+                "关心",
+                "在意",
+                "一起",
+                "陪你",
+                "我陪",
+                "别怕",
+                "护着",
+            )
+        ):
             delta["trust"] += 1
             delta["affection"] += 1
             delta["hostility"] -= 1
-        if any(token in text for token in ("滚", "讨厌", "厌恶", "闭嘴", "烦", "恨", "威胁", "不想见")):
+        if any(
+            token in text
+            for token in ("滚", "讨厌", "厌恶", "闭嘴", "烦", "恨", "威胁", "不想见")
+        ):
             delta["hostility"] += 2
             delta["trust"] -= 1
             delta["affection"] -= 2
-        if any(token in text for token in ("也许", "或许", "未必", "再说", "以后再议", "说不好")):
+        if any(
+            token in text
+            for token in ("也许", "或许", "未必", "再说", "以后再议", "说不好")
+        ):
             delta["ambiguity"] += 1
-        if any(token in text for token in ("算了", "就这样吧", "告辞", "先走一步", "改日")):
+        if any(
+            token in text for token in ("算了", "就这样吧", "告辞", "先走一步", "改日")
+        ):
             delta["ambiguity"] += 1
         return delta
 
@@ -738,7 +1020,9 @@ class DialogueServiceMixin:
                 character_snapshots[name] = snapshot
 
     @staticmethod
-    def _infer_character_snapshot(*, responder: str, target: str, message: str) -> dict[str, str]:
+    def _infer_character_snapshot(
+        *, responder: str, target: str, message: str
+    ) -> dict[str, str]:
         text = str(message or "").strip()
         mood = "平稳"
         if any(token in text for token in ("笑", "松了口气", "安心", "轻快", "温和")):
@@ -749,7 +1033,9 @@ class DialogueServiceMixin:
             mood = "迟疑"
 
         interaction_state = "engaged"
-        if any(token in text for token in ("先走", "告退", "回房", "回家", "离开", "改日")):
+        if any(
+            token in text for token in ("先走", "告退", "回房", "回家", "离开", "改日")
+        ):
             interaction_state = "withdrawing"
         elif any(token in text for token in ("谢谢", "抱歉", "理解", "关心", "陪你")):
             interaction_state = "softening"
