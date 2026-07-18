@@ -98,7 +98,9 @@ class LLMRetryTests(unittest.TestCase):
             "src.core.llm_client.request.urlopen",
             side_effect=[error.URLError("temporary"), _Response({"ok": True})],
         ) as urlopen, patch("src.core.llm_client.time.sleep") as sleep:
-            result = client._post_json(url="https://example.test", payload={"ping": "pong"})
+            result = client._post_json(
+                url="https://example.test", payload={"ping": "pong"}
+            )
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(urlopen.call_count, 2)
@@ -108,7 +110,9 @@ class LLMRetryTests(unittest.TestCase):
         client = self._make_client()
         with patch(
             "src.core.llm_client.request.urlopen",
-            side_effect=ConnectionResetError("[WinError 10054] remote host closed connection"),
+            side_effect=ConnectionResetError(
+                "[WinError 10054] remote host closed connection"
+            ),
         ) as urlopen, patch("src.core.llm_client.time.sleep") as sleep:
             with self.assertRaises(LLMRequestError) as ctx:
                 client._post_json(url="https://example.test", payload={"ping": "pong"})
@@ -126,9 +130,9 @@ class LLMRetryTests(unittest.TestCase):
             hdrs=None,
             fp=io.BytesIO(b'{"error":"bad request"}'),
         )
-        with patch("src.core.llm_client.request.urlopen", side_effect=http_error) as urlopen, patch(
-            "src.core.llm_client.time.sleep"
-        ) as sleep:
+        with patch(
+            "src.core.llm_client.request.urlopen", side_effect=http_error
+        ) as urlopen, patch("src.core.llm_client.time.sleep") as sleep:
             with self.assertRaises(LLMRequestError):
                 client._post_json(url="https://example.test", payload={"ping": "pong"})
 
@@ -140,7 +144,9 @@ class LLMRetryTests(unittest.TestCase):
         with patch.dict("os.environ", {"OPENAI_API_KEY": "env-key"}, clear=False):
             self.assertEqual(client.provider_name(), "openai")
             self.assertTrue(client.is_generation_enabled())
-            self.assertEqual(client._resolve_model_name(client.provider_name()), "gpt-4.1-mini")
+            self.assertEqual(
+                client._resolve_model_name(client.provider_name()), "gpt-4.1-mini"
+            )
 
     def test_local_provider_uses_env_model_for_ollama(self):
         client = self._make_local_client()
@@ -160,11 +166,18 @@ class LLMRetryTests(unittest.TestCase):
         ):
             self.assertEqual(client.provider_name(), "host-bridge")
             self.assertEqual(client._resolve_model_name("host-bridge"), "host-default")
-            self.assertEqual(client._resolve_host_bridge_url(), "http://127.0.0.1:8765/chat/completions")
+            self.assertEqual(
+                client._resolve_host_bridge_url(),
+                "http://127.0.0.1:8765/chat/completions",
+            )
 
     def test_host_bridge_parses_simple_bridge_payload(self):
         client = self._make_local_client()
-        with patch.dict("os.environ", {"ZAOMENG_HOST_BRIDGE_URL": "http://127.0.0.1:8765"}, clear=False), patch(
+        with patch.dict(
+            "os.environ",
+            {"ZAOMENG_HOST_BRIDGE_URL": "http://127.0.0.1:8765"},
+            clear=False,
+        ), patch(
             "src.core.llm_client.request.urlopen",
             return_value=_Response(
                 {
@@ -181,7 +194,6 @@ class LLMRetryTests(unittest.TestCase):
         self.assertEqual(result["content"], "桥接回复")
         self.assertEqual(result["model"], "host-llm")
 
-
     def test_openai_like_extracts_text_from_content_parts(self):
         client = self._make_client()
         with patch(
@@ -190,12 +202,13 @@ class LLMRetryTests(unittest.TestCase):
                 {
                     "choices": [
                         {
+                            "finish_reason": "length",
                             "message": {
                                 "content": [
                                     {"type": "text", "text": "???"},
                                     {"type": "text", "text": "???"},
                                 ]
-                            }
+                            },
                         }
                     ],
                     "model": "gpt-test",
@@ -206,6 +219,7 @@ class LLMRetryTests(unittest.TestCase):
             result = client.chat_completion([{"role": "user", "content": "??"}])
 
         self.assertEqual(result["content"], "???\n???")
+        self.assertEqual(result["finish_reason"], "length")
 
 
 if __name__ == "__main__":

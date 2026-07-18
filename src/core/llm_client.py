@@ -30,7 +30,6 @@ from .config import Config
 from .exceptions import BudgetExceededError, LLMRequestError, MissingAPIKeyError
 from src.utils.file_utils import load_markdown_data, save_markdown_data
 
-
 logger = logging.getLogger(__name__)
 _TIKTOKEN_FALLBACK_LOGGED = False
 
@@ -41,9 +40,14 @@ def _log_tiktoken_fallback(exc: Exception) -> None:
         return
     _TIKTOKEN_FALLBACK_LOGGED = True
     if isinstance(exc, (ImportError, ModuleNotFoundError)):
-        logger.info("tiktoken unavailable, using heuristic token counting instead: %s", exc)
+        logger.info(
+            "tiktoken unavailable, using heuristic token counting instead: %s", exc
+        )
         return
-    logger.warning("Failed to initialize tiktoken encoder, falling back to heuristic token counting: %s", exc)
+    logger.warning(
+        "Failed to initialize tiktoken encoder, falling back to heuristic token counting: %s",
+        exc,
+    )
 
 
 class LLMClient:
@@ -81,7 +85,9 @@ class LLMClient:
 
         try:
             self.encoder = tiktoken.get_encoding("cl100k_base") if tiktoken else None
-        except Exception as exc:  # pragma: no cover - depends on local tiktoken/network state
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - depends on local tiktoken/network state
             _log_tiktoken_fallback(exc)
             self.encoder = None
 
@@ -127,11 +133,15 @@ class LLMClient:
     def _check_budget(self):
         daily_budget = float(self.cost_config.get("daily_budget_usd", 10.0))
         if self.daily_cost >= daily_budget:
-            raise BudgetExceededError(f"日预算已用完: ${self.daily_cost:.2f} >= ${daily_budget:.2f}")
+            raise BudgetExceededError(
+                f"日预算已用完: ${self.daily_cost:.2f} >= ${daily_budget:.2f}"
+            )
         threshold = float(self.cost_config.get("warning_threshold", 0.8))
         if self.daily_cost >= daily_budget * threshold:
             remaining = daily_budget - self.daily_cost
-            logger.warning("警告: 日预算已使用 %.1f%%", self.daily_cost / daily_budget * 100)
+            logger.warning(
+                "警告: 日预算已使用 %.1f%%", self.daily_cost / daily_budget * 100
+            )
             logger.warning("剩余预算: $%.2f", remaining)
 
     def count_tokens(self, text: str) -> int:
@@ -150,7 +160,9 @@ class LLMClient:
         completion_tokens = int(prompt_tokens * expected_completion_ratio)
         return self._calculate_cost(prompt_tokens, completion_tokens)
 
-    def record_usage(self, prompt_tokens: int, completion_tokens: int = 0, elapsed_time: float = 0.0):
+    def record_usage(
+        self, prompt_tokens: int, completion_tokens: int = 0, elapsed_time: float = 0.0
+    ):
         with self._usage_lock:
             self._check_budget()
             total_tokens = prompt_tokens + completion_tokens
@@ -165,7 +177,9 @@ class LLMClient:
                 f"[Tokens: {prompt_tokens}+{completion_tokens}={total_tokens}] "
                 f"[Cost: ${cost:.4f}] [Time: {elapsed_time:.2f}s]"
             )
-            logger.info("[Session: $%.4f] [Daily: $%.4f]", self.session_cost, self.daily_cost)
+            logger.info(
+                "[Session: $%.4f] [Daily: $%.4f]", self.session_cost, self.daily_cost
+            )
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -175,7 +189,9 @@ class LLMClient:
         }
 
     def provider_name(self) -> str:
-        configured = str(self.llm_config.get("provider", self.AUTO_PROVIDER)).strip().lower()
+        configured = (
+            str(self.llm_config.get("provider", self.AUTO_PROVIDER)).strip().lower()
+        )
         if configured and configured not in {self.AUTO_PROVIDER, self.LOCAL_PROVIDER}:
             return configured
         return self._infer_provider_from_environment()
@@ -195,13 +211,17 @@ class LLMClient:
 
         provider = self.provider_name()
         start = time.time()
-        prompt = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages)
+        prompt = "\n".join(
+            f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages
+        )
         prompt_tokens = self.count_tokens(prompt)
 
         if provider == self.LOCAL_PROVIDER:
             content = "本地模式未启用云模型。请使用规则引擎发言。"
             completion_tokens = self.count_tokens(content)
-            usage = self.record_usage(prompt_tokens, completion_tokens, time.time() - start)
+            usage = self.record_usage(
+                prompt_tokens, completion_tokens, time.time() - start
+            )
             usage["content"] = content
             usage["model"] = self.LOCAL_PROVIDER
             usage["provider"] = provider
@@ -215,11 +235,16 @@ class LLMClient:
             max_tokens=max_tokens,
         )
         prompt_usage = int(result.get("prompt_tokens", prompt_tokens))
-        completion_usage = int(result.get("completion_tokens", self.count_tokens(result.get("content", ""))))
+        completion_usage = int(
+            result.get(
+                "completion_tokens", self.count_tokens(result.get("content", ""))
+            )
+        )
         usage = self.record_usage(prompt_usage, completion_usage, time.time() - start)
         usage["content"] = result.get("content", "")
         usage["model"] = result.get("model", model or self.llm_config.get("model", ""))
         usage["provider"] = provider
+        usage["finish_reason"] = str(result.get("finish_reason", "")).strip()
         usage["raw"] = result.get("raw", {})
         return usage
 
@@ -235,7 +260,9 @@ class LLMClient:
             return "ollama"
         return self.LOCAL_PROVIDER
 
-    def _resolve_model_name(self, provider: str, requested_model: Optional[str] = None) -> str:
+    def _resolve_model_name(
+        self, provider: str, requested_model: Optional[str] = None
+    ) -> str:
         configured = str(requested_model or self.llm_config.get("model", "")).strip()
         if configured and configured != self.LOCAL_PROVIDER:
             return configured
@@ -332,6 +359,9 @@ class LLMClient:
         return {
             "content": self._extract_text_content(message),
             "model": data.get("model", model),
+            "finish_reason": (
+                str(choices[0].get("finish_reason", "")).strip() if choices else ""
+            ),
             "prompt_tokens": int(usage.get("prompt_tokens", 0)),
             "completion_tokens": int(usage.get("completion_tokens", 0)),
             "raw": data,
@@ -357,7 +387,12 @@ class LLMClient:
             if role == "system":
                 system_parts.append(content)
             else:
-                chat_messages.append({"role": "assistant" if role == "assistant" else "user", "content": content})
+                chat_messages.append(
+                    {
+                        "role": "assistant" if role == "assistant" else "user",
+                        "content": content,
+                    }
+                )
         payload: Dict[str, Any] = {
             "model": model,
             "messages": chat_messages,
@@ -384,6 +419,7 @@ class LLMClient:
         return {
             "content": content.strip(),
             "model": data.get("model", model),
+            "finish_reason": str(data.get("stop_reason", "")).strip(),
             "prompt_tokens": int(usage.get("input_tokens", 0)),
             "completion_tokens": int(usage.get("output_tokens", 0)),
             "raw": data,
@@ -414,12 +450,15 @@ class LLMClient:
             url=self._endpoint(base_url, "/api/chat"),
             payload=payload,
         )
-        message = data.get("message", {}) if isinstance(data.get("message", {}), dict) else {}
+        message = (
+            data.get("message", {}) if isinstance(data.get("message", {}), dict) else {}
+        )
         prompt_tokens = int(data.get("prompt_eval_count", 0))
         completion_tokens = int(data.get("eval_count", 0))
         return {
             "content": self._extract_text_content(message),
             "model": data.get("model", model),
+            "finish_reason": str(data.get("done_reason", "")).strip(),
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "raw": data,
@@ -474,7 +513,11 @@ class LLMClient:
             "provider": "host-bridge",
             "metadata": {
                 "source": "zaomeng",
-                "configured_provider": str(self.llm_config.get("provider", self.LOCAL_PROVIDER)).strip().lower(),
+                "configured_provider": str(
+                    self.llm_config.get("provider", self.LOCAL_PROVIDER)
+                )
+                .strip()
+                .lower(),
             },
         }
         headers: Dict[str, str] = {}
@@ -485,7 +528,13 @@ class LLMClient:
         data = self._post_json(url=url, payload=payload, headers=headers or None)
         return self._normalize_host_bridge_response(data, fallback_model=model)
 
-    def _post_json(self, *, url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def _post_json(
+        self,
+        *,
+        url: str,
+        payload: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         request_headers = {
             "Content-Type": "application/json",
         }
@@ -494,7 +543,9 @@ class LLMClient:
 
         timeout = float(self.llm_config.get("timeout_seconds", 120) or 120)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = request.Request(url=url, data=body, headers=request_headers, method="POST")
+        req = request.Request(
+            url=url, data=body, headers=request_headers, method="POST"
+        )
         attempts = self._retry_attempts()
         retry_status_codes = self._retry_status_codes()
         last_error: Optional[Exception] = None
@@ -511,7 +562,9 @@ class LLMClient:
                 if attempt < attempts and exc.code in retry_status_codes:
                     self._sleep_before_retry(attempt, f"HTTP {exc.code} {exc.reason}")
                     continue
-                raise LLMRequestError(f"LLM 请求失败: {exc.code} {exc.reason} | {body_text}") from exc
+                raise LLMRequestError(
+                    f"LLM 请求失败: {exc.code} {exc.reason} | {body_text}"
+                ) from exc
             except error.URLError as exc:
                 last_error = exc
                 if attempt < attempts:
@@ -536,16 +589,22 @@ class LLMClient:
         return max(0.0, float(self.llm_config.get("retry_backoff_seconds", 1.0) or 0.0))
 
     def _retry_backoff_multiplier(self) -> float:
-        return max(1.0, float(self.llm_config.get("retry_backoff_multiplier", 2.0) or 1.0))
+        return max(
+            1.0, float(self.llm_config.get("retry_backoff_multiplier", 2.0) or 1.0)
+        )
 
     def _retry_status_codes(self) -> set[int]:
-        configured = self.llm_config.get("retry_status_codes", self.DEFAULT_RETRY_STATUS_CODES)
+        configured = self.llm_config.get(
+            "retry_status_codes", self.DEFAULT_RETRY_STATUS_CODES
+        )
         if not isinstance(configured, (list, tuple, set)):
             configured = self.DEFAULT_RETRY_STATUS_CODES
         return {int(code) for code in configured}
 
     def _sleep_before_retry(self, attempt: int, reason: str) -> None:
-        delay = self._retry_backoff_seconds() * (self._retry_backoff_multiplier() ** (attempt - 1))
+        delay = self._retry_backoff_seconds() * (
+            self._retry_backoff_multiplier() ** (attempt - 1)
+        )
         if delay <= 0:
             return
         logger.warning(
@@ -576,7 +635,9 @@ class LLMClient:
             if value:
                 return value
 
-        raise MissingAPIKeyError(f"{provider} provider 缺少 API key，请在 config.yaml 或环境变量中配置。")
+        raise MissingAPIKeyError(
+            f"{provider} provider 缺少 API key，请在 config.yaml 或环境变量中配置。"
+        )
 
     def _resolve_base_url(self, provider: str) -> str:
         configured = str(self.llm_config.get("base_url", "")).strip()
@@ -596,7 +657,10 @@ class LLMClient:
         if configured:
             return configured
         configured_base = str(self.llm_config.get("base_url", "")).strip()
-        if str(self.llm_config.get("provider", "")).strip().lower() == "host-bridge" and configured_base:
+        if (
+            str(self.llm_config.get("provider", "")).strip().lower() == "host-bridge"
+            and configured_base
+        ):
             return configured_base
         return str(os.getenv(self.HOST_BRIDGE_ENV_URL, "")).strip()
 
@@ -609,7 +673,9 @@ class LLMClient:
             )
         if "://" not in configured:
             configured = f"http://{configured.lstrip('/')}"
-        if configured.endswith(("/chat/completions", "/api/chat", "/v1/chat/completions")):
+        if configured.endswith(
+            ("/chat/completions", "/api/chat", "/v1/chat/completions")
+        ):
             return configured
         return configured.rstrip("/") + self.DEFAULT_HOST_BRIDGE_PATH
 
@@ -633,15 +699,17 @@ class LLMClient:
         configured = int(self.llm_config.get("max_tokens", default) or default)
         return configured
 
-    def _normalize_host_bridge_response(self, data: Dict[str, Any], fallback_model: str) -> Dict[str, Any]:
+    def _normalize_host_bridge_response(
+        self, data: Dict[str, Any], fallback_model: str
+    ) -> Dict[str, Any]:
         content = ""
+        choices = data.get("choices", [])
+        first = choices[0] if isinstance(choices, list) and choices else {}
         if isinstance(data.get("content"), str):
             content = str(data.get("content", "")).strip()
         elif isinstance(data.get("message"), dict):
             content = str(data.get("message", {}).get("content", "")).strip()
         else:
-            choices = data.get("choices", [])
-            first = choices[0] if choices else {}
             if isinstance(first, dict):
                 message = first.get("message", {})
                 if isinstance(message, dict):
@@ -651,8 +719,18 @@ class LLMClient:
         return {
             "content": content,
             "model": str(data.get("model", fallback_model)).strip() or fallback_model,
-            "prompt_tokens": int(data.get("prompt_tokens", usage.get("prompt_tokens", 0)) or 0),
-            "completion_tokens": int(data.get("completion_tokens", usage.get("completion_tokens", 0)) or 0),
+            "finish_reason": str(
+                data.get(
+                    "finish_reason",
+                    first.get("finish_reason", "") if isinstance(first, dict) else "",
+                )
+            ).strip(),
+            "prompt_tokens": int(
+                data.get("prompt_tokens", usage.get("prompt_tokens", 0)) or 0
+            ),
+            "completion_tokens": int(
+                data.get("completion_tokens", usage.get("completion_tokens", 0)) or 0
+            ),
             "raw": data,
         }
 
@@ -670,7 +748,9 @@ class LLMClient:
             "daily_cost": self.daily_cost,
             "daily_budget": daily_budget,
             "remaining_budget": remaining_budget,
-            "budget_usage_percent": (self.daily_cost / daily_budget * 100) if daily_budget > 0 else 0,
+            "budget_usage_percent": (
+                (self.daily_cost / daily_budget * 100) if daily_budget > 0 else 0
+            ),
             "request_count": self.request_count,
             "total_tokens": self.total_tokens,
             "provider": self.provider_name(),
