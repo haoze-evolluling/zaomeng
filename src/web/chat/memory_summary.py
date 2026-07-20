@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.web.chat.text_utils import trim_summary_text
+from src.web.chat.text_utils import mode_display, trim_summary_text
 
 
 def recent_commitment_summary(history: list[dict[str, Any]], *, limit: int = 3) -> str:
@@ -239,6 +239,231 @@ def unresolved_thread_summary(
     return trim_summary_text("；".join(reversed(threads[:limit])), 180)
 
 
+def build_session_memory_summary(
+    session: dict[str, Any],
+    transcript: list[dict[str, Any]],
+    *,
+    scene_progress: dict[str, Any],
+    relation_delta: dict[str, Any],
+    event_signals: dict[str, Any],
+    semantic_hint: str = "",
+) -> dict[str, str]:
+    mode = str(session.get("mode", "observe")).strip() or "observe"
+    mode_label = mode_display(mode)
+    participants = [str(item).strip() for item in session.get("participants", []) if str(item).strip()]
+    history = list(session.get("history", []) or [])
+    present_participants = [
+        str(item).strip()
+        for item in list(scene_progress.get("present_participants", []) or [])
+        if str(item).strip()
+    ]
+    offstage_participants = [
+        str(item).strip()
+        for item in list(scene_progress.get("offstage_participants", []) or [])
+        if str(item).strip()
+    ]
+    time_hint = str(scene_progress.get("time_hint", "")).strip()
+    progress_location = str(scene_progress.get("location", "")).strip()
+    progression_note = str(scene_progress.get("progression_note", "")).strip()
+    shift_reason = str(scene_progress.get("scene_shift_reason", "")).strip()
+
+    cast_speakers: list[str] = []
+    seen: set[str] = set()
+    for item in transcript:
+        if str(item.get("role", "")).strip() != "character":
+            continue
+        speaker = str(item.get("speaker", "")).strip()
+        if not speaker or speaker in seen:
+            continue
+        seen.add(speaker)
+        cast_speakers.append(speaker)
+
+    last_messages: list[str] = []
+    for item in history[-6:]:
+        text = str(item.get("message", "")).strip()
+        if not text:
+            continue
+        last_messages.append(trim_summary_text(text, 88))
+    last_messages = last_messages[-3:]
+
+    recap = "这局刚开场，回顾会在这里滚动更新。"
+    if last_messages:
+        recap = f"最近一拍：{' / '.join(last_messages)}"
+
+    cast = "人物发言次序会在这里收住。"
+    if present_participants:
+        cast = f"当前主要在场：{'、'.join(present_participants[:5])}{'...' if len(present_participants) > 5 else ''}"
+        if offstage_participants:
+            cast = f"{cast}；暂时离场：{'、'.join(offstage_participants[:3])}"
+    elif cast_speakers:
+        suffix = "..." if len(cast_speakers) > 5 else ""
+        cast = f"当前主要在场：{'、'.join(cast_speakers[:5])}{suffix}"
+    elif participants:
+        cast = f"本局参与角色：{'、'.join(participants[:5])}{'...' if len(participants) > 5 else ''}"
+
+    if mode == "act":
+        controlled = str(session.get("controlled_character", "")).strip() or "该角色"
+        perspective = f"你正以「{controlled}」发言，其他人会按角色关系回应。"
+    elif mode == "insert":
+        self_insert = dict(session.get("self_insert", {}) or {})
+        self_name = str(self_insert.get("display_name", "")).strip() or "你"
+        identity = str(self_insert.get("scene_identity", "")).strip()
+        perspective = f"你以「{self_name}」入场（{identity}）。" if identity else f"你以「{self_name}」入场，直接参与这幕。"
+    else:
+        perspective = "你在旁观推进模式里，主要作用是推动局势进入下一拍。"
+    scene_card = dict(session.get("scene_card", {}) or {})
+    if scene_card:
+        location = str(scene_card.get("location", "")).strip()
+        atmosphere = str(scene_card.get("atmosphere", "")).strip()
+        title = str(scene_card.get("title", "")).strip()
+        scene_bits = [bit for bit in (title, location, atmosphere) if bit]
+        if scene_bits:
+            perspective = f"{perspective} 当前挂载场景：{' / '.join(scene_bits)}。"
+    if time_hint:
+        perspective = f"{perspective} 当前时间已经推进到「{time_hint}」。"
+
+    world = "当前局势里的动作与情绪线会在这里提醒你。"
+    world_tension_summary = str(scene_progress.get("world_tension_summary", "")).strip()
+    if world_tension_summary:
+        world = trim_summary_text(world_tension_summary, 88)
+    elif progression_note:
+        world = trim_summary_text(progression_note, 88)
+    for item in reversed(transcript):
+        role = str(item.get("role", "")).strip()
+        text = str(item.get("message", "")).strip()
+        if not text:
+            continue
+        if role in {"scene", "director"}:
+            world = trim_summary_text(text, 88)
+            break
+    if world == "当前局势里的动作与情绪线会在这里提醒你。":
+        for item in reversed(transcript):
+            role = str(item.get("role", "")).strip()
+            text = str(item.get("message", "")).strip()
+            if role == "character" and text:
+                world = f"人物最新情绪线：{trim_summary_text(text, 78)}"
+                break
+
+    relation = "关系线还在铺，先让人物多接几拍。"
+    recent_character_speakers: list[str] = []
+    for item in transcript[-10:]:
+        if str(item.get("role", "")).strip() != "character":
+            continue
+        speaker = str(item.get("speaker", "")).strip()
+        if speaker:
+            recent_character_speakers.append(speaker)
+    if len(recent_character_speakers) >= 2:
+        chain = " → ".join(recent_character_speakers[-4:])
+        relation = f"最近接话链：{chain}"
+    elif cast_speakers:
+        relation = f"本局关键人物：{'、'.join(cast_speakers[:4])}"
+
+    if semantic_hint:
+        relation = f"{relation} · 长期记忆：{trim_summary_text(semantic_hint, 68)}"
+    if relation_delta:
+        delta_bits: list[str] = []
+        for pair_key, delta in list(relation_delta.items())[:3]:
+            metric_bits = []
+            for field, label in (("trust", "信任"), ("affection", "好感"), ("hostility", "敌意"), ("ambiguity", "摇摆")):
+                change = int(dict(delta or {}).get(field, 0) or 0)
+                if change:
+                    metric_bits.append(f"{label}{change:+d}")
+            if metric_bits:
+                delta_bits.append(f"{pair_key}({','.join(metric_bits)})")
+        if delta_bits:
+            relation = f"{relation} · 本局变化：{'；'.join(delta_bits)}"
+
+    carried_summary = dict(session.get("carried_memory_summary", {}) or {})
+    if carried_summary and not history:
+        carried_recap = str(carried_summary.get("recap", "")).strip()
+        carried_cast = str(carried_summary.get("cast", "")).strip()
+        carried_relation = str(carried_summary.get("relation_drift", "") or carried_summary.get("relation", "")).strip()
+        carried_world = str(carried_summary.get("world", "")).strip()
+        if carried_recap:
+            recap = f"承接旧线：{trim_summary_text(carried_recap, 88)}"
+        if carried_cast:
+            cast = trim_summary_text(carried_cast, 88)
+        if carried_relation:
+            relation = trim_summary_text(carried_relation, 88)
+        if carried_world:
+            world = trim_summary_text(carried_world, 88)
+
+    scene_frame = "当前这幕的地点、气氛与推进方向会在这里提醒你。"
+    scene_card = dict(session.get("scene_card", {}) or {})
+    if scene_card:
+        scene_bits = [
+            str(scene_card.get("title", "")).strip(),
+            progress_location or str(scene_card.get("location", "")).strip(),
+            str(scene_card.get("atmosphere", "")).strip(),
+        ]
+        scene_bits = [bit for bit in scene_bits if bit]
+        drive = trim_summary_text(
+            str(scene_card.get("scene_drive", "")).strip() or str(scene_card.get("opening_situation", "")).strip(),
+            72,
+        )
+        if scene_bits:
+            scene_frame = f"挂载场景：{' / '.join(scene_bits)}"
+            if drive:
+                scene_frame = f"{scene_frame} · {drive}"
+        elif drive:
+            scene_frame = drive
+    if time_hint:
+        scene_frame = f"{scene_frame} · 当前时间：{time_hint}"
+    if shift_reason:
+        scene_frame = f"{scene_frame} · 转场提示：{trim_summary_text(shift_reason, 48)}"
+
+    recent_commitments = recent_commitment_summary(history)
+    recent_conflicts = recent_conflict_summary(history)
+    recent_actions = recent_action_summary(history)
+    major_beats = major_beat_summary(
+        session,
+        transcript,
+        event_signals=event_signals,
+    )
+    current_goal = current_goal_summary(session, scene_progress=scene_progress)
+    unresolved_threads = unresolved_thread_summary(
+        history,
+        scene_progress=scene_progress,
+        relation_delta=relation_delta,
+    )
+    current_location = current_location_summary(
+        session,
+        scene_progress=scene_progress,
+    )
+    current_companions = current_companion_summary(
+        present_participants=present_participants,
+        offstage_participants=offstage_participants,
+        participants=participants,
+        mode=mode,
+        session=session,
+    )
+    pending_commitments = pending_commitment_summary(
+        history,
+        scene_progress=scene_progress,
+    )
+
+    return {
+        "mode": mode,
+        "mode_display": mode_label,
+        "recap": recap,
+        "cast": cast,
+        "relation_drift": relation,
+        "perspective": perspective,
+        "scene_frame": scene_frame,
+        "world": world,
+        "recent_commitments": recent_commitments,
+        "recent_conflicts": recent_conflicts,
+        "recent_actions": recent_actions,
+        "major_beats": major_beats,
+        "current_goal": current_goal,
+        "unresolved_threads": unresolved_threads,
+        "current_location": current_location,
+        "current_companions": current_companions,
+        "pending_commitments": pending_commitments,
+        "updated_at": str(session.get("updated_at", "")).strip(),
+    }
+
+
 def branch_memory_seed_text(summary: dict[str, Any]) -> str:
     recap = str(summary.get("recap", "")).strip()
     cast = str(summary.get("cast", "")).strip()
@@ -258,6 +483,7 @@ def branch_memory_seed_text(summary: dict[str, Any]) -> str:
 
 __all__ = [
     "branch_memory_seed_text",
+    "build_session_memory_summary",
     "current_companion_summary",
     "current_goal_summary",
     "current_location_summary",

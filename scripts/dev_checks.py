@@ -32,11 +32,13 @@ CHAT_HELPER_TYPE_TARGETS = [
     "src/web/chat/relation_excerpt.py",
     "src/web/chat/relation_state.py",
     "src/web/chat/runtime_overview.py",
+    "src/web/chat/scene_progress.py",
     "src/web/chat/scene_signals.py",
     "src/web/chat/session_storage.py",
     "src/web/chat/session_views.py",
     "src/web/chat/state_utils.py",
     "src/web/chat/text_utils.py",
+    "src/web/chat/turn_memory.py",
 ]
 
 

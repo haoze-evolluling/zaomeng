@@ -20,11 +20,13 @@ class WebImportBoundaryTests(unittest.TestCase):
             import src.web.chat.relation_excerpt
             import src.web.chat.relation_state
             import src.web.chat.runtime_overview
+            import src.web.chat.scene_progress
             import src.web.chat.scene_signals
             import src.web.chat.session_storage
             import src.web.chat.session_views
             import src.web.chat.state_utils
             import src.web.chat.text_utils
+            import src.web.chat.turn_memory
             import src.web.api.schemas
             if "fastapi" in sys.modules or "src.web.chat.service" in sys.modules:
                 raise SystemExit(1)

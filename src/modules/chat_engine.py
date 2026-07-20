@@ -17,14 +17,15 @@ from src.core.path_provider import PathProvider
 from src.core.relation_store import MarkdownRelationStore
 from src.core.rulebook import RuleBook
 from src.core.session_store import MarkdownSessionStore
+from src.modules.chat_relation_state import ChatRelationResolver
 from src.modules.distillation import NovelDistiller
 from src.modules.persona_profile_io import (
-    merge_profile_item,
-    parse_navigation_markdown,
-    parse_persona_markdown,
-    safe_int,
-    split_metric_map,
-    split_persona_value,
+    PERSONA_INT_FIELDS as PROFILE_INT_FIELDS,
+    PERSONA_LIST_FIELDS as PROFILE_LIST_FIELDS,
+    PERSONA_METRIC_FIELDS as PROFILE_METRIC_FIELDS,
+    PERSONA_NESTED_FIELDS as PROFILE_NESTED_FIELDS,
+    PERSONA_SCALAR_FIELDS as PROFILE_SCALAR_FIELDS,
+    PersonaProfileRepository,
 )
 from src.modules.reflection import ReflectionEngine
 from src.modules.speaker import Speaker
@@ -33,9 +34,7 @@ from src.utils.file_utils import (
     ensure_dir,
     load_markdown_data,
     normalize_character_name,
-    normalize_relation_key,
     novel_id_from_input,
-    safe_filename,
 )
 
 
@@ -90,89 +89,12 @@ class ChatEngine:
 
     SYSTEM_SPEAKERS = {"Narrator", "User", "旁白", "用户"}
     ADDRESS_SUFFIXES = ("哥哥", "姐姐", "妹妹", "弟弟", "姑娘", "公子", "爷")
-    PERSONA_LIST_FIELDS = {
-        "role_tags",
-        "core_traits",
-        "typical_lines",
-        "decision_rules",
-        "life_experience",
-        "preference_like",
-        "dislike_hate",
-        "strengths",
-        "weaknesses",
-        "cognitive_limits",
-        "fear_triggers",
-        "key_bonds",
-        "taboo_topics",
-        "forbidden_behaviors",
-    }
-    PERSONA_SCALAR_FIELDS = {
-        "timeline_stage",
-        "speech_style",
-        "identity_anchor",
-        "soul_goal",
-        "trauma_scar",
-        "gender",
-        "age_stage",
-        "worldview",
-        "thinking_style",
-        "temperament_type",
-        "core_identity",
-        "faction_position",
-        "world_belong",
-        "background_imprint",
-        "world_rule_fit",
-        "rule_view",
-        "plot_restriction",
-        "appearance_feature",
-        "habit_action",
-        "social_mode",
-        "carry_style",
-        "hidden_desire",
-        "interest_claim",
-        "resource_dependence",
-        "trade_principle",
-        "inner_conflict",
-        "story_role",
-        "belief_anchor",
-        "moral_bottom_line",
-        "self_cognition",
-        "stress_response",
-        "emotion_model",
-        "others_impression",
-        "restraint_threshold",
-        "private_self",
-        "disguise_switch",
-        "stance_stability",
-        "reward_logic",
-        "action_style",
-        "arc_type",
-        "arc_blocker",
-        "ooc_redline",
-        "evidence_source",
-        "contradiction_note",
-        "arc_summary",
-    }
-    PERSONA_METRIC_FIELDS = {"values"}
-    PERSONA_INT_FIELDS = {"arc_confidence"}
-    PERSONA_NESTED_FIELDS = {
-        "cadence": ("speech_habits", "cadence", "scalar"),
-        "signature_phrases": ("speech_habits", "signature_phrases", "list"),
-        "sentence_openers": ("speech_habits", "sentence_openers", "list"),
-        "connective_tokens": ("speech_habits", "connective_tokens", "list"),
-        "sentence_endings": ("speech_habits", "sentence_endings", "list"),
-        "forbidden_fillers": ("speech_habits", "forbidden_fillers", "list"),
-        "anger_style": ("emotion_profile", "anger_style", "scalar"),
-        "joy_style": ("emotion_profile", "joy_style", "scalar"),
-        "grievance_style": ("emotion_profile", "grievance_style", "scalar"),
-        "arc_start": ("arc", "start", "metric"),
-        "arc_mid": ("arc", "mid", "metric"),
-        "arc_end": ("arc", "end", "metric"),
-        "description_count": ("evidence", "description_count", "int"),
-        "dialogue_count": ("evidence", "dialogue_count", "int"),
-        "thought_count": ("evidence", "thought_count", "int"),
-        "chunk_count": ("evidence", "chunk_count", "int"),
-    }
+    PERSONA_LIST_FIELDS = PROFILE_LIST_FIELDS
+    PERSONA_SCALAR_FIELDS = PROFILE_SCALAR_FIELDS
+    PERSONA_METRIC_FIELDS = PROFILE_METRIC_FIELDS
+    PERSONA_INT_FIELDS = PROFILE_INT_FIELDS
+    PERSONA_NESTED_FIELDS = PROFILE_NESTED_FIELDS
+
     GUIDANCE_SECTION_LABELS = (
         ("style_rules", "风格约束"),
         ("behavior_rules", "行为约束"),
@@ -214,7 +136,16 @@ class ChatEngine:
         self.session_store = session_store or MarkdownSessionStore(path_provider)
         self.relation_store = relation_store or MarkdownRelationStore(path_provider)
         self.characters_dir = self.path_provider.characters_root()
-        self.relations_dir = self.path_provider.relations_root()
+        self._persona_profiles = PersonaProfileRepository(
+            self.characters_dir,
+            scoped_root=self.path_provider.characters_root,
+            default_navigation_order=NovelDistiller.DEFAULT_NAV_LOAD_ORDER,
+        )
+        self._relations = ChatRelationResolver(
+            path_provider=self.path_provider,
+            relation_store=self.relation_store,
+            persona_profiles=self._persona_profiles,
+        )
         self.generation_mode = str(self.config.get("chat_engine.generation_mode", "auto")).strip().lower()
         self.enable_turn_interactions = bool(self.config.get("chat_engine.enable_turn_interactions", True))
         self.allow_character_silence = bool(self.config.get("chat_engine.allow_character_silence", True))
@@ -865,27 +796,7 @@ class ChatEngine:
             print(f"- {reason}")
 
     def _relation_hint(self, speaker: str, all_chars: List[str], novel_id: Optional[str]) -> str:
-        hints = []
-        for other in all_chars:
-            if other == speaker:
-                continue
-            item = self._get_relation_state_from_disk(speaker, other, novel_id)
-            if item:
-                hints.append(
-                    f"{other}(trust={item.get('trust', 5)},aff={item.get('affection', 5)},host={item.get('hostility', max(0, 5 - item.get('affection', 5)))})"
-                )
-        return "; ".join(hints[:3])
-
-    def _relation_file_for_novel(self, novel_id: Optional[str]) -> Optional[Path]:
-        if novel_id:
-            scoped = self.path_provider.relations_file(novel_id)
-            if scoped.exists():
-                return scoped
-            legacy = self.relations_dir / f"{novel_id}_relations.md"
-            if legacy.exists():
-                return legacy
-        files = sorted(self.relations_dir.glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
-        return files[0] if files else None
+        return self._relations.relation_hint(speaker, all_chars, novel_id)
 
     def _update_state(self, session: Dict[str, Any]) -> None:
         latest = session["history"][-6:]
@@ -1024,344 +935,14 @@ class ChatEngine:
             handle.write(f"- {field}: {note.strip()}\n")
 
     def _load_character_profiles(self, novel_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-        profiles: Dict[str, Dict[str, Any]] = {}
-        if not self.characters_dir.exists():
-            return profiles
-
-        if novel_id:
-            scoped_dir = self.path_provider.characters_root(novel_id)
-            sources = self._collect_profile_sources(scoped_dir)
-            if not sources:
-                return profiles
-        else:
-            sources = self._collect_profile_sources(self.characters_dir)
-            for novel_dir in sorted(path for path in self.characters_dir.iterdir() if path.is_dir()):
-                sources.extend(self._collect_profile_sources(novel_dir))
-
-        for file in sources:
-            item = self._load_profile_source(file)
-            if item and isinstance(item, dict) and item.get("name"):
-                canonical_name = normalize_character_name(item["name"])
-                item["name"] = canonical_name
-                if file.is_dir():
-                    base_dir = file.parent
-                elif file.name.startswith("PROFILE"):
-                    base_dir = file.parent.parent
-                else:
-                    base_dir = file.parent
-                item = self._merge_persona_bundle(item, base_dir)
-                profiles[canonical_name] = self._merge_profile_item(profiles.get(canonical_name), item)
-        return profiles
-
-    def _collect_profile_sources(self, root: Path) -> List[Path]:
-        if not root.exists():
-            return []
-        sources: List[Path] = []
-        seen = set()
-        for persona_dir in sorted(path for path in root.iterdir() if path.is_dir()):
-            if any((persona_dir / filename).exists() for filename in ("PROFILE.md", "PROFILE.generated.md")):
-                resolved = persona_dir.resolve()
-                if resolved not in seen:
-                    sources.append(persona_dir)
-                    seen.add(resolved)
-        return sources
-
-    def _load_profile_source(self, path: Path) -> Optional[Dict[str, Any]]:
-        if path.is_dir():
-            return self._load_profile_bundle(path)
-        if path.name.startswith("PROFILE"):
-            return self._load_profile_markdown(path)
-        return None
-
-    def _load_profile_bundle(self, persona_dir: Path) -> Optional[Dict[str, Any]]:
-        merged: Dict[str, Any] = {}
-        loaded = False
-        for filename in ("PROFILE.generated.md", "PROFILE.md"):
-            path = persona_dir / filename
-            if not path.exists():
-                continue
-            current = self._load_profile_markdown(path)
-            if not current:
-                continue
-            merged = self._merge_profile_markdown_data(merged, current) if loaded else current
-            loaded = True
-        return merged if loaded else None
-
-    @classmethod
-    def _empty_profile(cls, *, path: Optional[Path] = None) -> Dict[str, Any]:
-        parent = path.parent if path else Path()
-        grandparent = parent.parent if path else Path()
-        profile: Dict[str, Any] = {
-            "name": parent.name if path else "",
-            "novel_id": grandparent.name if path else "",
-            "source_path": "",
-            "speech_habits": {
-                "cadence": "",
-                "signature_phrases": [],
-                "sentence_openers": [],
-                "connective_tokens": [],
-                "sentence_endings": [],
-                "forbidden_fillers": [],
-            },
-            "emotion_profile": {
-                "anger_style": "",
-                "joy_style": "",
-                "grievance_style": "",
-            },
-            "arc": {
-                "start": {},
-                "mid": {},
-                "end": {},
-            },
-            "evidence": {
-                "description_count": 0,
-                "dialogue_count": 0,
-                "thought_count": 0,
-                "chunk_count": 0,
-            },
-        }
-        for key in cls.PERSONA_SCALAR_FIELDS:
-            profile.setdefault(key, "")
-        for key in cls.PERSONA_LIST_FIELDS:
-            profile.setdefault(key, [])
-        for key in cls.PERSONA_METRIC_FIELDS:
-            profile.setdefault(key, {})
-        for key in cls.PERSONA_INT_FIELDS:
-            profile.setdefault(key, 0)
-        return profile
-
-    def _load_profile_markdown(self, path: Path) -> Dict[str, Any]:
-        parsed = self._parse_persona_markdown(path)
-        profile = self._empty_profile(path=path)
-        profile["name"] = parsed.get("name", profile["name"])
-        profile["novel_id"] = parsed.get("novel_id", profile["novel_id"])
-        profile["source_path"] = parsed.get("source_path", "")
-        for key in self.PERSONA_LIST_FIELDS:
-            profile[key] = self._split_persona_value(parsed.get(key, ""))
-        for key in self.PERSONA_SCALAR_FIELDS:
-            profile[key] = parsed.get(key, "")
-        for key in self.PERSONA_METRIC_FIELDS:
-            profile[key] = self._split_metric_map(parsed.get(key, ""))
-        for key in self.PERSONA_INT_FIELDS:
-            profile[key] = self._safe_int(parsed.get(key, 0))
-        for key, (parent, child, value_type) in self.PERSONA_NESTED_FIELDS.items():
-            bucket = dict(profile.get(parent, {}))
-            raw = parsed.get(key, "")
-            if value_type == "list":
-                bucket[child] = self._split_persona_value(raw)
-            elif value_type == "metric":
-                bucket[child] = self._split_metric_map(raw)
-            elif value_type == "int":
-                bucket[child] = self._safe_int(raw)
-            else:
-                bucket[child] = raw
-            profile[parent] = bucket
-        return profile
-
-    def _merge_profile_markdown_data(
-        self,
-        base: Dict[str, Any],
-        overlay: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        merged = dict(base)
-        for key, value in overlay.items():
-            if value in ("", [], {}, None):
-                continue
-            if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                bucket = dict(merged.get(key, {}))
-                for child_key, child_value in value.items():
-                    if child_value in ("", [], {}, None):
-                        continue
-                    bucket[child_key] = child_value
-                merged[key] = bucket
-                continue
-            merged[key] = value
-        return merged
-
-    def _merge_persona_bundle(self, profile: Dict[str, Any], base_dir: Path) -> Dict[str, Any]:
-        merged = dict(profile)
-        persona_dir = base_dir / safe_filename(merged.get("name", ""))
-        if not persona_dir.exists():
-            return merged
-
-        for base_name, source in self._resolve_persona_sources(persona_dir):
-            if base_name == "RELATIONS":
-                continue
-            parsed = self._parse_persona_markdown(source)
-            merged = self._apply_persona_overrides(merged, parsed)
-        return merged
-
-    def _resolve_persona_sources(self, persona_dir: Path) -> List[tuple[str, Path]]:
-        descriptor = self._load_navigation_descriptor(persona_dir)
-        order = descriptor.get("runtime", {}).get("load_order", []) or list(NovelDistiller.DEFAULT_NAV_LOAD_ORDER)
-        sources: List[tuple[str, Path]] = []
-        seen = set()
-
-        for base_name in order:
-            normalized = str(base_name or "").strip().upper()
-            if not normalized or normalized in seen:
-                continue
-            meta = descriptor.get("files", {}).get(normalized, {})
-            if str(meta.get("status", "")).strip().lower() == "inactive":
-                continue
-            source = self._resolve_persona_file_path(persona_dir, normalized, meta)
-            if not source:
-                continue
-            sources.append((normalized, source))
-            seen.add(normalized)
-
-        for base_name in NovelDistiller.DEFAULT_NAV_LOAD_ORDER:
-            if base_name in seen:
-                continue
-            meta = descriptor.get("files", {}).get(base_name, {})
-            if str(meta.get("status", "")).strip().lower() == "inactive":
-                continue
-            source = self._resolve_persona_file_path(persona_dir, base_name, meta)
-            if not source:
-                continue
-            sources.append((base_name, source))
-            seen.add(base_name)
-
-        return sources
-
-    def _resolve_persona_file_path(self, persona_dir: Path, base_name: str, meta: Dict[str, Any]) -> Optional[Path]:
-        editable_name = str(meta.get("file", f"{base_name}.md")).strip() or f"{base_name}.md"
-        fallback_name = str(meta.get("fallback", f"{base_name}.generated.md")).strip() or f"{base_name}.generated.md"
-        editable = persona_dir / editable_name
-        if editable.exists():
-            return editable
-        fallback = persona_dir / fallback_name
-        if fallback.exists():
-            return fallback
-        return None
-
-    def _load_navigation_descriptor(self, persona_dir: Path) -> Dict[str, Any]:
-        descriptor = self._default_navigation_descriptor()
-        generated = persona_dir / "NAVIGATION.generated.md"
-        editable = persona_dir / "NAVIGATION.md"
-        for source in (generated, editable):
-            if not source.exists():
-                continue
-            parsed = self._parse_navigation_markdown(source)
-            descriptor = self._merge_navigation_descriptor(descriptor, parsed)
-        return descriptor
-
-    @staticmethod
-    def _default_navigation_descriptor() -> Dict[str, Any]:
-        files = {
-            base_name: {
-                "file": f"{base_name}.md",
-                "fallback": f"{base_name}.generated.md",
-            }
-            for base_name in NovelDistiller.DEFAULT_NAV_LOAD_ORDER
-        }
-        return {
-            "runtime": {"load_order": list(NovelDistiller.DEFAULT_NAV_LOAD_ORDER)},
-            "files": files,
-        }
-
-    def _merge_navigation_descriptor(
-        self,
-        base: Dict[str, Any],
-        overlay: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        merged = {
-            "runtime": dict(base.get("runtime", {})),
-            "files": {
-                key: dict(value) if isinstance(value, dict) else {}
-                for key, value in base.get("files", {}).items()
-            },
-        }
-        runtime_overlay = overlay.get("runtime", {}) if isinstance(overlay.get("runtime", {}), dict) else {}
-        if runtime_overlay.get("load_order"):
-            merged["runtime"]["load_order"] = self._parse_navigation_order(runtime_overlay["load_order"])
-        for key, value in runtime_overlay.items():
-            if key == "load_order":
-                continue
-            merged["runtime"][key] = value
-        files_overlay = overlay.get("files", {}) if isinstance(overlay.get("files", {}), dict) else {}
-        for base_name, payload in files_overlay.items():
-            entry = dict(merged["files"].get(base_name, {}))
-            if isinstance(payload, dict):
-                entry.update(payload)
-            merged["files"][base_name] = entry
-        return merged
-
-    _parse_navigation_markdown = staticmethod(parse_navigation_markdown)
-
-    @staticmethod
-    def _parse_navigation_order(value: Any) -> List[str]:
-        text = str(value or "").strip()
-        if not text:
-            return list(NovelDistiller.DEFAULT_NAV_LOAD_ORDER)
-        parts = [item.strip().upper() for item in re.split(r"->|,|\|", text) if item.strip()]
-        return parts or list(NovelDistiller.DEFAULT_NAV_LOAD_ORDER)
-
-    _parse_persona_markdown = staticmethod(parse_persona_markdown)
-
-    def _apply_persona_overrides(self, profile: Dict[str, Any], parsed: Dict[str, Any]) -> Dict[str, Any]:
-        merged = dict(profile)
-        overlay_list_fields = set(self.PERSONA_LIST_FIELDS) | {"user_edits", "notable_interactions", "relationship_updates", "canon_memory"}
-
-        for key, value in parsed.items():
-            if not value:
-                continue
-            if key == "canon_memory":
-                merged["life_experience"] = self._split_persona_value(value)
-                continue
-            if key in self.PERSONA_NESTED_FIELDS:
-                parent, child, value_type = self.PERSONA_NESTED_FIELDS[key]
-                bucket = dict(merged.get(parent, {})) if isinstance(merged.get(parent, {}), dict) else {}
-                if value_type == "list":
-                    bucket[child] = self._split_persona_value(value)
-                elif value_type == "metric":
-                    bucket[child] = self._split_metric_map(value)
-                elif value_type == "int":
-                    bucket[child] = self._safe_int(value)
-                else:
-                    bucket[child] = value
-                merged[parent] = bucket
-                continue
-            if key in self.PERSONA_SCALAR_FIELDS:
-                merged[key] = value
-                continue
-            if key in self.PERSONA_METRIC_FIELDS:
-                merged[key] = self._split_metric_map(value)
-                continue
-            if key in self.PERSONA_INT_FIELDS:
-                merged[key] = self._safe_int(value)
-                continue
-            if key in overlay_list_fields:
-                merged[key] = self._split_persona_value(value)
-        return merged
-
-    _split_persona_value = staticmethod(split_persona_value)
-    _split_metric_map = staticmethod(split_metric_map)
-    _safe_int = staticmethod(safe_int)
-    _merge_profile_item = staticmethod(merge_profile_item)
+        return self._persona_profiles.load(novel_id)
 
     @staticmethod
     def _pair_key(a: str, b: str) -> str:
-        return "_".join(sorted([a, b]))
+        return ChatRelationResolver.pair_key(a, b)
 
     def _build_relation_matrix(self, characters: List[str], novel_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
-        matrix: Dict[str, Dict[str, Any]] = {}
-        for speaker in characters:
-            for target in characters:
-                if speaker == target:
-                    continue
-                disk = self._get_relation_state_from_disk(speaker, target, novel_id) or {}
-                state = {
-                    "trust": int(disk.get("trust", 5)),
-                    "affection": int(disk.get("affection", 5)),
-                    "hostility": int(disk.get("hostility", max(0, 5 - int(disk.get("affection", 5))))),
-                    "ambiguity": int(disk.get("ambiguity", 3)),
-                }
-                for key in ("conflict_point", "typical_interaction", "relation_change", "hidden_attitude", "appellations"):
-                    if key in disk:
-                        state[key] = disk[key]
-                matrix[self._pair_key(speaker, target)] = state
-        return matrix
+        return self._relations.build_matrix(characters, novel_id)
 
     def _save_relation_snapshot(self, session: Dict[str, Any]) -> None:
         session.setdefault("updated_at", int(time.time()))
@@ -1373,85 +954,10 @@ class ChatEngine:
         target: str,
         novel_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        rel_file = self._relation_file_for_novel(novel_id)
-        if not rel_file:
-            base = {}
-        else:
-            payload = self.relation_store.load_relations(rel_file.parent.name, default={}) or {}
-            rel = payload.get("relations", {}) if isinstance(payload, dict) else {}
-            normalized = {normalize_relation_key(key): value for key, value in rel.items()}
-            base = normalized.get(self._pair_key(normalize_character_name(speaker), normalize_character_name(target)), {})
-        return self._merge_relation_overlay(base, speaker, target, novel_id)
-
-    def _merge_relation_overlay(
-        self,
-        relation_state: Dict[str, Any],
-        speaker: str,
-        target: str,
-        novel_id: Optional[str],
-    ) -> Dict[str, Any]:
-        merged = dict(relation_state or {})
-        overlay = self._load_relation_markdown_overlay(speaker, target, novel_id)
-        if not overlay:
-            return merged
-        for key in ("trust", "affection", "power_gap"):
-            if key in overlay:
-                try:
-                    merged[key] = int(overlay[key])
-                except (TypeError, ValueError):
-                    pass
-        for key in ("conflict_point", "typical_interaction", "relation_change", "hidden_attitude"):
-            if overlay.get(key):
-                merged[key] = overlay[key]
-        appellation = overlay.get("appellation_to_target", "")
-        if appellation:
-            appellations = dict(merged.get("appellations", {})) if isinstance(merged.get("appellations", {}), dict) else {}
-            appellations[f"{speaker}->{target}"] = appellation
-            merged["appellations"] = appellations
-        return merged
-
-    def _load_relation_markdown_overlay(self, speaker: str, target: str, novel_id: Optional[str]) -> Dict[str, str]:
-        if not novel_id:
-            return {}
-        persona_dir = self.path_provider.character_dir(novel_id, normalize_character_name(speaker))
-        descriptor = self._load_navigation_descriptor(persona_dir) if persona_dir.exists() else self._default_navigation_descriptor()
-        meta = descriptor.get("files", {}).get("RELATIONS", {})
-        if str(meta.get("status", "")).strip().lower() == "inactive":
-            return {}
-        path = self._resolve_persona_file_path(persona_dir, "RELATIONS", meta) if persona_dir.exists() else None
-        if not path:
-            return {}
-        parsed = self._parse_relation_markdown(path)
-        target_key = normalize_character_name(target)
-        if target_key in parsed:
-            return parsed[target_key]
-        return {}
-
-    def _parse_relation_markdown(self, path: Path) -> Dict[str, Dict[str, str]]:
-        result: Dict[str, Dict[str, str]] = {}
-        current_target = ""
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if line.startswith("## "):
-                current_target = normalize_character_name(line[3:].strip())
-                result.setdefault(current_target, {})
-                continue
-            if not current_target or not line.startswith("- ") or ":" not in line:
-                continue
-            key, value = line[2:].split(":", 1)
-            result[current_target][key.strip()] = value.strip()
-        return result
+        return self._relations.get_from_disk(speaker, target, novel_id)
 
     def _get_relation_state(self, session: Dict[str, Any], speaker: str, target: str) -> Dict[str, Any]:
-        if not target:
-            return {}
-        matrix = session["state"].setdefault("relation_matrix", {})
-        state = dict(matrix.get(self._pair_key(speaker, target), {}))
-        novel_id = session.get("novel_id")
-        if novel_id:
-            state = self._merge_relation_overlay(state, speaker, target, novel_id)
-        return state
-
+        return self._relations.get_session_state(session, speaker, target)
     def _active_characters(
         self,
         session: Dict[str, Any],

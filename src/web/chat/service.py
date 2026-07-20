@@ -22,11 +22,13 @@ import src.web.chat.relation_excerpt as _relation_excerpt
 import src.web.chat.prompt_rules as _prompt_rules
 import src.web.chat.relation_state as _relation_state
 import src.web.chat.runtime_overview as _runtime_overview
+import src.web.chat.scene_progress as _scene_progress
 import src.web.chat.scene_signals as _scene_signals
 from src.web.chat.session_storage import SessionFileStore, with_session_lock
 import src.web.chat.session_views as _session_views
 import src.web.chat.state_utils as _state_utils
 import src.web.chat.text_utils as _text_utils
+import src.web.chat.turn_memory as _turn_memory
 from src.web.artifacts.ingest import load_relations_source
 from src.web.time_utils import utc_now as _utc_now
 
@@ -931,502 +933,25 @@ class DialogueService:
         fallback = [name for name in deduped if not (mode == "act" and name == speaker)]
         return fallback or deduped[:1]
 
-    def _merge_scene_progress_state(
-        self, session: dict[str, Any], incoming: dict[str, Any]
-    ) -> dict[str, Any]:
-        base = self._derive_scene_progress_state(
-            session, self._serialize_transcript(session)
-        )
-        participants = [
-            str(item).strip()
-            for item in list(session.get("participants", []) or [])
-            if str(item).strip()
-        ]
-        allowed = set(participants)
-        history = list(session.get("history", []) or [])
-
-        def clean_names(values: Any) -> list[str]:
-            names: list[str] = []
-            for item in list(values or []):
-                name = str(item or "").strip()
-                if not name or name not in allowed or name in names:
-                    continue
-                names.append(name)
-            return names
-
-        present = clean_names(incoming.get("present_participants", [])) or list(
-            base.get("present_participants", []) or []
-        )
-        offstage = [
-            name
-            for name in clean_names(incoming.get("offstage_participants", []))
-            if name not in present
-        ]
-        present, offstage = self._stabilize_presence_transition(
+    def _merge_scene_progress_state(self, session: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+        return _scene_progress.merge_scene_progress_state(
             session,
-            participants=participants,
-            history=history,
-            present=present,
-            offstage=offstage,
-            base=base,
+            incoming,
+            transcript=self._serialize_transcript(session),
+            state_version=self.SESSION_STATE_VERSION,
         )
-        merged = {
-            "present_participants": present,
-            "offstage_participants": offstage
-            or [
-                name
-                for name in list(base.get("offstage_participants", []) or [])
-                if name not in present
-            ],
-            "time_hint": _scene_signals.merge_time_hint(
-                incoming=str(incoming.get("time_hint", "")).strip(),
-                base=str(base.get("time_hint", "")).strip(),
-                history=history,
-                scene_hint=str(
-                    dict(session.get("scene_card", {}) or {}).get("time_hint", "")
-                ).strip(),
-                allow_history_drift=False,
-            ),
-            "location": str(incoming.get("location", "")).strip()
-            or str(base.get("location", "")).strip(),
-            "atmosphere_summary": str(incoming.get("atmosphere_summary", "")).strip()
-            or str(base.get("atmosphere_summary", "")).strip(),
-            "progression_note": str(incoming.get("progression_note", "")).strip()
-            or str(base.get("progression_note", "")).strip(),
-            "should_offer_scene_shift": bool(
-                incoming.get(
-                    "should_offer_scene_shift",
-                    base.get("should_offer_scene_shift", False),
-                )
-            ),
-            "scene_shift_reason": str(incoming.get("scene_shift_reason", "")).strip()
-            or str(base.get("scene_shift_reason", "")).strip(),
-            "turns_in_current_scene": int(base.get("turns_in_current_scene", 0) or 0),
-            "beat_maturity": int(
-                incoming.get("beat_maturity", base.get("beat_maturity", 0)) or 0
-            ),
-            "world_tension_summary": str(
-                incoming.get("world_tension_summary", "")
-            ).strip()
-            or str(base.get("world_tension_summary", "")).strip(),
-            "updated_at": _utc_now(),
-        }
-        if merged["should_offer_scene_shift"]:
-            merged["beat_maturity"] = max(75, int(merged.get("beat_maturity", 0) or 0))
-        return merged
 
     def _derive_scene_progress_state(
-        self, session: dict[str, Any], transcript: list[dict[str, Any]]
+        self,
+        session: dict[str, Any],
+        transcript: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        participants = [
-            str(item).strip()
-            for item in list(session.get("participants", []) or [])
-            if str(item).strip()
-        ]
-        scene_card = dict(session.get("scene_card", {}) or {})
-        prior = self._session_scene_progress(session)
-        history = list(session.get("history", []) or [])
-        presence_state = self._derive_presence_state(
-            session, participants=participants, history=history
-        )
-        scene_frame = self._derive_scene_frame_state(
-            session, transcript=transcript, scene_card=scene_card, prior=prior
-        )
-        progression_state = self._derive_progression_state(
+        return _scene_progress.derive_scene_progress_state(
             session,
-            transcript=transcript,
-            scene_card=scene_card,
-            prior=prior,
-            presence_state=presence_state,
-            scene_frame=scene_frame,
+            transcript,
+            state_version=self.SESSION_STATE_VERSION,
         )
-        progression_bits = []
-        if scene_frame.get("location"):
-            progression_bits.append(f"地点：{scene_frame['location']}")
-        if scene_frame.get("time_hint"):
-            progression_bits.append(f"时间：{scene_frame['time_hint']}")
-        if scene_frame.get("atmosphere_summary"):
-            progression_bits.append(f"氛围：{scene_frame['atmosphere_summary']}")
-        if presence_state.get("present_participants"):
-            progression_bits.append(
-                f"在场：{'、'.join(list(presence_state.get('present_participants', []))[:4])}"
-            )
-        if presence_state.get("offstage_participants"):
-            progression_bits.append(
-                f"离场：{'、'.join(list(presence_state.get('offstage_participants', []))[:3])}"
-            )
-        progression_bits.append(
-            f"成熟度：{int(progression_state.get('beat_maturity', 0) or 0)}"
-        )
-        progression_note = "；".join(bit for bit in progression_bits if bit)
-        return {
-            **presence_state,
-            **scene_frame,
-            **progression_state,
-            "progression_note": progression_note,
-            "updated_at": _utc_now(),
-        }
 
-    def _derive_presence_state(
-        self,
-        session: dict[str, Any],
-        *,
-        participants: list[str],
-        history: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        departed = _scene_signals.infer_departed_participants(participants, history)
-        latest_exit = self._latest_event_signal(session, "cast_exit")
-        latest_enter = self._latest_event_signal(session, "cast_enter")
-        if latest_exit:
-            actor = str(latest_exit.get("actor", "")).strip()
-            if actor in participants:
-                departed.add(actor)
-        if latest_enter:
-            actor = str(latest_enter.get("actor", "")).strip()
-            if actor in participants:
-                departed.discard(actor)
-        present = [name for name in participants if name not in departed]
-        if not present and participants:
-            present = participants[:1]
-        return {
-            "present_participants": present,
-            "offstage_participants": [
-                name for name in participants if name not in present
-            ],
-        }
-
-    def _stabilize_presence_transition(
-        self,
-        session: dict[str, Any],
-        *,
-        participants: list[str],
-        history: list[dict[str, Any]],
-        present: list[str],
-        offstage: list[str],
-        base: dict[str, Any],
-    ) -> tuple[list[str], list[str]]:
-        prior_offstage = [
-            str(item).strip()
-            for item in list(base.get("offstage_participants", []) or [])
-            if str(item).strip()
-        ]
-        explicit_returns = _scene_signals.infer_returned_participants(
-            participants, history
-        )
-        explicit_exits = _scene_signals.infer_departed_participants(
-            participants, history
-        )
-        for event in list(self._session_event_signals(session).get("recent", []) or [])[
-            -12:
-        ]:
-            payload = dict(event or {})
-            actor = str(payload.get("actor", "")).strip()
-            kind = str(payload.get("kind", "")).strip()
-            if actor not in participants:
-                continue
-            if kind == "cast_enter":
-                explicit_returns.add(actor)
-                explicit_exits.discard(actor)
-            elif kind == "cast_exit":
-                explicit_exits.add(actor)
-                explicit_returns.discard(actor)
-
-        stabilized_offstage = {name for name in offstage if name in participants}
-        stabilized_present = [name for name in present if name in participants]
-        for name in prior_offstage:
-            if name in explicit_returns:
-                continue
-            stabilized_offstage.add(name)
-            stabilized_present = [item for item in stabilized_present if item != name]
-        for name in explicit_exits:
-            stabilized_offstage.add(name)
-            stabilized_present = [item for item in stabilized_present if item != name]
-
-        ordered_present: list[str] = []
-        for name in participants:
-            if (
-                name in stabilized_present
-                and name not in stabilized_offstage
-                and name not in ordered_present
-            ):
-                ordered_present.append(name)
-        if not ordered_present:
-            ordered_present = [
-                name for name in participants if name not in stabilized_offstage
-            ][:1] or participants[:1]
-        ordered_offstage = [
-            name
-            for name in participants
-            if name in stabilized_offstage and name not in ordered_present
-        ]
-        return ordered_present, ordered_offstage
-
-    def _derive_scene_frame_state(
-        self,
-        session: dict[str, Any],
-        *,
-        transcript: list[dict[str, Any]],
-        scene_card: dict[str, Any],
-        prior: dict[str, Any],
-    ) -> dict[str, Any]:
-        latest_time_event = self._latest_event_signal(session, "time_change")
-        latest_scene_event = self._latest_event_signal(session, "scene_transition")
-        time_hint = _scene_signals.merge_time_hint(
-            incoming=(
-                str(latest_time_event.get("time_hint", "")).strip()
-                or _scene_signals.infer_time_hint(transcript)
-            ),
-            base=str(prior.get("time_hint", "")).strip(),
-            history=list(session.get("history", []) or []),
-            scene_hint=str(scene_card.get("time_hint", "")).strip(),
-        )
-        location = (
-            str(latest_scene_event.get("location_hint", "")).strip()
-            or str(prior.get("location", "")).strip()
-            or str(scene_card.get("location", "")).strip()
-        )
-        latest_atmosphere_event = self._latest_event_signal(session, "atmosphere_shift")
-        atmosphere_summary = (
-            self._trim_summary_text(
-                str(latest_atmosphere_event.get("cue", "")).strip(), 80
-            )
-            or self._infer_atmosphere_summary(transcript)
-            or self._trim_summary_text(
-                str(prior.get("atmosphere_summary", "")).strip(), 80
-            )
-            or self._trim_summary_text(
-                str(scene_card.get("atmosphere", "")).strip(), 80
-            )
-        )
-        return {
-            "time_hint": time_hint,
-            "location": location,
-            "atmosphere_summary": atmosphere_summary,
-        }
-
-    def _derive_progression_state(
-        self,
-        session: dict[str, Any],
-        *,
-        transcript: list[dict[str, Any]],
-        scene_card: dict[str, Any],
-        prior: dict[str, Any],
-        presence_state: dict[str, Any],
-        scene_frame: dict[str, Any],
-    ) -> dict[str, Any]:
-        latest_beat_event = self._latest_event_signal(session, "beat_complete")
-        turns_in_current_scene = self._count_current_scene_turns(session)
-        beat_maturity = self._estimate_scene_maturity(
-            turns_in_current_scene=turns_in_current_scene,
-            transcript=transcript,
-            scene_card=scene_card,
-            presence_state=presence_state,
-            scene_frame=scene_frame,
-            latest_beat_event=latest_beat_event,
-            prior=prior,
-        )
-        scene_shift_reason = ""
-        should_offer_scene_shift = False
-        if scene_card and beat_maturity >= 72:
-            should_offer_scene_shift = True
-            scene_shift_reason = "这一幕已经接了好几拍，可以顺势换到下一幕。"
-        if latest_beat_event:
-            should_offer_scene_shift = True
-            scene_shift_reason = (
-                str(latest_beat_event.get("cue", "")).strip() or scene_shift_reason
-            )
-        initial_time = str(scene_card.get("time_hint", "")).strip()
-        time_hint = str(scene_frame.get("time_hint", "")).strip()
-        if (
-            time_hint
-            and initial_time
-            and time_hint != initial_time
-            and beat_maturity >= 55
-        ):
-            should_offer_scene_shift = True
-            scene_shift_reason = (
-                scene_shift_reason or f"时间已经自然推到{time_hint}，适合顺势转下一拍。"
-            )
-        event_pressure_reason = self._derive_transition_pressure_reason(
-            session,
-            presence_state=presence_state,
-            scene_frame=scene_frame,
-            scene_card=scene_card,
-            prior=prior,
-        )
-        if event_pressure_reason and beat_maturity >= 42:
-            should_offer_scene_shift = True
-            scene_shift_reason = scene_shift_reason or event_pressure_reason
-        return {
-            "should_offer_scene_shift": should_offer_scene_shift,
-            "scene_shift_reason": scene_shift_reason,
-            "turns_in_current_scene": turns_in_current_scene,
-            "beat_maturity": beat_maturity,
-            "world_tension_summary": self._derive_world_tension_summary(
-                session, transcript=transcript, scene_frame=scene_frame
-            ),
-        }
-
-    def _derive_transition_pressure_reason(
-        self,
-        session: dict[str, Any],
-        *,
-        presence_state: dict[str, Any],
-        scene_frame: dict[str, Any],
-        scene_card: dict[str, Any],
-        prior: dict[str, Any],
-    ) -> str:
-        present = [
-            str(item).strip()
-            for item in list(presence_state.get("present_participants", []) or [])
-            if str(item).strip()
-        ]
-        offstage = [
-            str(item).strip()
-            for item in list(presence_state.get("offstage_participants", []) or [])
-            if str(item).strip()
-        ]
-        latest_exit = self._latest_event_signal(session, "cast_exit")
-        actor = str(latest_exit.get("actor", "")).strip()
-        if actor and actor in offstage:
-            if len(present) <= 1 and present:
-                return f"{actor}已经离场，场上只剩{present[0]}，适合顺势切到下一幕。"
-            return f"{actor}已经离场，在场关系重新收束，适合顺势转下一拍。"
-
-        latest_scene_event = self._latest_event_signal(session, "scene_transition")
-        location = str(scene_frame.get("location", "")).strip()
-        if latest_scene_event and location:
-            prior_location = str(prior.get("location", "")).strip()
-            scene_location = str(scene_card.get("location", "")).strip()
-            if location != prior_location and location != scene_location:
-                return f"地点已经转到{location}，适合顺势接下一幕。"
-        return ""
-
-    def _estimate_scene_maturity(
-        self,
-        *,
-        turns_in_current_scene: int,
-        transcript: list[dict[str, Any]],
-        scene_card: dict[str, Any],
-        presence_state: dict[str, Any],
-        scene_frame: dict[str, Any],
-        latest_beat_event: dict[str, Any],
-        prior: dict[str, Any],
-    ) -> int:
-        score = min(60, max(0, turns_in_current_scene * 10))
-        if latest_beat_event:
-            score += 25
-        if (
-            str(scene_frame.get("time_hint", "")).strip()
-            and str(scene_frame.get("time_hint", "")).strip()
-            != str(scene_card.get("time_hint", "")).strip()
-        ):
-            score += 10
-        if (
-            str(scene_frame.get("location", "")).strip()
-            and str(scene_frame.get("location", "")).strip()
-            != str(scene_card.get("location", "")).strip()
-        ):
-            score += 10
-        if list(presence_state.get("offstage_participants", []) or []):
-            score += 6
-        if str(scene_frame.get("atmosphere_summary", "")).strip():
-            score += 4
-        previous_maturity = int(prior.get("beat_maturity", 0) or 0)
-        if previous_maturity:
-            score = max(score, min(100, previous_maturity - 8))
-        if len(transcript) >= 6:
-            score += 6
-        return max(0, min(100, score))
-
-    def _infer_atmosphere_summary(self, transcript: list[dict[str, Any]]) -> str:
-        recent_messages = [
-            str(item.get("message", "")).strip()
-            for item in list(transcript or [])[-8:]
-            if str(item.get("message", "")).strip()
-        ]
-        if not recent_messages:
-            return ""
-        joined = " ".join(recent_messages)
-        for token in _scene_signals.ATMOSPHERE_TOKENS:
-            if token in joined:
-                return self._trim_summary_text(token, 40)
-        for message in reversed(recent_messages):
-            trimmed = self._trim_summary_text(message, 40)
-            if trimmed:
-                return trimmed
-        return ""
-
-    def _derive_world_tension_summary(
-        self,
-        session: dict[str, Any],
-        *,
-        transcript: list[dict[str, Any]],
-        scene_frame: dict[str, Any],
-    ) -> str:
-        latest_atmosphere_event = self._latest_event_signal(session, "atmosphere_shift")
-        latest_relation_event = self._latest_event_signal(session, "relationship_shift")
-        latest_scene_event = self._latest_event_signal(
-            session, "scene_transition", "environment_change", "time_change"
-        )
-        for candidate in (
-            latest_atmosphere_event,
-            latest_relation_event,
-            latest_scene_event,
-        ):
-            cue = self._trim_summary_text(
-                str((candidate or {}).get("cue", "")).strip(), 88
-            )
-            if cue:
-                return cue
-        relation_delta = self._session_relation_delta(session)
-        if relation_delta:
-            pair_key, delta = next(iter(relation_delta.items()))
-            metrics: list[str] = []
-            for field, label in (
-                ("trust", "信任"),
-                ("affection", "好感"),
-                ("hostility", "敌意"),
-                ("ambiguity", "摇摆"),
-            ):
-                amount = int(dict(delta or {}).get(field, 0) or 0)
-                if amount:
-                    metrics.append(f"{label}{amount:+d}")
-            if metrics:
-                return self._trim_summary_text(
-                    f"{pair_key} 当前仍在变化：{'、'.join(metrics)}", 88
-                )
-        atmosphere = str(scene_frame.get("atmosphere_summary", "")).strip()
-        if atmosphere:
-            return self._trim_summary_text(f"这一拍的气氛是：{atmosphere}", 88)
-        for item in reversed(list(transcript or [])[-8:]):
-            role = str(item.get("role", "")).strip()
-            message = self._trim_summary_text(str(item.get("message", "")).strip(), 88)
-            if role in {"scene", "director"} and message:
-                return message
-        return ""
-
-    @staticmethod
-    def _count_current_scene_turns(session: dict[str, Any]) -> int:
-        history = list(session.get("history", []) or [])
-        scene_history = list(session.get("scene_history", []) or [])
-        if not history:
-            return 0
-        latest_scene_ts = (
-            str((scene_history[-1] or {}).get("ts", "")).strip()
-            if scene_history
-            else ""
-        )
-        if latest_scene_ts:
-            return sum(
-                1
-                for item in history
-                if str(item.get("ts", "")).strip() >= latest_scene_ts
-                and str(item.get("message", "")).strip()
-            )
-        return len(
-            [item for item in history[-12:] if str(item.get("message", "")).strip()]
-        )
 
     @staticmethod
     def _choose_response_limit_hint(
@@ -1680,87 +1205,17 @@ class DialogueService:
         scene_card: dict[str, Any],
         scene_progress: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        state_summary = self._session_memory_summary_state(session)
-        archived_summary = {
-            "summary": self._trim_summary_text(
-                str(state_summary.get("summary", "")).strip(), 360
-            ),
-            "key_points": [
-                self._trim_summary_text(str(item).strip(), 120)
-                for item in list(state_summary.get("key_points", []) or [])[:5]
-                if str(item).strip()
-            ],
-            "compressed_turns": int(state_summary.get("compressed_turns", 0) or 0),
-            "recent_turns_kept": int(state_summary.get("recent_turns_kept", 0) or 0),
-        }
-        archived_summary = {
-            key: value
-            for key, value in archived_summary.items()
-            if value not in ("", [], 0)
-        }
-        normalized_progress = dict(scene_progress or {})
-        progress_snapshot = {
-            "time_hint": self._trim_summary_text(
-                str(normalized_progress.get("time_hint", "")).strip(), 32
-            ),
-            "location": self._trim_summary_text(
-                str(normalized_progress.get("location", "")).strip(), 48
-            ),
-            "progression_note": self._trim_summary_text(
-                str(normalized_progress.get("progression_note", "")).strip(), 120
-            ),
-            "present_participants": [
-                str(item).strip()
-                for item in list(
-                    normalized_progress.get("present_participants", []) or []
-                )[:6]
-                if str(item).strip()
-            ],
-            "offstage_participants": [
-                str(item).strip()
-                for item in list(
-                    normalized_progress.get("offstage_participants", []) or []
-                )[:6]
-                if str(item).strip()
-            ],
-            "should_offer_scene_shift": bool(
-                normalized_progress.get("should_offer_scene_shift", False)
-            ),
-            "scene_shift_reason": self._trim_summary_text(
-                str(normalized_progress.get("scene_shift_reason", "")).strip(), 120
-            ),
-            "world_tension_summary": self._trim_summary_text(
-                str(normalized_progress.get("world_tension_summary", "")).strip(), 120
-            ),
-        }
-        progress_snapshot = {
-            key: value
-            for key, value in progress_snapshot.items()
-            if value not in ("", [], False)
-        }
-        character_snapshots = {
-            str(name).strip(): self._persona_snapshot_payload(
-                dict(snapshot or {}), detailed=True
-            )
-            for name, snapshot in self._session_character_snapshots(session).items()
-            if str(name).strip()
-            and self._persona_snapshot_payload(dict(snapshot or {}), detailed=True)
-        }
-        relation_delta = {
-            str(pair_key).strip(): {
-                key: value
-                for key, value in dict(delta or {}).items()
-                if value not in ("", [], 0, None)
-            }
-            for pair_key, delta in self._session_relation_delta(session).items()
-            if str(pair_key).strip()
-        }
-        relation_delta = {key: value for key, value in relation_delta.items() if value}
-        event_signals = self._build_session_event_excerpt(session)
-        session_summary = self._build_session_memory_summary(
-            run_id, session, transcript
+        session_summary = self._build_session_memory_summary(run_id, session, transcript)
+        context = _turn_memory.build_turn_memory_context(
+            state_summary=self._session_memory_summary_state(session),
+            scene_progress=scene_progress,
+            character_snapshots=self._session_character_snapshots(session),
+            relation_delta=self._session_relation_delta(session),
+            event_signals=self._build_session_event_excerpt(session),
+            session_summary=session_summary,
+            memory_hits=[],
         )
-        memory_hits = self._search_turn_memory_hits(
+        context["retrieved_memories"] = self._search_turn_memory_hits(
             run_id=run_id,
             session_id=str(session.get("session_id", "")).strip(),
             speaker=speaker,
@@ -1769,17 +1224,9 @@ class DialogueService:
             active_participants=active_participants,
             scene_card=scene_card,
             session_summary=session_summary,
-            scene_progress=progress_snapshot,
+            scene_progress=dict(context.get("scene_progress", {}) or {}),
         )
-        return {
-            "session_summary": session_summary,
-            "archived_summary": archived_summary,
-            "retrieved_memories": memory_hits,
-            "scene_progress": progress_snapshot,
-            "character_snapshots": character_snapshots,
-            "relation_delta": relation_delta,
-            "event_signals": event_signals,
-        }
+        return context
 
     def _search_turn_memory_hits(
         self,
@@ -1794,65 +1241,18 @@ class DialogueService:
         session_summary: dict[str, Any],
         scene_progress: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        if not session_id:
-            return []
-        store = self._resolve_memory_store(run_id)
-        if store is None:
-            return []
-        query_parts: list[str] = []
-        for item in [speaker, *active_participants[:3], *participants[:2]]:
-            normalized = str(item).strip()
-            if normalized and normalized not in query_parts:
-                query_parts.append(normalized)
-        for item in (
-            str(scene_card.get("title", "")).strip(),
-            str(scene_card.get("location", "")).strip(),
-            str(scene_card.get("scene_drive", "")).strip(),
-            str(scene_card.get("public_goal", "")).strip(),
-            str(scene_card.get("hidden_tension", "")).strip(),
-            str(session_summary.get("current_goal", "")).strip(),
-            str(session_summary.get("unresolved_threads", "")).strip(),
-            str(session_summary.get("current_location", "")).strip(),
-            str(session_summary.get("current_companions", "")).strip(),
-            str(session_summary.get("pending_commitments", "")).strip(),
-            str(scene_progress.get("scene_shift_reason", "")).strip(),
-            str(scene_progress.get("world_tension_summary", "")).strip(),
-        ):
-            if item and item not in query_parts:
-                query_parts.append(item)
-        trimmed_message = self._trim_summary_text(message, 80)
-        if trimmed_message:
-            query_parts.append(trimmed_message)
-        if not query_parts:
-            return []
-        try:
-            hits = store.search_long_term_memory(
-                session_id, " ".join(query_parts), top_k=3
-            )
-        except Exception:
-            return []
-        normalized_hits: list[dict[str, Any]] = []
-        for item in hits:
-            text = self._trim_summary_text(
-                str((item or {}).get("text", "")).strip(), 140
-            )
-            if not text:
-                continue
-            normalized_hit = {
-                "text": text,
-                "score": round(float(item.get("score", 0.0) or 0.0), 4),
-                "speaker": str(item.get("speaker", "")).strip(),
-                "target": str(item.get("target", "")).strip(),
-                "kind": str(item.get("kind", "")).strip(),
-            }
-            normalized_hits.append(
-                {
-                    key: value
-                    for key, value in normalized_hit.items()
-                    if value not in ("", 0.0)
-                }
-            )
-        return normalized_hits
+        return _turn_memory.search_turn_memory_hits(
+            self._resolve_memory_store(run_id),
+            session_id=session_id,
+            speaker=speaker,
+            message=message,
+            participants=participants,
+            active_participants=active_participants,
+            scene_card=scene_card,
+            session_summary=session_summary,
+            scene_progress=scene_progress,
+        )
+
 
     @staticmethod
     def _character_index(run_manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1913,262 +1313,32 @@ class DialogueService:
         )
 
     def _build_session_memory_summary(
-        self, run_id: str, session: dict[str, Any], transcript: list[dict[str, Any]]
+        self,
+        run_id: str,
+        session: dict[str, Any],
+        transcript: list[dict[str, Any]],
     ) -> dict[str, str]:
-        mode = str(session.get("mode", "observe")).strip() or "observe"
-        mode_display = self._mode_display(mode)
-        participants = [
-            str(item).strip()
-            for item in session.get("participants", [])
-            if str(item).strip()
-        ]
-        history = list(session.get("history", []) or [])
-        scene_progress = self._session_scene_progress(session)
-        present_participants = [
-            str(item).strip()
-            for item in list(scene_progress.get("present_participants", []) or [])
-            if str(item).strip()
-        ]
-        offstage_participants = [
-            str(item).strip()
-            for item in list(scene_progress.get("offstage_participants", []) or [])
-            if str(item).strip()
-        ]
-        time_hint = str(scene_progress.get("time_hint", "")).strip()
-        progress_location = str(scene_progress.get("location", "")).strip()
-        progression_note = str(scene_progress.get("progression_note", "")).strip()
-        shift_reason = str(scene_progress.get("scene_shift_reason", "")).strip()
-
-        cast_speakers: list[str] = []
-        seen: set[str] = set()
-        for item in transcript:
-            if str(item.get("role", "")).strip() != "character":
-                continue
-            speaker = str(item.get("speaker", "")).strip()
-            if not speaker or speaker in seen:
-                continue
-            seen.add(speaker)
-            cast_speakers.append(speaker)
-
-        last_messages: list[str] = []
-        for item in history[-6:]:
-            text = str(item.get("message", "")).strip()
-            if not text:
-                continue
-            last_messages.append(self._trim_summary_text(text, 88))
-        last_messages = last_messages[-3:]
-
-        recap = "这局刚开场，回顾会在这里滚动更新。"
-        if last_messages:
-            recap = f"最近一拍：{' / '.join(last_messages)}"
-
-        cast = "人物发言次序会在这里收住。"
-        if present_participants:
-            cast = f"当前主要在场：{'、'.join(present_participants[:5])}{'...' if len(present_participants) > 5 else ''}"
-            if offstage_participants:
-                cast = f"{cast}；暂时离场：{'、'.join(offstage_participants[:3])}"
-        elif cast_speakers:
-            suffix = "..." if len(cast_speakers) > 5 else ""
-            cast = f"当前主要在场：{'、'.join(cast_speakers[:5])}{suffix}"
-        elif participants:
-            cast = f"本局参与角色：{'、'.join(participants[:5])}{'...' if len(participants) > 5 else ''}"
-
-        if mode == "act":
-            controlled = (
-                str(session.get("controlled_character", "")).strip() or "该角色"
-            )
-            perspective = f"你正以「{controlled}」发言，其他人会按角色关系回应。"
-        elif mode == "insert":
-            self_insert = dict(session.get("self_insert", {}) or {})
-            self_name = str(self_insert.get("display_name", "")).strip() or "你"
-            identity = str(self_insert.get("scene_identity", "")).strip()
-            perspective = (
-                f"你以「{self_name}」入场（{identity}）。"
-                if identity
-                else f"你以「{self_name}」入场，直接参与这幕。"
-            )
-        else:
-            perspective = "你在旁观推进模式里，主要作用是推动局势进入下一拍。"
-        scene_card = dict(session.get("scene_card", {}) or {})
-        if scene_card:
-            location = str(scene_card.get("location", "")).strip()
-            atmosphere = str(scene_card.get("atmosphere", "")).strip()
-            title = str(scene_card.get("title", "")).strip()
-            scene_bits = [bit for bit in (title, location, atmosphere) if bit]
-            if scene_bits:
-                perspective = f"{perspective} 当前挂载场景：{' / '.join(scene_bits)}。"
-        if time_hint:
-            perspective = f"{perspective} 当前时间已经推进到「{time_hint}」。"
-
-        world = "当前局势里的动作与情绪线会在这里提醒你。"
-        world_tension_summary = str(
-            scene_progress.get("world_tension_summary", "")
-        ).strip()
-        if world_tension_summary:
-            world = self._trim_summary_text(world_tension_summary, 88)
-        elif progression_note:
-            world = self._trim_summary_text(progression_note, 88)
-        for item in reversed(transcript):
-            role = str(item.get("role", "")).strip()
-            text = str(item.get("message", "")).strip()
-            if not text:
-                continue
-            if role in {"scene", "director"}:
-                world = self._trim_summary_text(text, 88)
-                break
-        if world == "当前局势里的动作与情绪线会在这里提醒你。":
-            for item in reversed(transcript):
-                role = str(item.get("role", "")).strip()
-                text = str(item.get("message", "")).strip()
-                if role == "character" and text:
-                    world = f"人物最新情绪线：{self._trim_summary_text(text, 78)}"
-                    break
-
-        relation = "关系线还在铺，先让人物多接几拍。"
-        recent_character_speakers: list[str] = []
-        for item in transcript[-10:]:
-            if str(item.get("role", "")).strip() != "character":
-                continue
-            speaker = str(item.get("speaker", "")).strip()
-            if speaker:
-                recent_character_speakers.append(speaker)
-        if len(recent_character_speakers) >= 2:
-            chain = " → ".join(recent_character_speakers[-4:])
-            relation = f"最近接话链：{chain}"
-        elif cast_speakers:
-            relation = f"本局关键人物：{'、'.join(cast_speakers[:4])}"
-
-        session_id = str(session.get("session_id", "")).strip()
         semantic_hint = ""
+        session_id = str(session.get("session_id", "")).strip()
         if session_id and self._ensure_memory_store(run_id):
             try:
                 hits = self._memory_stores[run_id].search_long_term_memory(
-                    session_id, "关系 冲突 目标", top_k=1
+                    session_id,
+                    "关系 冲突 目标",
+                    top_k=1,
                 )
             except Exception:
                 hits = []
             if hits:
                 semantic_hint = str((hits[0] or {}).get("text", "")).strip()
-        if semantic_hint:
-            relation = (
-                f"{relation} · 长期记忆：{self._trim_summary_text(semantic_hint, 68)}"
-            )
-        relation_delta = self._session_relation_delta(session)
-        if relation_delta:
-            delta_bits: list[str] = []
-            for pair_key, delta in list(relation_delta.items())[:3]:
-                metric_bits = []
-                for field, label in (
-                    ("trust", "信任"),
-                    ("affection", "好感"),
-                    ("hostility", "敌意"),
-                    ("ambiguity", "摇摆"),
-                ):
-                    change = int(dict(delta or {}).get(field, 0) or 0)
-                    if change:
-                        metric_bits.append(f"{label}{change:+d}")
-                if metric_bits:
-                    delta_bits.append(f"{pair_key}({','.join(metric_bits)})")
-            if delta_bits:
-                relation = f"{relation} · 本局变化：{'；'.join(delta_bits)}"
-
-        carried_summary = dict(session.get("carried_memory_summary", {}) or {})
-        if carried_summary and not history:
-            carried_recap = str(carried_summary.get("recap", "")).strip()
-            carried_cast = str(carried_summary.get("cast", "")).strip()
-            carried_relation = str(
-                carried_summary.get("relation_drift", "")
-                or carried_summary.get("relation", "")
-            ).strip()
-            carried_world = str(carried_summary.get("world", "")).strip()
-            if carried_recap:
-                recap = f"承接旧线：{self._trim_summary_text(carried_recap, 88)}"
-            if carried_cast:
-                cast = self._trim_summary_text(carried_cast, 88)
-            if carried_relation:
-                relation = self._trim_summary_text(carried_relation, 88)
-            if carried_world:
-                world = self._trim_summary_text(carried_world, 88)
-
-        scene_frame = "当前这幕的地点、气氛与推进方向会在这里提醒你。"
-        scene_card = dict(session.get("scene_card", {}) or {})
-        if scene_card:
-            scene_bits = [
-                str(scene_card.get("title", "")).strip(),
-                progress_location or str(scene_card.get("location", "")).strip(),
-                str(scene_card.get("atmosphere", "")).strip(),
-            ]
-            scene_bits = [bit for bit in scene_bits if bit]
-            drive = self._trim_summary_text(
-                str(scene_card.get("scene_drive", "")).strip()
-                or str(scene_card.get("opening_situation", "")).strip(),
-                72,
-            )
-            if scene_bits:
-                scene_frame = f"挂载场景：{' / '.join(scene_bits)}"
-                if drive:
-                    scene_frame = f"{scene_frame} · {drive}"
-            elif drive:
-                scene_frame = drive
-        if time_hint:
-            scene_frame = f"{scene_frame} · 当前时间：{time_hint}"
-        if shift_reason:
-            scene_frame = (
-                f"{scene_frame} · 转场提示：{self._trim_summary_text(shift_reason, 48)}"
-            )
-
-        recent_commitments = _memory_summary.recent_commitment_summary(history)
-        recent_conflicts = _memory_summary.recent_conflict_summary(history)
-        recent_actions = _memory_summary.recent_action_summary(history)
-        major_beats = _memory_summary.major_beat_summary(
+        return _memory_summary.build_session_memory_summary(
             session,
             transcript,
+            scene_progress=self._session_scene_progress(session),
+            relation_delta=self._session_relation_delta(session),
             event_signals=self._session_event_signals(session),
+            semantic_hint=semantic_hint,
         )
-        current_goal = _memory_summary.current_goal_summary(
-            session, scene_progress=scene_progress
-        )
-        unresolved_threads = _memory_summary.unresolved_thread_summary(
-            history,
-            scene_progress=scene_progress,
-            relation_delta=relation_delta,
-        )
-        current_location = _memory_summary.current_location_summary(
-            session,
-            scene_progress=scene_progress,
-        )
-        current_companions = _memory_summary.current_companion_summary(
-            present_participants=present_participants,
-            offstage_participants=offstage_participants,
-            participants=participants,
-            mode=mode,
-            session=session,
-        )
-        pending_commitments = _memory_summary.pending_commitment_summary(
-            history,
-            scene_progress=scene_progress,
-        )
-
-        return {
-            "mode": mode,
-            "mode_display": mode_display,
-            "recap": recap,
-            "cast": cast,
-            "relation_drift": relation,
-            "perspective": perspective,
-            "scene_frame": scene_frame,
-            "world": world,
-            "recent_commitments": recent_commitments,
-            "recent_conflicts": recent_conflicts,
-            "recent_actions": recent_actions,
-            "major_beats": major_beats,
-            "current_goal": current_goal,
-            "unresolved_threads": unresolved_threads,
-            "current_location": current_location,
-            "current_companions": current_companions,
-            "pending_commitments": pending_commitments,
-            "updated_at": str(session.get("updated_at", "")).strip(),
-        }
 
     def _ensure_memory_store(self, run_id: str) -> bool:
         return self._resolve_memory_store(run_id) is not None
