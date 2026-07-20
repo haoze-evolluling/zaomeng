@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,9 @@ def materialize_profile_source(profile_source: str | Path, output_dir: str | Pat
         except FileNotFoundError:
             pass
     target_dir = materialize_persona_bundle(target_dir, profile, sync_editable=True)
+    evidence_source = source.with_name("EVIDENCE.generated.json")
+    if evidence_source.exists() and evidence_source.is_file():
+        shutil.copyfile(evidence_source, target_dir / evidence_source.name)
     generated_files = sorted(path.name for path in target_dir.glob("*.generated.md"))
     editable_files = sorted(path.name for path in target_dir.glob("*.md") if not path.name.endswith(".generated.md"))
     return {

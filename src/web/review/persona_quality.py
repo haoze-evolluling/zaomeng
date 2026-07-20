@@ -10,7 +10,8 @@ from .persona_completion import PERSONA_REVIEW_FIELD_LABELS
 
 
 PERSONA_QUALITY_SCHEMA_VERSION = "persona-quality-report/v1"
-PERSONA_QUALITY_EVALUATOR_VERSION = "1.0.0"
+PERSONA_QUALITY_EVALUATOR_VERSION = "1.1.0"
+_FIELD_EVIDENCE_LIMIT = 3
 
 _INSUFFICIENT_VALUES = {
     "不详",
@@ -120,19 +121,37 @@ _DIMENSION_DEFINITIONS = (
     ),
 )
 
+_DIMENSION_EVIDENCE_KIND_ORDER = {
+    "identity": ("description", "thought", "dialogue"),
+    "motivation": ("thought", "dialogue", "description"),
+    "voice": ("dialogue", "thought", "description"),
+    "behavior": ("description", "thought", "dialogue"),
+}
 
-def evaluate_persona_quality(profile: dict[str, Any], *, character: str = "") -> dict[str, Any]:
+
+def evaluate_persona_quality(
+    profile: dict[str, Any],
+    *,
+    character: str = "",
+    evidence_bundle: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a deterministic quality report from one materialized persona profile."""
     fields = read_persona_review_fields(profile)
     normalized_character = str(character or profile.get("name", "")).strip()
     field_results: dict[str, dict[str, Any]] = {}
     dimensions: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    evidence_references = _normalize_evidence_references(evidence_bundle)
 
     for dimension_id, label, max_score, dimension_fields in _DIMENSION_DEFINITIONS:
         earned_units = 0.0
         for field in dimension_fields:
-            result = _evaluate_field(field, fields.get(field, ""), dimension_id)
+            result = _evaluate_field(
+                field,
+                fields.get(field, ""),
+                dimension_id,
+                evidence=_field_evidence(evidence_references, dimension_id),
+            )
             field_results[field] = result
             earned_units += float(result["readiness"])
             if result["status"] != "ready":
@@ -149,7 +168,10 @@ def evaluate_persona_quality(profile: dict[str, Any], *, character: str = "") ->
             }
         )
 
-    evidence_dimension, evidence_issues, evidence_metrics = _evaluate_evidence(profile)
+    evidence_dimension, evidence_issues, evidence_metrics = _evaluate_evidence(
+        profile,
+        evidence_references=evidence_references,
+    )
     dimensions.append(evidence_dimension)
     issues.extend(evidence_issues)
     issues.sort(key=_issue_sort_key)
@@ -189,7 +211,13 @@ def evaluate_persona_quality(profile: dict[str, Any], *, character: str = "") ->
     }
 
 
-def _evaluate_field(field: str, value: Any, dimension: str) -> dict[str, Any]:
+def _evaluate_field(
+    field: str,
+    value: Any,
+    dimension: str,
+    *,
+    evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     text = str(value or "").strip()
     normalized = re.sub(r"\s+", "", text)
     if not normalized:
@@ -211,7 +239,7 @@ def _evaluate_field(field: str, value: Any, dimension: str) -> dict[str, Any]:
         "status": status,
         "readiness": readiness,
         "value_length": len(normalized),
-        "evidence": [],
+        "evidence": list(evidence or []),
     }
 
 
@@ -234,19 +262,24 @@ def _field_issue(result: dict[str, Any]) -> dict[str, Any]:
         "dimension": result["dimension"],
         "fields": [field],
         "message": message,
-        "evidence": [],
+        "evidence": list(result.get("evidence", []) or []),
         "suggestion": suggestion,
     }
 
 
-def _evaluate_evidence(profile: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+def _evaluate_evidence(
+    profile: dict[str, Any],
+    *,
+    evidence_references: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     nested = profile.get("evidence", {})
     evidence = nested if isinstance(nested, dict) else {}
     description_count = _non_negative_int(profile.get("description_count", evidence.get("description_count", 0)))
     dialogue_count = _non_negative_int(profile.get("dialogue_count", evidence.get("dialogue_count", 0)))
     thought_count = _non_negative_int(profile.get("thought_count", evidence.get("thought_count", 0)))
     chunk_count = _non_negative_int(profile.get("chunk_count", evidence.get("chunk_count", 0)))
-    evidence_source = str(profile.get("evidence_source", "")).strip()
+    references = list(evidence_references or [])
+    evidence_source = str(profile.get("evidence_source", "")).strip() or _reference_source_summary(references)
 
     score = 0
     score += round(3 * min(description_count / 3, 1.0))
@@ -261,6 +294,9 @@ def _evaluate_evidence(profile: dict[str, Any]) -> tuple[dict[str, Any], list[di
         "chunk_count": chunk_count,
         "evidence_source": evidence_source,
     }
+    if references:
+        metrics["reference_count"] = len(references)
+        metrics["references"] = references
     issues: list[dict[str, Any]] = []
     if description_count + dialogue_count + thought_count == 0:
         issues.append(
@@ -270,7 +306,7 @@ def _evaluate_evidence(profile: dict[str, Any]) -> tuple[dict[str, Any], list[di
                 "dimension": "evidence",
                 "fields": [],
                 "message": "档案没有可计数的正文证据。",
-                "evidence": [],
+                "evidence": references[:_FIELD_EVIDENCE_LIMIT],
                 "suggestion": "重新抽取包含人物描写、对白或心理活动的正文片段。",
             }
         )
@@ -282,7 +318,7 @@ def _evaluate_evidence(profile: dict[str, Any]) -> tuple[dict[str, Any], list[di
                 "dimension": "evidence",
                 "fields": ["speech_style", "typical_lines"],
                 "message": "档案缺少对白证据，声音特征无法可靠验证。",
-                "evidence": [],
+                "evidence": [item for item in references if item.get("kind") != "dialogue"][:_FIELD_EVIDENCE_LIMIT],
                 "suggestion": "补充至少三条能体现口吻和节奏的原文对白。",
             }
         )
@@ -294,7 +330,7 @@ def _evaluate_evidence(profile: dict[str, Any]) -> tuple[dict[str, Any], list[di
                 "dimension": "evidence",
                 "fields": [],
                 "message": "证据来源没有记录。",
-                "evidence": [],
+                "evidence": references[:_FIELD_EVIDENCE_LIMIT],
                 "suggestion": "保存片段阶段、分块或章节定位，便于回到原文复核。",
             }
         )
@@ -324,6 +360,62 @@ def _quality_grade(score: int) -> tuple[str, str]:
 
 def _split_items(value: str) -> list[str]:
     return [item.strip() for item in re.split(r"\s*[；;]\s*", value) if item.strip()]
+
+
+def _normalize_evidence_references(evidence_bundle: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(evidence_bundle, dict):
+        return []
+    normalized: list[dict[str, Any]] = []
+    seen_quotes: set[str] = set()
+    for index, item in enumerate(list(evidence_bundle.get("references", []) or []), start=1):
+        if not isinstance(item, dict):
+            continue
+        quote = re.sub(r"\s+", " ", str(item.get("quote", ""))).strip()
+        if not quote or quote in seen_quotes:
+            continue
+        seen_quotes.add(quote)
+        kind = str(item.get("kind", "description")).strip()
+        if kind not in {"description", "dialogue", "thought"}:
+            kind = "description"
+        normalized.append(
+            {
+                "id": str(item.get("id", "")).strip() or f"evidence-{index}",
+                "stage": str(item.get("stage", "excerpt")).strip() or "excerpt",
+                "stage_label": str(item.get("stage_label", "正文片段")).strip() or "正文片段",
+                "kind": kind,
+                "kind_label": str(item.get("kind_label", "原文")).strip() or "原文",
+                "quote": quote,
+                "source": str(item.get("source", "excerpt:excerpt")).strip() or "excerpt:excerpt",
+                "mentions_character": bool(item.get("mentions_character", False)),
+            }
+        )
+    return normalized
+
+
+def _field_evidence(references: list[dict[str, Any]], dimension: str) -> list[dict[str, Any]]:
+    kind_order = _DIMENSION_EVIDENCE_KIND_ORDER.get(dimension, ("description", "dialogue", "thought"))
+    kind_rank = {kind: index for index, kind in enumerate(kind_order)}
+    ranked = sorted(
+        enumerate(references),
+        key=lambda item: (
+            kind_rank.get(str(item[1].get("kind", "")), len(kind_rank)),
+            0 if item[1].get("mentions_character") else 1,
+            item[0],
+        ),
+    )
+    return [
+        {**reference, "match_basis": f"dimension:{dimension}"}
+        for _, reference in ranked[:_FIELD_EVIDENCE_LIMIT]
+    ]
+
+
+def _reference_source_summary(references: list[dict[str, Any]]) -> str:
+    sources: list[str] = []
+    for reference in references:
+        source = str(reference.get("source", "")).strip()
+        if source and source not in sources:
+            sources.append(source)
+    return "；".join(sources)
 
 
 def _non_negative_int(value: Any) -> int:

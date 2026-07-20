@@ -4,6 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
+from src.web.review.profile_evidence import build_profile_evidence_bundle
 from src.web.review.persona_quality import evaluate_persona_quality
 
 
@@ -50,6 +51,32 @@ class PersonaQualityTests(unittest.TestCase):
         changed = evaluate_persona_quality(profile)
 
         self.assertNotEqual(initial["input_fingerprint"], changed["input_fingerprint"])
+
+    def test_field_results_and_issues_include_dimension_matched_source_evidence(self):
+        bundle = build_profile_evidence_bundle(
+            {
+                "request": {
+                    "excerpt": "林黛玉垂眼道：“你也不用哄我。”\n林黛玉心想，真心若被辜负，热闹也无用。",
+                    "excerpt_stages": {
+                        "start": "林黛玉垂眼道：“你也不用哄我。”",
+                        "mid": "林黛玉心想，真心若被辜负，热闹也无用。",
+                        "end": "",
+                    },
+                }
+            },
+            character="林黛玉",
+            chunk_count=2,
+        )
+
+        report = evaluate_persona_quality(load_fixture("sparse_profile.json"), evidence_bundle=bundle)
+
+        self.assertEqual(report["evidence"]["reference_count"], 2)
+        speech_result = next(item for item in report["field_results"] if item["field"] == "speech_style")
+        self.assertEqual(speech_result["evidence"][0]["kind"], "dialogue")
+        self.assertEqual(speech_result["evidence"][0]["match_basis"], "dimension:voice")
+        soul_issue = next(item for item in report["issues"] if item["code"] == "field.soul_goal.missing")
+        self.assertEqual(soul_issue["evidence"][0]["kind"], "thought")
+        self.assertEqual(soul_issue["evidence"][0]["quote"], "林黛玉心想，真心若被辜负，热闹也无用。")
 
 
 if __name__ == "__main__":

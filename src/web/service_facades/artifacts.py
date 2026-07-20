@@ -6,6 +6,7 @@ from typing import Any
 from src.utils.file_utils import save_markdown_data
 from src.web.time_utils import utc_now as _utc_now
 from src.web.review.persona_quality import evaluate_persona_quality
+from src.web.review.profile_evidence import PERSONA_EVIDENCE_FILENAME
 from src.web.artifacts import (
     export_relations_source,
     load_profile_source,
@@ -113,13 +114,25 @@ class ArtifactServiceMixin:
         _, _, source_path = resolve_persona_review_source(persona_dir)
         if not source_path.exists():
             raise FileNotFoundError(character)
-        report = evaluate_persona_quality(load_profile_source(source_path), character=character)
+        evidence_path = persona_dir / PERSONA_EVIDENCE_FILENAME
+        evidence_bundle = self._load_json_file(evidence_path) or {}
+        report = evaluate_persona_quality(
+            load_profile_source(source_path),
+            character=character,
+            evidence_bundle=evidence_bundle,
+        )
         report_path = persona_dir / "QUALITY_REPORT.json"
         relative_path = report_path.resolve().relative_to((self.runs_root / run_id).resolve()).as_posix()
         report["artifact"] = {
             "relative_path": relative_path,
             "file_url": f"/api/web/runs/{run_id}/files/{relative_path}",
         }
+        if evidence_path.exists():
+            evidence_relative_path = evidence_path.resolve().relative_to((self.runs_root / run_id).resolve()).as_posix()
+            report["evidence_artifact"] = {
+                "relative_path": evidence_relative_path,
+                "file_url": f"/api/web/runs/{run_id}/files/{evidence_relative_path}",
+            }
         self._write_json(report_path, report)
         return report
 

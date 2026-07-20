@@ -391,6 +391,51 @@
   color: var(--ink-soft);
 }
 
+.persona-quality-evidence-library,
+.persona-quality-issue-evidence {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.persona-quality-evidence-library summary,
+.persona-quality-issue-evidence summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #356956;
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
+.persona-quality-evidence-library ol {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.persona-quality-evidence-library li,
+.persona-quality-issue-evidence blockquote {
+  display: grid;
+  gap: 0.12rem;
+  margin: 0;
+  padding: 0 0 0 0.65rem;
+  border-left: 2px solid rgba(79, 118, 101, 0.35);
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  line-height: 1.6;
+}
+
+.persona-quality-evidence-library small,
+.persona-quality-issue-evidence small {
+  color: var(--ink-faint);
+  font-size: 0.6rem;
+}
+
+.persona-quality-issue-evidence blockquote + blockquote {
+  margin-top: 0.4rem;
+}
+
 .persona-quality-score {
   display: flex;
   align-items: baseline;

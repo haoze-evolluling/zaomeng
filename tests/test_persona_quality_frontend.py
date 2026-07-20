@@ -43,11 +43,16 @@ class PersonaQualityFrontendContractTests(unittest.TestCase):
             "state.qualityReport.score",
             "state.qualityReport.dimensions",
             "state.qualityReport.evidence.dialogue_count",
+            "visibleEvidenceReferences",
+            "查看原文证据",
+            "查看相关原文",
             "visibleQualityIssues",
             "state.qualityReport.artifact.file_url",
         ):
             self.assertIn(contract, self.island_source)
         self.assertIn(".persona-quality-panel", self.style_source)
+        self.assertIn(".persona-quality-evidence-library", self.style_source)
+        self.assertIn(".persona-quality-issue-evidence", self.style_source)
         self.assertIn("@media (max-width: 720px)", self.style_source)
 
 

@@ -1,6 +1,6 @@
 {
   "schema_version": "persona-quality-report/v1",
-  "evaluator_version": "1.0.0",
+  "evaluator_version": "1.1.0",
   "character": "林黛玉",
   "input_fingerprint": "sha256:33321cc850147e6c071edf965cd3abba80365109f9701dc89b958da7e4056bcc",
   "score": 100,

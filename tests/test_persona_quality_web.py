@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.web.artifacts import write_persona_profile
+from src.web.artifacts import materialize_profile_source, write_persona_profile
+from src.web.review.profile_evidence import (
+    PERSONA_EVIDENCE_FILENAME,
+    build_profile_evidence_bundle,
+)
 from src.web.workflow import WebRunService
 
 try:
@@ -27,6 +31,21 @@ def _build_service_with_persona(root: str) -> tuple[WebRunService, str, Path]:
     persona_dir.mkdir(parents=True)
     profile = json.loads((FIXTURE_ROOT / "ready_profile.json").read_text(encoding="utf-8"))
     write_persona_profile(persona_dir, profile)
+    evidence_bundle = build_profile_evidence_bundle(
+        {
+            "request": {
+                "excerpt": "林黛玉垂眼道：“你也不用哄我。”\n林黛玉心想，真心若被辜负，热闹也无用。",
+                "excerpt_stages": {
+                    "start": "林黛玉垂眼道：“你也不用哄我。”",
+                    "mid": "林黛玉心想，真心若被辜负，热闹也无用。",
+                    "end": "",
+                },
+            }
+        },
+        character="林黛玉",
+        chunk_count=2,
+    )
+    service._write_json(persona_dir / PERSONA_EVIDENCE_FILENAME, evidence_bundle)
     service._write_json(
         run_dir / "run_manifest.json",
         {
@@ -60,11 +79,34 @@ class PersonaQualityWebServiceTests(unittest.TestCase):
             self.assertEqual(json.loads(report_path.read_text(encoding="utf-8")), first)
             self.assertEqual(first["schema_version"], "persona-quality-report/v1")
             self.assertEqual(first["metrics"]["evaluated_field_count"], 38)
+            self.assertEqual(first["evidence"]["reference_count"], 2)
+            self.assertEqual(first["evidence"]["references"][0]["quote"], "林黛玉垂眼道：“你也不用哄我。”")
             self.assertEqual(first["artifact"]["relative_path"], "artifacts/characters/hongloumeng/林黛玉/QUALITY_REPORT.json")
             self.assertEqual(
                 first["artifact"]["file_url"],
                 f"/api/web/runs/{run_id}/files/artifacts/characters/hongloumeng/林黛玉/QUALITY_REPORT.json",
             )
+            self.assertEqual(
+                first["evidence_artifact"]["relative_path"],
+                "artifacts/characters/hongloumeng/林黛玉/EVIDENCE.generated.json",
+            )
+
+    def test_materialization_copies_generated_evidence_into_persona_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "host" / "PROFILE.generated.md"
+            source_path.parent.mkdir(parents=True)
+            source_path.write_text("# PROFILE\n- name: 林黛玉\n- novel_id: hongloumeng\n", encoding="utf-8")
+            evidence = {"schema_version": "persona-evidence/v1", "references": [{"quote": "原文证据"}]}
+            (source_path.parent / PERSONA_EVIDENCE_FILENAME).write_text(
+                json.dumps(evidence, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            materialize_profile_source(source_path, root / "persona")
+
+            copied = json.loads((root / "persona" / PERSONA_EVIDENCE_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(copied, evidence)
 
     def test_report_changes_after_persona_review_save(self):
         with tempfile.TemporaryDirectory() as tmp:

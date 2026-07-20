@@ -54,6 +54,9 @@ from .opening_presets import (
     save_opening_preset_payload,
 )
 from .profile_evidence import (
+    PERSONA_EVIDENCE_FILENAME,
+    PERSONA_EVIDENCE_SCHEMA_VERSION,
+    build_profile_evidence_bundle,
     finalize_generated_profile_source,
     looks_like_dialogue_sentence,
     looks_like_thought_or_evaluation_sentence,
@@ -89,6 +92,7 @@ __all__ = [
     "PROFILE_MAP_FIELDS",
     "apply_persona_review_updates",
     "apply_profile_missing_fallbacks",
+    "build_profile_evidence_bundle",
     "collect_profile_completion_groups",
     "collect_profile_repair_targets",
     "collect_persona_web_references",
@@ -107,6 +111,8 @@ __all__ = [
     "parse_profile_metric_map",
     "parse_persona_field_completion_response",
     "profile_evidence_from_payload",
+    "PERSONA_EVIDENCE_FILENAME",
+    "PERSONA_EVIDENCE_SCHEMA_VERSION",
     "profile_field_is_effectively_empty",
     "profile_list_value",
     "read_persona_review_fields",

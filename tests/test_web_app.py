@@ -1499,6 +1499,12 @@ class WebRunServiceTests(unittest.TestCase):
                 "- evidence_source: excerpt:start；excerpt:mid；excerpt:end；strategy:character_windows_mixed",
                 content,
             )
+            evidence_path = source_path.with_name("EVIDENCE.generated.json")
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["schema_version"], "persona-evidence/v1")
+            self.assertEqual(evidence["character"], "魏无羡")
+            self.assertEqual(evidence["reference_count"], 3)
+            self.assertEqual(evidence["references"][0]["kind"], "dialogue")
 
     def test_profile_repair_triggers_when_completion_fields_are_empty(self):
         with tempfile.TemporaryDirectory() as tmp:

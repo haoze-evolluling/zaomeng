@@ -249,6 +249,10 @@
         const issues = Array.isArray(state.qualityReport?.issues) ? state.qualityReport.issues : [];
         return issues.filter((item) => item?.severity !== "low").slice(0, 5);
       });
+      const visibleEvidenceReferences = computed(() => {
+        const references = Array.isArray(state.qualityReport?.evidence?.references) ? state.qualityReport.evidence.references : [];
+        return references.slice(0, 8);
+      });
 
       onMounted(() => {
         modal.classList.add("has-vue-island");
@@ -306,6 +310,7 @@
         availableCharacters,
         keyFields: KEY_FIELDS,
         advancedGroups: ADVANCED_GROUPS,
+        visibleEvidenceReferences,
         visibleQualityIssues,
         needsAutofill,
         fieldLabel,
@@ -365,10 +370,26 @@
             {{ state.qualityReport.evidence.dialogue_count }} 条对白、
             {{ state.qualityReport.evidence.thought_count }} 条心理活动。
           </p>
+          <details v-if="visibleEvidenceReferences.length" class="persona-quality-evidence-library">
+            <summary>查看原文证据（{{ state.qualityReport.evidence.reference_count }}）</summary>
+            <ol>
+              <li v-for="reference in visibleEvidenceReferences" :key="reference.id">
+                <small>{{ reference.stage_label }} · {{ reference.kind_label }}</small>
+                <blockquote>{{ reference.quote }}</blockquote>
+              </li>
+            </ol>
+          </details>
           <ol v-if="visibleQualityIssues.length" class="persona-quality-issues">
             <li v-for="item in visibleQualityIssues" :key="item.code" :data-severity="item.severity">
               <strong>{{ item.message }}</strong>
               <span>{{ item.suggestion }}</span>
+              <details v-if="item.evidence?.length" class="persona-quality-issue-evidence">
+                <summary>查看相关原文</summary>
+                <blockquote v-for="reference in item.evidence" :key="item.code + '-' + reference.id">
+                  <small>{{ reference.stage_label }} · {{ reference.kind_label }}</small>
+                  {{ reference.quote }}
+                </blockquote>
+              </details>
             </li>
           </ol>
           <a
