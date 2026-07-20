@@ -36,30 +36,6 @@ function setDialogueSessionFailure(message, nextStep = "", affectsChatFlow = tru
   setFlowFailureStatus("dialogue-session-status", message, nextStep, { affectsChatFlow });
 }
 
-function setSceneCardLoading(message, nextStep = "") {
-  setFlowLoadingStatus("scene-card-status", message, nextStep);
-}
-
-function setSceneCardSuccess(message, nextStep = "") {
-  setFlowSuccessStatus("scene-card-status", message, nextStep);
-}
-
-function setSceneCardFailure(message, nextStep = "") {
-  setFlowFailureStatus("scene-card-status", message, nextStep, { affectsChatFlow: false });
-}
-
-function setSelfCardLoading(message, nextStep = "") {
-  setFlowLoadingStatus("self-card-status", message, nextStep);
-}
-
-function setSelfCardSuccess(message, nextStep = "") {
-  setFlowSuccessStatus("self-card-status", message, nextStep);
-}
-
-function setSelfCardFailure(message, nextStep = "") {
-  setFlowFailureStatus("self-card-status", message, nextStep, { affectsChatFlow: false });
-}
-
 function setOpeningPresetLoading(message, nextStep = "") {
   setFlowLoadingStatus("opening-preset-status", message, nextStep);
 }
@@ -775,20 +751,13 @@ async function handleDialogueSessionSubmit(event) {
 const EDITOR_SCHEMAS = window.__ZAOMENG_EDITOR_SCHEMAS__ || {};
 const SCENE_CARD_FIELD_DEFINITIONS = Array.isArray(EDITOR_SCHEMAS.SCENE_CARD_FIELDS) ? EDITOR_SCHEMAS.SCENE_CARD_FIELDS : [];
 const SCENE_CARD_FIELD_MAP = EDITOR_SCHEMAS.SCENE_CARD_FIELD_MAP instanceof Map ? EDITOR_SCHEMAS.SCENE_CARD_FIELD_MAP : new Map();
-const SCENE_CARD_FIELD_BINDINGS = SCENE_CARD_FIELD_DEFINITIONS.map((item) => [item.field, `scene-card-${item.field.replaceAll("_", "-")}`]);
 const SCENE_CARD_REQUIRED_FIELDS = Array.isArray(EDITOR_SCHEMAS.SCENE_CARD_REQUIRED_FIELDS) ? EDITOR_SCHEMAS.SCENE_CARD_REQUIRED_FIELDS : [];
 const SELF_CARD_FIELD_DEFINITIONS = Array.isArray(EDITOR_SCHEMAS.SELF_CARD_ALL_FIELDS) ? EDITOR_SCHEMAS.SELF_CARD_ALL_FIELDS : [];
 const SELF_CARD_FIELD_MAP = EDITOR_SCHEMAS.SELF_CARD_FIELD_MAP instanceof Map ? EDITOR_SCHEMAS.SELF_CARD_FIELD_MAP : new Map();
-const SELF_CARD_FIELD_BINDINGS = SELF_CARD_FIELD_DEFINITIONS.map((item) => [item.field, `self-card-${item.field.replaceAll("_", "-")}`]);
 const SELF_CARD_REQUIRED_FIELDS = Array.isArray(EDITOR_SCHEMAS.SELF_CARD_REQUIRED_FIELDS) ? EDITOR_SCHEMAS.SELF_CARD_REQUIRED_FIELDS : [];
 
-function sceneCardFieldId(field) {
-  const item = SCENE_CARD_FIELD_BINDINGS.find(([key]) => key === field);
-  return item ? item[1] : "";
-}
-
-function collectSceneCardPayload() {
-  return Object.fromEntries(SCENE_CARD_FIELD_BINDINGS.map(([field, id]) => [field, trimmedValue(id, "")]));
+function emptyEditorFields(definitions) {
+  return Object.fromEntries(definitions.map((item) => [item.field, ""]));
 }
 
 function validateSceneCardPayload(fields) {
@@ -798,26 +767,23 @@ function validateSceneCardPayload(fields) {
   return `请先补全这些必填项：${labels.join("、")}`;
 }
 
-function fillSceneCardFields(fields = {}) {
-  SCENE_CARD_FIELD_BINDINGS.forEach(([field, id]) => {
-    setValue(id, fields?.[field] || "");
-  });
-}
-
-function buildSceneCardEditorState() {
+function buildSceneCardEditorState(editor = currentSceneCardEditor) {
   return {
-    cardId: trimmedValue("scene-card-id", ""),
-    status: String(el("scene-card-status")?.textContent || "").trim(),
-    deleteVisible: !el("delete-scene-card-button")?.classList.contains("hidden"),
+    cardId: String(editor?.cardId || "").trim(),
+    status: String(editor?.status || "").trim(),
+    deleteVisible: Boolean(editor?.cardId),
     modalOpen: !el("scene-card-modal")?.classList.contains("hidden"),
-    fields: collectSceneCardPayload(),
+    fields: {
+      ...emptyEditorFields(SCENE_CARD_FIELD_DEFINITIONS),
+      ...(editor?.fields || {}),
+    },
   };
 }
 
 window.__ZAOMENG_BUILD_SCENE_CARD_EDITOR_STATE__ = buildSceneCardEditorState;
 
-function publishSceneCardEditorState(source = "scene-card-editor") {
-  currentSceneCardEditor = buildSceneCardEditorState();
+function publishSceneCardEditorState(source = "scene-card-editor", editor = currentSceneCardEditor) {
+  currentSceneCardEditor = buildSceneCardEditorState(editor);
   if (typeof UI_BRIDGE_TOOLS.syncLegacyUiState === "function") {
     UI_BRIDGE_TOOLS.syncLegacyUiState(source, { currentSceneCardEditor });
   } else if (typeof UI_BRIDGE_TOOLS.publishLegacyStateSlice === "function") {
@@ -827,27 +793,15 @@ function publishSceneCardEditorState(source = "scene-card-editor") {
   }
 }
 
-function updateSceneCardDeleteButton(shouldPublish = true) {
-  const hasCard = Boolean(trimmedValue("scene-card-id", ""));
-  toggle("delete-scene-card-button", hasCard);
-  toggle("duplicate-scene-card-button", hasCard);
-  if (shouldPublish) {
-    publishSceneCardEditorState("scene-card-delete-visibility-updated");
-  }
-}
-
-function startSceneCardDraft(fields = {}) {
+function startSceneCardDraft(fields = {}, status = "") {
   currentSceneCard = { card_id: "", fields: { ...fields } };
-  setValue("scene-card-id", "");
-  fillSceneCardFields(fields);
-  updateSceneCardDeleteButton();
+  currentSceneCardEditor = buildSceneCardEditorState({ cardId: "", fields, status });
 }
 
 function openNewSceneCard() {
   startSceneCardDraft({
     title: trimmedValue("scene-card-preview-title", "") || "",
-  });
-  setSceneCardSuccess("你可以手写，也可以让 AI 先随机搭一幕。", "写完后保存即可在开场时直接选用。");
+  }, "你可以手写，也可以让 AI 先随机搭一幕。");
   openSceneCardModal();
   publishSceneCardEditorState("scene-card-new-opened");
 }
@@ -857,15 +811,18 @@ async function openExistingSceneCard(cardId) {
     openNewSceneCard();
     return;
   }
-  setSceneCardLoading("正在载入场景卡...");
-  publishSceneCardEditorState("scene-card-loading");
+  publishSceneCardEditorState("scene-card-loading", {
+    ...currentSceneCardEditor,
+    status: "正在载入场景卡...",
+  });
   try {
     const payload = await apiJson(`/api/web/scene-cards/${encodeURIComponent(cardId)}`, {}, "场景卡载入失败。");
     currentSceneCard = payload;
-    setValue("scene-card-id", payload.card_id || "");
-    fillSceneCardFields(payload.fields || {});
-    updateSceneCardDeleteButton();
-    setSceneCardSuccess("场景卡已载入。", "可以直接编辑后保存。");
+    currentSceneCardEditor = buildSceneCardEditorState({
+      cardId: payload.card_id || "",
+      fields: payload.fields || {},
+      status: "场景卡已载入。",
+    });
     openSceneCardModal();
     publishSceneCardEditorState("scene-card-loaded");
   } catch (error) {
@@ -1015,95 +972,6 @@ async function handleEditCurrentSceneCard(event) {
     return;
   }
   await openExistingSceneCard(selectedSceneCardId);
-}
-
-async function handleGenerateSceneCard(event) {
-  if (event && typeof event.preventDefault === "function") event.preventDefault();
-  const button = el("generate-scene-card-button");
-  if (button) button.disabled = true;
-  setSceneCardLoading("正在随机生成一张场景卡...");
-  publishSceneCardEditorState("scene-card-generating");
-  try {
-    const payload = await apiJson(
-      "/api/web/scene-cards/generate",
-      { method: "POST" },
-      "场景卡生成失败。"
-    );
-    fillSceneCardFields(payload.fields || {});
-    setSceneCardSuccess("AI 已经把这一幕先搭好了，你可以直接保存，也可以再手修。", "确认无误后保存这张场景卡。");
-    publishSceneCardEditorState("scene-card-generated");
-  } catch (error) {
-    setSceneCardFailure(error.message || "场景卡生成失败。", "可以稍后重试，或改为手动填写。");
-    publishSceneCardEditorState("scene-card-generate-failed");
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
-
-async function handleSceneCardSubmit(event) {
-  if (event && typeof event.preventDefault === "function") event.preventDefault();
-  const fields = collectSceneCardPayload();
-  const validationMessage = validateSceneCardPayload(fields);
-  if (validationMessage) {
-    setSceneCardFailure(validationMessage, "补全必填字段后再保存。");
-    publishSceneCardEditorState("scene-card-validation-failed");
-    return;
-  }
-  setSceneCardLoading("正在保存场景卡...");
-  publishSceneCardEditorState("scene-card-saving");
-  try {
-    const cardId = trimmedValue("scene-card-id", "");
-    const payload = await apiJson(
-      cardId ? `/api/web/scene-cards/${encodeURIComponent(cardId)}` : "/api/web/scene-cards",
-      {
-        method: cardId ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-      },
-      "场景卡保存失败。"
-    );
-    setValue("scene-card-id", payload.card_id || "");
-    await loadSceneCards();
-    const select = el("dialogue-scene-card");
-    if (select) {
-      select.value = payload.card_id || "";
-      syncCustomSelect("dialogue-scene-card");
-    }
-    syncSelectedSceneCardFromSelect();
-    setSceneCardSuccess("场景卡已保存。", "现在可以在开场器里直接选用这张卡。");
-    publishSceneCardEditorState("scene-card-saved");
-    closeSceneCardModal();
-  } catch (error) {
-    setSceneCardFailure(error.message || "场景卡保存失败。", "可以稍后重试，或先复制内容避免丢失。");
-    publishSceneCardEditorState("scene-card-save-failed");
-  }
-}
-
-async function handleDeleteSceneCard(event) {
-  if (event && typeof event.preventDefault === "function") event.preventDefault();
-  const cardId = trimmedValue("scene-card-id", "");
-  if (!cardId) return;
-  if (!window.confirm("确定删除这张场景卡吗？")) return;
-  setSceneCardLoading("正在删除场景卡...");
-  publishSceneCardEditorState("scene-card-deleting");
-  try {
-    await apiJson(
-      `/api/web/scene-cards/${encodeURIComponent(cardId)}`,
-      { method: "DELETE" },
-      "场景卡删除失败。"
-    );
-    if (selectedSceneCardId === cardId) {
-      selectedSceneCardId = "";
-    }
-    await loadSceneCards();
-    currentSceneCard = null;
-    renderSelectedSceneCardPreview();
-    publishSceneCardEditorState("scene-card-deleted");
-    closeSceneCardModal();
-  } catch (error) {
-    setSceneCardFailure(error.message || "场景卡删除失败。", "可以稍后重试，或先关闭弹窗后再试。");
-    publishSceneCardEditorState("scene-card-delete-failed");
-  }
 }
 
 function renderDialogueSceneSwitcher(session = currentDialogueSession) {
@@ -1447,23 +1315,6 @@ async function handleRecommendSceneCard(event) {
   }
 }
 
-async function handleDuplicateSceneCard(event) {
-  if (event && typeof event.preventDefault === "function") event.preventDefault();
-  const fields = collectSceneCardPayload();
-  startSceneCardDraft(fields);
-  setSceneCardSuccess("已经按当前内容另起一张新卡。保存后会成为独立场景卡。", "确认后保存这张新卡。");
-  publishSceneCardEditorState("scene-card-duplicated");
-}
-
-function selfCardFieldId(field) {
-  const item = SELF_CARD_FIELD_BINDINGS.find(([key]) => key === field);
-  return item ? item[1] : "";
-}
-
-function collectSelfCardPayload() {
-  return Object.fromEntries(SELF_CARD_FIELD_BINDINGS.map(([field, id]) => [field, trimmedValue(id, "")]));
-}
-
 function validateSelfCardPayload(fields) {
   const missing = SELF_CARD_REQUIRED_FIELDS.filter((field) => !String(fields?.[field] || "").trim());
   if (!missing.length) return "";
@@ -1471,26 +1322,23 @@ function validateSelfCardPayload(fields) {
   return `请先补全这些必填项：${labels.join("、")}`;
 }
 
-function fillSelfCardFields(fields = {}) {
-  SELF_CARD_FIELD_BINDINGS.forEach(([field, id]) => {
-    setValue(id, fields?.[field] || "");
-  });
-}
-
-function buildSelfCardEditorState() {
+function buildSelfCardEditorState(editor = currentSelfCardEditor) {
   return {
-    cardId: trimmedValue("self-card-id", ""),
-    status: String(el("self-card-status")?.textContent || "").trim(),
-    deleteVisible: !el("delete-self-card-button")?.classList.contains("hidden"),
+    cardId: String(editor?.cardId || "").trim(),
+    status: String(editor?.status || "").trim(),
+    deleteVisible: Boolean(editor?.cardId),
     modalOpen: !el("self-card-modal")?.classList.contains("hidden"),
-    fields: collectSelfCardPayload(),
+    fields: {
+      ...emptyEditorFields(SELF_CARD_FIELD_DEFINITIONS),
+      ...(editor?.fields || {}),
+    },
   };
 }
 
 window.__ZAOMENG_BUILD_SELF_CARD_EDITOR_STATE__ = buildSelfCardEditorState;
 
-function publishSelfCardEditorState(source = "self-card-editor") {
-  currentSelfCardEditor = buildSelfCardEditorState();
+function publishSelfCardEditorState(source = "self-card-editor", editor = currentSelfCardEditor) {
+  currentSelfCardEditor = buildSelfCardEditorState(editor);
   if (typeof UI_BRIDGE_TOOLS.syncLegacyUiState === "function") {
     UI_BRIDGE_TOOLS.syncLegacyUiState(source, { currentSelfCardEditor });
   } else if (typeof UI_BRIDGE_TOOLS.publishLegacyStateSlice === "function") {
@@ -1500,19 +1348,9 @@ function publishSelfCardEditorState(source = "self-card-editor") {
   }
 }
 
-function updateSelfCardDeleteButton(shouldPublish = true) {
-  const hasCard = Boolean(trimmedValue("self-card-id", ""));
-  toggle("delete-self-card-button", hasCard);
-  if (shouldPublish) {
-    publishSelfCardEditorState("self-card-delete-visibility-updated");
-  }
-}
-
-function startSelfCardDraft(fields = {}) {
+function startSelfCardDraft(fields = {}, status = "") {
   currentSelfCard = { card_id: "", fields: { ...fields } };
-  setValue("self-card-id", "");
-  fillSelfCardFields(fields);
-  updateSelfCardDeleteButton();
+  currentSelfCardEditor = buildSelfCardEditorState({ cardId: "", fields, status });
 }
 
 function openNewSelfCard() {
@@ -1520,8 +1358,7 @@ function openNewSelfCard() {
     display_name: trimmedValue("dialogue-self-name", "") || "你",
     scene_identity: trimmedValue("dialogue-self-identity", ""),
     interaction_style: trimmedValue("dialogue-self-style", ""),
-  });
-  setSelfCardSuccess("你可以手写，也可以让 AI 先随机捏一张。", "写完后保存即可在插入模式直接选用。");
+  }, "你可以手写，也可以让 AI 先随机捏一张。");
   openSelfCardModal();
   publishSelfCardEditorState("self-card-new-opened");
 }
@@ -1531,15 +1368,18 @@ async function openExistingSelfCard(cardId) {
     openNewSelfCard();
     return;
   }
-  setSelfCardLoading("正在载入角色卡...");
-  publishSelfCardEditorState("self-card-loading");
+  publishSelfCardEditorState("self-card-loading", {
+    ...currentSelfCardEditor,
+    status: "正在载入角色卡...",
+  });
   try {
     const payload = await apiJson(`/api/web/self-cards/${encodeURIComponent(cardId)}`, {}, "角色卡载入失败。");
     currentSelfCard = payload;
-    setValue("self-card-id", payload.card_id || "");
-    fillSelfCardFields(payload.fields || {});
-    updateSelfCardDeleteButton();
-    setSelfCardSuccess("角色卡已载入。", "可以直接编辑后保存。");
+    currentSelfCardEditor = buildSelfCardEditorState({
+      cardId: payload.card_id || "",
+      fields: payload.fields || {},
+      status: "角色卡已载入。",
+    });
     openSelfCardModal();
     publishSelfCardEditorState("self-card-loaded");
   } catch (error) {
@@ -1675,99 +1515,6 @@ async function handleEditCurrentSelfCard(event) {
     return;
   }
   await openExistingSelfCard(selectedSelfCardId);
-}
-
-async function handleGenerateSelfCard(event) {
-  if (event && typeof event.preventDefault === "function") event.preventDefault();
-  const button = el("generate-self-card-button");
-  if (button) button.disabled = true;
-  setSelfCardLoading("正在随机生成一张角色卡...");
-  publishSelfCardEditorState("self-card-generating");
-  try {
-    const payload = await apiJson(
-      "/api/web/self-cards/generate",
-      { method: "POST" },
-      "角色卡生成失败。"
-    );
-    fillSelfCardFields(payload.fields || {});
-    setSelfCardSuccess("AI 已经把整张卡先填好了，你可以直接保存，也可以再手修。", "确认无误后保存这张角色卡。");
-    publishSelfCardEditorState("self-card-generated");
-  } catch (error) {
-    setSelfCardFailure(error.message || "角色卡生成失败。", "可以稍后重试，或改为手动填写。");
-    publishSelfCardEditorState("self-card-generate-failed");
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
-
-async function handleSelfCardSubmit(event) {
-  event.preventDefault();
-  const cardId = trimmedValue("self-card-id", "");
-  const fields = collectSelfCardPayload();
-  const validationMessage = validateSelfCardPayload(fields);
-  if (validationMessage) {
-    setSelfCardFailure(validationMessage, "补全必填字段后再保存。");
-    publishSelfCardEditorState("self-card-validation-failed");
-    return;
-  }
-  setSelfCardLoading("正在保存角色卡...");
-  publishSelfCardEditorState("self-card-saving");
-  try {
-    const payload = await apiJson(
-      cardId ? `/api/web/self-cards/${encodeURIComponent(cardId)}` : "/api/web/self-cards",
-      {
-        method: cardId ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-      },
-      "角色卡保存失败。"
-    );
-    await loadSelfCards();
-    selectedSelfCardId = payload.card_id || "";
-    const select = el("dialogue-self-card");
-    if (select) {
-      select.value = selectedSelfCardId;
-      syncCustomSelect("dialogue-self-card");
-    }
-    syncSelectedSelfCardFromSelect();
-    setDialogueSessionSuccess("角色卡已经接好，现在可以直接带它入场。", "切到插入模式后可直接套用。");
-    setSelfCardSuccess("角色卡已保存。", "现在可以在开场器里直接选用这张卡。");
-    publishSelfCardEditorState("self-card-saved");
-    closeSelfCardModal();
-  } catch (error) {
-    setSelfCardFailure(error.message || "角色卡保存失败。", "可以稍后重试，或先复制内容避免丢失。");
-    publishSelfCardEditorState("self-card-save-failed");
-  }
-}
-
-async function handleDeleteSelfCard(event) {
-  if (event && typeof event.preventDefault === "function") event.preventDefault();
-  const cardId = trimmedValue("self-card-id", "");
-  if (!cardId) return;
-  if (!window.confirm("确定删除这张角色卡吗？")) {
-    return;
-  }
-  setSelfCardLoading("正在删除角色卡...");
-  publishSelfCardEditorState("self-card-deleting");
-  try {
-    await apiJson(
-      `/api/web/self-cards/${encodeURIComponent(cardId)}`,
-      { method: "DELETE" },
-      "角色卡删除失败。"
-    );
-    if (selectedSelfCardId === cardId) {
-      selectedSelfCardId = "";
-    }
-    await loadSelfCards();
-    currentSelfCard = null;
-    renderSelectedSelfCardPreview();
-    setDialogueSessionSuccess("角色卡已经删掉了。", "可以新建一张角色卡继续使用插入模式。");
-    publishSelfCardEditorState("self-card-deleted");
-    closeSelfCardModal();
-  } catch (error) {
-    setSelfCardFailure(error.message || "角色卡删除失败。", "可以稍后重试，或先关闭弹窗后再试。");
-    publishSelfCardEditorState("self-card-delete-failed");
-  }
 }
 
 function fillOpeningPresetMetaForm(preset = null) {
@@ -3629,8 +3376,6 @@ function bindEvents() {
 
   bind("model-settings-form", "submit", handleModelSettingsSubmit);
   bind("persona-review-form", "submit", handlePersonaReviewSubmit);
-  bind("scene-card-form", "submit", handleSceneCardSubmit);
-  bind("self-card-form", "submit", handleSelfCardSubmit);
   bind("opening-preset-form", "submit", handleOpeningPresetSubmit);
   bind("create-run-form", "submit", handleCreateRunSubmit);
   bind("redistill-button", "click", handleRedistill);
@@ -3657,13 +3402,8 @@ function bindEvents() {
   bind("dialogue-live-scene-apply", "click", handleApplyDialogueSceneCard);
   bind("create-scene-card-button", "click", handleOpenNewSceneCard);
   bind("edit-scene-card-button", "click", handleEditCurrentSceneCard);
-  bind("generate-scene-card-button", "click", handleGenerateSceneCard);
-  bind("duplicate-scene-card-button", "click", handleDuplicateSceneCard);
-  bind("delete-scene-card-button", "click", handleDeleteSceneCard);
   bind("create-self-card-button", "click", handleOpenNewSelfCard);
   bind("edit-self-card-button", "click", handleEditCurrentSelfCard);
-  bind("generate-self-card-button", "click", handleGenerateSelfCard);
-  bind("delete-self-card-button", "click", handleDeleteSelfCard);
   bind("suggest-turn-button", "click", handleSuggestTurn);
   bind("prepare-turn-button", "click", handleSendTurn);
   el("dialogue-association-toggle")?.addEventListener("change", (event) => {
@@ -3702,12 +3442,6 @@ function bindEvents() {
   bind("dialogue-opening-preset", "change", handleOpeningPresetSelectionChange);
   bind("dialogue-scene-card", "change", handleSceneCardSelectionChange);
   bind("dialogue-self-card", "change", handleSelfCardSelectionChange);
-  el("scene-card-form")?.addEventListener("input", () => {
-    publishSceneCardEditorState("scene-card-input");
-  });
-  el("self-card-form")?.addEventListener("input", () => {
-    publishSelfCardEditorState("self-card-input");
-  });
   bind("persona-review-character", "change", handlePersonaCharacterChange);
   el("persona-review-form")?.addEventListener("input", (event) => {
     const target = event.target;
@@ -3969,14 +3703,9 @@ window.renderDialogueAssociations = renderDialogueAssociations;
 window.requestDialogueAssociations = requestDialogueAssociations;
 window.maybeRequestDialogueAssociations = maybeRequestDialogueAssociations;
 window.setDialogueAssociationsEnabled = setDialogueAssociationsEnabled;
-window.sceneCardFieldId = sceneCardFieldId;
-window.collectSceneCardPayload = collectSceneCardPayload;
 window.validateSceneCardPayload = validateSceneCardPayload;
-window.fillSceneCardFields = fillSceneCardFields;
 window.buildSceneCardEditorState = buildSceneCardEditorState;
 window.publishSceneCardEditorState = publishSceneCardEditorState;
-window.updateSceneCardDeleteButton = updateSceneCardDeleteButton;
-window.startSceneCardDraft = startSceneCardDraft;
 window.openNewSceneCard = openNewSceneCard;
 window.openExistingSceneCard = openExistingSceneCard;
 window.renderSceneCardOptions = renderSceneCardOptions;
@@ -3986,24 +3715,15 @@ window.renderSelectedSceneCardPreview = renderSelectedSceneCardPreview;
 window.handleSceneCardSelectionChange = handleSceneCardSelectionChange;
 window.handleOpenNewSceneCard = handleOpenNewSceneCard;
 window.handleEditCurrentSceneCard = handleEditCurrentSceneCard;
-window.handleGenerateSceneCard = handleGenerateSceneCard;
-window.handleDuplicateSceneCard = handleDuplicateSceneCard;
-window.handleSceneCardSubmit = handleSceneCardSubmit;
-window.handleDeleteSceneCard = handleDeleteSceneCard;
 window.renderDialogueSceneSwitcher = renderDialogueSceneSwitcher;
 window.handleApplyDialogueSceneCard = handleApplyDialogueSceneCard;
 window.handleRecommendDialogueSceneCard = handleRecommendDialogueSceneCard;
 window.applyDialogueSceneTimelineEntry = applyDialogueSceneTimelineEntry;
 window.branchDialogueSessionFromScene = branchDialogueSessionFromScene;
 window.handleRecommendSceneCard = handleRecommendSceneCard;
-window.selfCardFieldId = selfCardFieldId;
-window.collectSelfCardPayload = collectSelfCardPayload;
 window.validateSelfCardPayload = validateSelfCardPayload;
-window.fillSelfCardFields = fillSelfCardFields;
 window.buildSelfCardEditorState = buildSelfCardEditorState;
 window.publishSelfCardEditorState = publishSelfCardEditorState;
-window.updateSelfCardDeleteButton = updateSelfCardDeleteButton;
-window.startSelfCardDraft = startSelfCardDraft;
 window.openNewSelfCard = openNewSelfCard;
 window.openExistingSelfCard = openExistingSelfCard;
 window.renderSelfCardOptions = renderSelfCardOptions;
@@ -4013,9 +3733,6 @@ window.renderSelectedSelfCardPreview = renderSelectedSelfCardPreview;
 window.handleSelfCardSelectionChange = handleSelfCardSelectionChange;
 window.handleOpenNewSelfCard = handleOpenNewSelfCard;
 window.handleEditCurrentSelfCard = handleEditCurrentSelfCard;
-window.handleGenerateSelfCard = handleGenerateSelfCard;
-window.handleSelfCardSubmit = handleSelfCardSubmit;
-window.handleDeleteSelfCard = handleDeleteSelfCard;
 window.openPersonaReviewForCharacter = openPersonaReviewForCharacter;
 window.openPersonaReview = openPersonaReview;
 window.openWorkCharacterReview = openWorkCharacterReview;

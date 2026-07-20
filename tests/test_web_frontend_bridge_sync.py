@@ -48,6 +48,47 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("await loadScriptBatch(optionalScripts, { continueOnError: true });", content)
         self.assertIn("renderBootFailure(error);", content)
 
+    def test_scene_and_self_card_islands_are_required_after_main(self):
+        content = read_js("bootstrap.js")
+        core_scripts = content.split("const coreScripts = [", 1)[1].split("];", 1)[0]
+        optional_scripts = content.split("const optionalScripts = [", 1)[1].split("];", 1)[0]
+        main_index = core_scripts.index('/web/js/main.js?v=${version}')
+        scene_index = core_scripts.index('/web/js/scene-card-vue-island.js?v=${version}')
+        self_index = core_scripts.index('/web/js/self-card-vue-island.js?v=${version}')
+        self.assertLess(main_index, scene_index)
+        self.assertLess(scene_index, self_index)
+        self.assertNotIn("scene-card-vue-island.js", optional_scripts)
+        self.assertNotIn("self-card-vue-island.js", optional_scripts)
+
+    def test_card_modals_only_keep_vue_editor_surfaces(self):
+        fragment = read_fragment("settings-modal.html")
+        main_content = read_js("main.js")
+        scene_content = read_js("scene-card-vue-island.js")
+        self_content = read_js("self-card-vue-island.js")
+
+        self.assertIn('id="scene-card-vue-root"', fragment)
+        self.assertIn('id="self-card-vue-root"', fragment)
+        self.assertNotIn('id="scene-card-form"', fragment)
+        self.assertNotIn('id="self-card-form"', fragment)
+        self.assertNotIn('id="scene-card-status"', fragment)
+        self.assertNotIn('id="self-card-status"', fragment)
+
+        for handler in (
+            "handleGenerateSceneCard",
+            "handleSceneCardSubmit",
+            "handleDeleteSceneCard",
+            "handleDuplicateSceneCard",
+            "handleGenerateSelfCard",
+            "handleSelfCardSubmit",
+            "handleDeleteSelfCard",
+        ):
+            self.assertNotIn(handler, main_content)
+
+        self.assertIn("publishSceneCardEditorState(source, {", scene_content)
+        self.assertIn("publishSelfCardEditorState(source, {", self_content)
+        self.assertNotIn("syncLegacyFields", scene_content)
+        self.assertNotIn("syncLegacyFields", self_content)
+
     def test_dialogue_publish_includes_session_payloads_for_bridge_sync(self):
         content = read_js("dialogue.js")
         self.assertIn("const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};", content)

@@ -6,7 +6,7 @@
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }
 
-  const version = "20260720044031";
+  const version = "20260720065126";
   window.__ZAOMENG_WEB_UI_VERSION__ = version;
   const rootFragments = [
     { id: "header-root", url: `/web/fragments/header.html?v=${version}` },
@@ -62,6 +62,8 @@
     `/web/js/dialogue.js?v=${version}`,
     `/web/js/webui-api.js?v=${version}`,
     `/web/js/main.js?v=${version}`,
+    `/web/js/scene-card-vue-island.js?v=${version}`,
+    `/web/js/self-card-vue-island.js?v=${version}`,
   ];
   const optionalScripts = [
     `/web/js/bookshelf-vue-island.js?v=${version}`,
@@ -78,8 +80,6 @@
     `/web/js/persona-review-vue-island.js?v=${version}`,
     `/web/js/composer-vue-island.js?v=${version}`,
     `/web/js/relation-details-vue-island.js?v=${version}`,
-    `/web/js/scene-card-vue-island.js?v=${version}`,
-    `/web/js/self-card-vue-island.js?v=${version}`,
     `/web/js/model-settings-vue-island.js?v=${version}`,
     `/web/js/chat-setup-vue-island.js?v=${version}`,
     `/web/js/work-summary-vue-island.js?v=${version}`,

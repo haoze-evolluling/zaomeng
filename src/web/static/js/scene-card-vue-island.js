@@ -64,7 +64,6 @@
       );
 
       onMounted(() => {
-        modal.classList.add("has-vue-island");
         host.classList.remove("hidden");
         const observer = new MutationObserver(() => {
           modalVisible.value = !modal.classList.contains("hidden");
@@ -83,27 +82,13 @@
       const deleteVisible = computed(() => Boolean(state.cardId));
       const duplicateVisible = computed(() => Boolean(state.cardId));
 
-      function syncLegacyFields() {
-        if (typeof setValue === "function") {
-          setValue("scene-card-id", state.cardId);
-        }
-        Object.entries(state.fields).forEach(([field, value]) => {
-          if (typeof sceneCardFieldId !== "function" || typeof setValue !== "function") return;
-          const id = sceneCardFieldId(field);
-          if (id) setValue(id, value);
-        });
-        if (typeof updateSceneCardDeleteButton === "function") {
-          updateSceneCardDeleteButton(false);
-        }
-      }
-
       function publish(source = "scene-card-vue") {
-        syncLegacyFields();
-        if (typeof setStatus === "function") {
-          setStatus("scene-card-status", state.status);
-        }
         if (typeof publishSceneCardEditorState === "function") {
-          publishSceneCardEditorState(source);
+          publishSceneCardEditorState(source, {
+            cardId: state.cardId,
+            fields: clone(state.fields),
+            status: state.status,
+          });
         }
       }
 

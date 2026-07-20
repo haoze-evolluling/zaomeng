@@ -73,7 +73,6 @@
       );
 
       onMounted(() => {
-        modal.classList.add("has-vue-island");
         host.classList.remove("hidden");
         const observer = new MutationObserver(() => {
           modalVisible.value = !modal.classList.contains("hidden");
@@ -93,27 +92,13 @@
       const primaryEntryFields = computed(() => ENTRY_FIELDS.slice(0, 2));
       const secondaryEntryFields = computed(() => ENTRY_FIELDS.slice(2));
 
-      function syncLegacyFields() {
-        if (typeof setValue === "function") {
-          setValue("self-card-id", state.cardId);
-        }
-        Object.entries(state.fields).forEach(([field, value]) => {
-          if (typeof selfCardFieldId !== "function" || typeof setValue !== "function") return;
-          const id = selfCardFieldId(field);
-          if (id) setValue(id, value);
-        });
-        if (typeof updateSelfCardDeleteButton === "function") {
-          updateSelfCardDeleteButton(false);
-        }
-      }
-
       function publish(source = "self-card-vue") {
-        syncLegacyFields();
-        if (typeof setStatus === "function") {
-          setStatus("self-card-status", state.status);
-        }
         if (typeof publishSelfCardEditorState === "function") {
-          publishSelfCardEditorState(source);
+          publishSelfCardEditorState(source, {
+            cardId: state.cardId,
+            fields: clone(state.fields),
+            status: state.status,
+          });
         }
       }
 

@@ -852,13 +852,6 @@
   display: none !important;
 }
 
-#scene-card-modal.has-vue-island #scene-card-form,
-#scene-card-modal.has-vue-island #scene-card-status,
-#self-card-modal.has-vue-island #self-card-form,
-#self-card-modal.has-vue-island #self-card-status {
-  display: none !important;
-}
-
 .builtin-novel-list {
   display: grid;
   gap: 0.8rem;
