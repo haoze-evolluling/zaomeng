@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from src.core.exceptions import LLMRequestError
+from src.core.llm_client import normalize_cache_usage, strip_cache_static_markers
 
 
 class HostProvidedLLM:
@@ -45,7 +46,7 @@ class HostProvidedLLM:
 
     def chat_completion(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -58,10 +59,11 @@ class HostProvidedLLM:
         prompt_tokens = self.count_tokens(prompt)
         start = time.time()
         resolved_model = str(model or self._model_name).strip() or self._model_name
+        outbound_messages = strip_cache_static_markers(messages)
 
         if hasattr(self.host, "chat_completion"):
             raw = self.host.chat_completion(
-                messages,
+                outbound_messages,
                 model=resolved_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -71,7 +73,7 @@ class HostProvidedLLM:
             raw = self.host.generate(
                 prompt=prompt,
                 config={
-                    "messages": messages,
+                    "messages": outbound_messages,
                     "model": resolved_model,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -84,9 +86,19 @@ class HostProvidedLLM:
         normalized = self._normalize_response(raw, fallback_model=resolved_model)
         completion_tokens = int(normalized.get("completion_tokens", self.count_tokens(normalized.get("content", ""))) or 0)
         self.request_count += 1
-        self.total_tokens += prompt_tokens + completion_tokens
         normalized["prompt_tokens"] = int(normalized.get("prompt_tokens", prompt_tokens) or prompt_tokens)
         normalized["completion_tokens"] = completion_tokens
+        normalized["cache_usage"] = normalize_cache_usage(
+            normalized.get("raw", {}),
+            prompt_tokens=normalized["prompt_tokens"],
+        )
+        effective_prompt_tokens = normalized["prompt_tokens"]
+        if normalized["cache_usage"].get("observable"):
+            effective_prompt_tokens = max(
+                effective_prompt_tokens,
+                int(normalized["cache_usage"].get("input_tokens", 0) or 0),
+            )
+        self.total_tokens += effective_prompt_tokens + completion_tokens
         normalized["elapsed_time"] = float(normalized.get("elapsed_time", time.time() - start) or 0.0)
         normalized["provider"] = self._provider_name
         normalized["model"] = str(normalized.get("model", resolved_model)).strip() or resolved_model

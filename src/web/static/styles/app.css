@@ -1,8 +1,8 @@
-@import url("./base.css?v=20260720065126");
-@import url("./workspace.css?v=20260720065126");
-@import url("./dialogue.css?v=20260720065126");
-@import url("./modal.css?v=20260720065126");
-@import url("./responsive.css?v=20260720065126");
+@import url("./base.css?v=20260720103936");
+@import url("./workspace.css?v=20260720103936");
+@import url("./dialogue.css?v=20260720103936");
+@import url("./modal.css?v=20260720103936");
+@import url("./responsive.css?v=20260720103936");
 
 :root {
   --bg: #f4f0eb;
@@ -411,53 +411,133 @@ textarea,
 }
 
 .dialogue-memory-modal-card {
-  width: min(900px, calc(100vw - 36px));
-  max-height: min(88dvh, 54rem);
+  width: min(980px, calc(100vw - 48px));
+  max-height: min(90dvh, 58rem);
   padding: 0;
+  gap: 0;
   overflow: hidden;
+  border-color: rgba(113, 93, 78, 0.18);
+  background: var(--paper-strong);
+  box-shadow: 0 28px 76px rgba(47, 36, 29, 0.2);
 }
 
 .dialogue-memory-modal-head {
   position: sticky;
   top: 0;
   z-index: 2;
-  align-items: start;
-  padding: 1rem 1.12rem 0.82rem;
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.35rem 1rem;
+  border-bottom: 1px solid rgba(113, 93, 78, 0.13);
   background:
-    linear-gradient(180deg, rgba(255, 253, 249, 0.98), rgba(252, 248, 243, 0.94)),
+    linear-gradient(135deg, rgba(255, 253, 250, 0.99), rgba(249, 241, 233, 0.96)),
     var(--paper-strong);
 }
 
 .dialogue-memory-modal-head h3 {
-  font-size: 1rem;
-  line-height: 1.35;
+  margin: 0.1rem 0 0;
+  font-size: 1.18rem;
+  line-height: 1.3;
+}
+
+.dialogue-memory-modal-title-group {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.dialogue-memory-modal-title-group .eyebrow {
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: 0.7rem;
+}
+
+.dialogue-memory-modal-title-group .panel-copy {
+  margin: 0.22rem 0 0;
+  font-size: 0.78rem;
+}
+
+.dialogue-memory-modal-updated {
+  width: fit-content;
+  margin-top: 0.34rem;
+  padding: 0.18rem 0.48rem;
+  border-radius: 999px;
+  background: rgba(173, 119, 95, 0.1);
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.dialogue-memory-modal-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.44rem;
+}
+
+.dialogue-memory-modal-copy {
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  font-size: 0.72rem;
+}
+
+.dialogue-memory-modal-close {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(113, 93, 78, 0.14);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 1.35rem;
+  line-height: 1;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.dialogue-memory-modal-close:hover {
+  transform: rotate(90deg);
+  border-color: rgba(147, 96, 75, 0.3);
+  background: rgba(255, 255, 255, 0.98);
+  color: var(--ink);
+}
+
+.dialogue-memory-modal-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .dialogue-memory-modal-scroll {
-  max-height: calc(min(88dvh, 54rem) - 4.8rem);
-  padding: 0.9rem 1rem 1rem;
+  max-height: calc(min(90dvh, 58rem) - 8.6rem);
+  padding: 1rem 1.2rem 1.3rem;
   overflow-y: auto;
   background:
-    linear-gradient(180deg, rgba(255, 252, 248, 0.62), rgba(247, 241, 234, 0.44));
+    linear-gradient(180deg, rgba(250, 246, 241, 0.78), rgba(245, 238, 231, 0.74));
 }
 
 .dialogue-memory-modal-scroll #dialogue-memory-body {
   display: grid;
-  gap: var(--space-3);
+  gap: 0.9rem;
 }
 
 .dialogue-memory-modal-scroll .dialogue-scene-switcher,
 .dialogue-memory-modal-scroll .dialogue-state-overview,
 .dialogue-memory-modal-scroll .dialogue-scene-timeline {
-  padding: 0.72rem 0.78rem;
-  border-radius: var(--radius-lg);
-  background: rgba(255, 253, 249, 0.82);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(113, 93, 78, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(255, 253, 249, 0.86);
+  box-shadow: 0 6px 18px rgba(76, 55, 43, 0.035);
 }
 
 .dialogue-memory-modal-scroll .dialogue-scene-switcher {
-  gap: 0.46rem;
+  gap: 0.58rem;
+  border-color: rgba(173, 119, 95, 0.2);
+  background: linear-gradient(135deg, rgba(255, 250, 245, 0.98), rgba(252, 245, 237, 0.88));
 }
 
 .dialogue-memory-modal-scroll .dialogue-scene-switcher-row {
@@ -472,21 +552,21 @@ textarea,
 .dialogue-memory-modal-scroll .dialogue-state-grid,
 .dialogue-memory-modal-scroll .dialogue-memory-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.58rem;
+  gap: 0.7rem;
 }
 
 .dialogue-memory-modal-scroll .dialogue-state-overview {
-  gap: 0.52rem;
+  gap: 0.68rem;
 }
 
 .dialogue-memory-modal-scroll .dialogue-state-card,
 .dialogue-memory-modal-scroll .dialogue-memory-card {
-  gap: 0.28rem;
+  gap: 0.34rem;
   min-height: 0;
-  padding: 0.62rem 0.68rem;
-  border-radius: var(--radius-md);
-  border-color: var(--line);
-  background: rgba(255, 255, 255, 0.68);
+  padding: 0.78rem 0.84rem;
+  border-radius: var(--radius-sm);
+  border-color: rgba(113, 93, 78, 0.12);
+  background: rgba(255, 255, 255, 0.74);
 }
 
 .dialogue-memory-modal-scroll .dialogue-state-card span,
@@ -497,8 +577,8 @@ textarea,
 
 .dialogue-memory-modal-scroll .dialogue-state-card p,
 .dialogue-memory-modal-scroll .dialogue-memory-card p {
-  font-size: 0.74rem;
-  line-height: 1.62;
+  font-size: 0.78rem;
+  line-height: 1.68;
 }
 
 .dialogue-memory-modal-scroll .dialogue-state-mini-item {
@@ -514,7 +594,50 @@ textarea,
 }
 
 .dialogue-memory-modal-scroll .dialogue-memory-meta {
-  padding: 0 0 0.1rem;
+  order: -1;
+  padding: 0;
+}
+
+@media (max-width: 680px) {
+  .modal:has(.dialogue-memory-modal-card) {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .dialogue-memory-modal-card {
+    width: 100%;
+    max-height: min(92dvh, 58rem);
+    border-width: 1px 0 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .dialogue-memory-modal-head {
+    padding: 1rem 1rem 0.86rem;
+  }
+
+  .dialogue-memory-modal-title-group .panel-copy {
+    display: none;
+  }
+
+  .dialogue-memory-modal-copy {
+    display: none;
+  }
+
+  .dialogue-memory-modal-scroll {
+    max-height: calc(min(92dvh, 58rem) - 6.9rem);
+    padding: 0.82rem 0.86rem 1rem;
+  }
+
+  .dialogue-memory-modal-scroll .dialogue-memory-grid,
+  .dialogue-memory-modal-scroll .dialogue-state-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dialogue-memory-modal-scroll .dialogue-state-card:nth-child(3),
+  .dialogue-memory-modal-scroll .dialogue-memory-card:first-child,
+  .dialogue-memory-modal-scroll .dialogue-memory-card:nth-child(9) {
+    grid-column: auto;
+  }
 }
 
 .chat-shell {

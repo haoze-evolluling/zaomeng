@@ -35,6 +35,169 @@ logger = logging.getLogger(__name__)
 _TIKTOKEN_FALLBACK_LOGGED = False
 
 
+def _non_negative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (OverflowError, TypeError, ValueError):
+        return 0
+
+
+def _metric_available(value: Any) -> bool:
+    return value is not None and value != ""
+
+
+def _normalized_cache_result(
+    *,
+    observable: bool,
+    hit_tokens: int = 0,
+    miss_tokens: int = 0,
+    creation_tokens: int = 0,
+    input_tokens: int = 0,
+    fallback_hit_rate: Any = None,
+) -> Dict[str, Any]:
+    hit = _non_negative_int(hit_tokens)
+    miss = _non_negative_int(miss_tokens)
+    creation = _non_negative_int(creation_tokens)
+    total = max(_non_negative_int(input_tokens), hit + miss + creation)
+    hit_rate: Optional[float] = None
+    if observable:
+        if total > 0:
+            hit_rate = hit / total
+        else:
+            try:
+                hit_rate = min(1.0, max(0.0, float(fallback_hit_rate)))
+            except (TypeError, ValueError):
+                hit_rate = 0.0
+    return {
+        "observable": bool(observable),
+        "hit_tokens": hit,
+        "miss_tokens": miss,
+        "creation_tokens": creation,
+        "input_tokens": total,
+        "hit_rate": hit_rate,
+    }
+
+
+def normalize_cache_usage(
+    response: Any, *, prompt_tokens: int = 0
+) -> Dict[str, Any]:
+    """Normalize provider cache counters without treating absent data as a miss."""
+
+    if not isinstance(response, dict):
+        return _normalized_cache_result(
+            observable=False, input_tokens=prompt_tokens
+        )
+
+    explicit = response.get("cache_usage")
+    if isinstance(explicit, dict):
+        metric_keys = {
+            "hit_tokens",
+            "miss_tokens",
+            "creation_tokens",
+            "input_tokens",
+            "hit_rate",
+        }
+        observable = bool(
+            explicit.get("observable", any(key in explicit for key in metric_keys))
+        )
+        return _normalized_cache_result(
+            observable=observable,
+            hit_tokens=explicit.get(
+                "hit_tokens", explicit.get("cache_hit_tokens", 0)
+            ),
+            miss_tokens=explicit.get(
+                "miss_tokens", explicit.get("cache_miss_tokens", 0)
+            ),
+            creation_tokens=explicit.get(
+                "creation_tokens", explicit.get("cache_creation_tokens", 0)
+            ),
+            input_tokens=explicit.get("input_tokens", prompt_tokens),
+            fallback_hit_rate=explicit.get("hit_rate"),
+        )
+
+    usage = response.get("usage", {})
+    if not isinstance(usage, dict):
+        usage = {}
+
+    def _find(name: str) -> tuple[bool, Any]:
+        if name in usage:
+            return True, usage.get(name)
+        if name in response:
+            return True, response.get(name)
+        return False, None
+
+    read_present, cache_read = _find("cache_read_input_tokens")
+    creation_present, cache_creation = _find("cache_creation_input_tokens")
+    if (read_present and _metric_available(cache_read)) or (
+        creation_present and _metric_available(cache_creation)
+    ):
+        ordinary_present, ordinary_input = _find("input_tokens")
+        ordinary = _non_negative_int(
+            ordinary_input if ordinary_present else prompt_tokens
+        )
+        read = _non_negative_int(cache_read)
+        creation = _non_negative_int(cache_creation)
+        return _normalized_cache_result(
+            observable=True,
+            hit_tokens=read,
+            miss_tokens=ordinary,
+            creation_tokens=creation,
+            input_tokens=ordinary + read + creation,
+        )
+
+    hit_present, cache_hit = _find("prompt_cache_hit_tokens")
+    miss_present, cache_miss = _find("prompt_cache_miss_tokens")
+    if (hit_present and _metric_available(cache_hit)) or (
+        miss_present and _metric_available(cache_miss)
+    ):
+        hit = _non_negative_int(cache_hit)
+        total = _non_negative_int(
+            usage.get("prompt_tokens", response.get("prompt_tokens", prompt_tokens))
+        )
+        miss = (
+            _non_negative_int(cache_miss)
+            if miss_present
+            else max(0, total - hit)
+        )
+        return _normalized_cache_result(
+            observable=True,
+            hit_tokens=hit,
+            miss_tokens=miss,
+            input_tokens=max(total, hit + miss),
+        )
+
+    details = usage.get("prompt_tokens_details", {})
+    if not isinstance(details, dict):
+        details = {}
+    if "cached_tokens" in details and _metric_available(details.get("cached_tokens")):
+        hit = _non_negative_int(details.get("cached_tokens"))
+        total = _non_negative_int(
+            usage.get("prompt_tokens", response.get("prompt_tokens", prompt_tokens))
+        )
+        total = max(total, hit)
+        return _normalized_cache_result(
+            observable=True,
+            hit_tokens=hit,
+            miss_tokens=max(0, total - hit),
+            input_tokens=total,
+        )
+
+    return _normalized_cache_result(
+        observable=False, input_tokens=prompt_tokens
+    )
+
+
+def strip_cache_static_markers(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Remove the internal cache hint before calling non-Anthropic providers."""
+
+    return [
+        {key: value for key, value in message.items() if key != "cache_static"}
+        for message in messages
+    ]
+
+
 def _log_tiktoken_fallback(exc: Exception) -> None:
     global _TIKTOKEN_FALLBACK_LOGGED
     if _TIKTOKEN_FALLBACK_LOGGED:
@@ -292,7 +455,7 @@ class LLMClient:
 
     def chat_completion(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -316,6 +479,9 @@ class LLMClient:
             usage["content"] = content
             usage["model"] = self.LOCAL_PROVIDER
             usage["provider"] = provider
+            usage["cache_usage"] = normalize_cache_usage(
+                {}, prompt_tokens=prompt_tokens
+            )
             return usage
 
         result = self._dispatch_chat_completion(
@@ -326,6 +492,15 @@ class LLMClient:
             max_tokens=max_tokens,
         )
         prompt_usage = int(result.get("prompt_tokens", prompt_tokens))
+        cache_usage = result.get(
+            "cache_usage",
+            normalize_cache_usage(result.get("raw", {}), prompt_tokens=prompt_usage),
+        )
+        if isinstance(cache_usage, dict) and bool(cache_usage.get("observable")):
+            prompt_usage = max(
+                prompt_usage,
+                _non_negative_int(cache_usage.get("input_tokens", 0)),
+            )
         completion_usage = int(
             result.get(
                 "completion_tokens", self.count_tokens(result.get("content", ""))
@@ -337,6 +512,7 @@ class LLMClient:
         usage["provider"] = provider
         usage["finish_reason"] = str(result.get("finish_reason", "")).strip()
         usage["raw"] = result.get("raw", {})
+        usage["cache_usage"] = cache_usage
         return usage
 
     def _infer_provider_from_environment(self) -> str:
@@ -381,7 +557,7 @@ class LLMClient:
         self,
         *,
         provider: str,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: Optional[float],
         max_tokens: Optional[int],
@@ -421,7 +597,7 @@ class LLMClient:
         self,
         *,
         provider: str,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: Optional[float],
         max_tokens: Optional[int],
@@ -430,7 +606,7 @@ class LLMClient:
         base_url = self._resolve_base_url(provider)
         payload: Dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": strip_cache_static_markers(messages),
             "temperature": self._resolve_temperature(temperature),
         }
         resolved_max_tokens = self._resolve_max_tokens(max_tokens)
@@ -455,20 +631,23 @@ class LLMClient:
             ),
             "prompt_tokens": int(usage.get("prompt_tokens", 0)),
             "completion_tokens": int(usage.get("completion_tokens", 0)),
+            "cache_usage": normalize_cache_usage(
+                data, prompt_tokens=_non_negative_int(usage.get("prompt_tokens"))
+            ),
             "raw": data,
         }
 
     def _chat_anthropic(
         self,
         *,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: Optional[float],
         max_tokens: Optional[int],
     ) -> Dict[str, Any]:
         api_key = self._resolve_api_key("anthropic")
         base_url = self._resolve_base_url("anthropic")
-        system_parts: List[str] = []
+        system_parts: List[tuple[str, bool]] = []
         chat_messages: List[Dict[str, str]] = []
         for item in messages:
             role = str(item.get("role", "user")).strip()
@@ -476,7 +655,7 @@ class LLMClient:
             if not content:
                 continue
             if role == "system":
-                system_parts.append(content)
+                system_parts.append((content, bool(item.get("cache_static", False))))
             else:
                 chat_messages.append(
                     {
@@ -491,7 +670,22 @@ class LLMClient:
             "max_tokens": self._resolve_max_tokens(max_tokens, default=512),
         }
         if system_parts:
-            payload["system"] = "\n\n".join(system_parts)
+            if any(cache_static for _, cache_static in system_parts):
+                blocks: List[Dict[str, Any]] = []
+                for index, (content, cache_static) in enumerate(system_parts):
+                    block: Dict[str, Any] = {
+                        "type": "text",
+                        "text": content
+                        + ("\n\n" if index < len(system_parts) - 1 else ""),
+                    }
+                    if cache_static:
+                        block["cache_control"] = {"type": "ephemeral"}
+                    blocks.append(block)
+                payload["system"] = blocks
+            else:
+                payload["system"] = "\n\n".join(
+                    content for content, _ in system_parts
+                )
 
         data = self._post_json(
             url=self._endpoint(base_url, "/messages"),
@@ -513,13 +707,16 @@ class LLMClient:
             "finish_reason": str(data.get("stop_reason", "")).strip(),
             "prompt_tokens": int(usage.get("input_tokens", 0)),
             "completion_tokens": int(usage.get("output_tokens", 0)),
+            "cache_usage": normalize_cache_usage(
+                data, prompt_tokens=_non_negative_int(usage.get("input_tokens"))
+            ),
             "raw": data,
         }
 
     def _chat_ollama(
         self,
         *,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: Optional[float],
         max_tokens: Optional[int],
@@ -527,7 +724,7 @@ class LLMClient:
         base_url = self._resolve_base_url("ollama")
         payload: Dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": strip_cache_static_markers(messages),
             "stream": False,
             "options": {
                 "temperature": self._resolve_temperature(temperature),
@@ -552,6 +749,9 @@ class LLMClient:
             "finish_reason": str(data.get("done_reason", "")).strip(),
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
+            "cache_usage": normalize_cache_usage(
+                data, prompt_tokens=prompt_tokens
+            ),
             "raw": data,
         }
 
@@ -590,14 +790,14 @@ class LLMClient:
     def _chat_host_bridge(
         self,
         *,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: Optional[float],
         max_tokens: Optional[int],
     ) -> Dict[str, Any]:
         url = self._resolve_host_bridge_url()
         payload: Dict[str, Any] = {
-            "messages": messages,
+            "messages": strip_cache_static_markers(messages),
             "model": model,
             "temperature": self._resolve_temperature(temperature),
             "max_tokens": self._resolve_max_tokens(max_tokens, default=512),
@@ -821,6 +1021,12 @@ class LLMClient:
             ),
             "completion_tokens": int(
                 data.get("completion_tokens", usage.get("completion_tokens", 0)) or 0
+            ),
+            "cache_usage": normalize_cache_usage(
+                data,
+                prompt_tokens=_non_negative_int(
+                    data.get("prompt_tokens", usage.get("prompt_tokens", 0))
+                ),
             ),
             "raw": data,
         }

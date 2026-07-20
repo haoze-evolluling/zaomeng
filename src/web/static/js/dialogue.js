@@ -458,6 +458,141 @@ function buildDialogueSessionStatusLine(session) {
   return bits.filter(Boolean).join(" ｜ ");
 }
 
+function generationCacheNumber(source, keys) {
+  if (!source || typeof source !== "object") return null;
+  for (const key of keys) {
+    const value = source[key];
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
+function normalizeGenerationCacheMetric(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return { observed: false, status: "unsupported", hitRate: null };
+  }
+  const status = String(source.status || "").trim().toLowerCase();
+  const unsupportedStatuses = new Set(["unsupported", "not_supported", "unavailable", "unobserved"]);
+  if (source.observed === false || unsupportedStatuses.has(status)) {
+    return { observed: false, status: status || "unsupported", hitRate: null };
+  }
+
+  const inputTokens = generationCacheNumber(source, ["input_tokens", "prompt_tokens", "total_input_tokens"]);
+  const cacheReadTokens = generationCacheNumber(source, [
+    "cache_read_tokens",
+    "cached_tokens",
+    "cached_input_tokens",
+    "prompt_cache_hit_tokens",
+  ]);
+  const cacheWriteTokens = generationCacheNumber(source, [
+    "cache_write_tokens",
+    "cache_creation_input_tokens",
+    "prompt_cache_miss_tokens",
+  ]);
+  const cacheMissTokens = generationCacheNumber(source, ["cache_miss_tokens", "uncached_input_tokens"]);
+  let hitRate = generationCacheNumber(source, ["hit_rate", "cache_hit_rate", "hit_ratio", "cache_hit_ratio"]);
+  const percent = generationCacheNumber(source, ["hit_percent", "cache_hit_percent"]);
+  if (hitRate === null && percent !== null) hitRate = percent / 100;
+  if (hitRate !== null && hitRate > 1 && hitRate <= 100) hitRate /= 100;
+  if (hitRate === null && inputTokens !== null && inputTokens > 0 && cacheReadTokens !== null) {
+    hitRate = cacheReadTokens / inputTokens;
+  }
+  if (hitRate !== null) hitRate = Math.min(1, Math.max(0, hitRate));
+
+  const hasObservedValue = hitRate !== null || inputTokens !== null || cacheReadTokens !== null;
+  const observed = source.observed === true || hasObservedValue;
+  return {
+    observed,
+    status: status || (observed ? "observed" : "unsupported"),
+    hitRate: observed ? hitRate : null,
+    inputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    cacheMissTokens,
+    observedTurns: generationCacheNumber(source, ["observed_turns"]),
+    totalTurns: generationCacheNumber(source, ["total_turns"]),
+  };
+}
+
+function aggregateGenerationCacheTurns(turns) {
+  if (!Array.isArray(turns) || !turns.length) return null;
+  const observedTurns = turns.map(normalizeGenerationCacheMetric).filter((item) => item.observed);
+  if (!observedTurns.length) return null;
+  const countableTurns = observedTurns.filter(
+    (item) => item.inputTokens !== null && item.cacheReadTokens !== null
+  );
+  if (!countableTurns.length) return null;
+  const inputTokens = countableTurns.reduce((sum, item) => sum + item.inputTokens, 0);
+  const cacheReadTokens = countableTurns.reduce((sum, item) => sum + item.cacheReadTokens, 0);
+  const cacheWriteTokens = countableTurns.reduce((sum, item) => sum + (item.cacheWriteTokens || 0), 0);
+  return {
+    observed: true,
+    status: "observed",
+    input_tokens: inputTokens,
+    cache_read_tokens: cacheReadTokens,
+    cache_write_tokens: cacheWriteTokens,
+    hit_rate: inputTokens > 0 ? cacheReadTokens / inputTokens : null,
+    observed_turns: observedTurns.length,
+    total_turns: turns.length,
+  };
+}
+
+function buildGenerationCacheSnapshot(session) {
+  const stats = session?.generation_cache_stats;
+  if (!stats || typeof stats !== "object" || Array.isArray(stats)) {
+    const unsupported = normalizeGenerationCacheMetric(null);
+    return { latest: unsupported, session: unsupported };
+  }
+  const turns = Array.isArray(stats.turns) ? stats.turns : [];
+  const latestSource = stats.latest || stats.turn || stats.current || turns[turns.length - 1] || null;
+  const sessionSource = stats.session || stats.total || stats.aggregate || aggregateGenerationCacheTurns(turns);
+  return {
+    latest: normalizeGenerationCacheMetric(latestSource),
+    session: normalizeGenerationCacheMetric(sessionSource),
+  };
+}
+
+function formatGenerationCacheRate(metric) {
+  if (!metric?.observed || metric.hitRate === null) return "-";
+  const percent = Math.round(metric.hitRate * 1000) / 10;
+  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
+}
+
+function formatGenerationCacheTokenCount(value) {
+  if (!Number.isFinite(value)) return "";
+  return Math.round(value).toLocaleString("zh-CN");
+}
+
+function generationCacheMetricTitle(label, metric) {
+  const parts = [`${label}：${formatGenerationCacheRate(metric)}`];
+  if (Number.isFinite(metric?.cacheReadTokens) && Number.isFinite(metric?.inputTokens)) {
+    parts.push(`缓存读取 ${formatGenerationCacheTokenCount(metric.cacheReadTokens)} / 输入 ${formatGenerationCacheTokenCount(metric.inputTokens)} tokens`);
+  }
+  if (Number.isFinite(metric?.cacheWriteTokens) && metric.cacheWriteTokens > 0) {
+    parts.push(`缓存写入 ${formatGenerationCacheTokenCount(metric.cacheWriteTokens)} tokens`);
+  }
+  if (Number.isFinite(metric?.observedTurns) && Number.isFinite(metric?.totalTurns)) {
+    parts.push(`${formatGenerationCacheTokenCount(metric.observedTurns)} / ${formatGenerationCacheTokenCount(metric.totalTurns)} 轮可观测`);
+  }
+  return parts.join("；");
+}
+
+function renderDialogueGenerationCacheStats(session) {
+  const snapshot = buildGenerationCacheSnapshot(session);
+  const root = el("dialogue-cache-stats");
+  if (!root) return;
+  const latestRate = formatGenerationCacheRate(snapshot.latest);
+  const sessionRate = formatGenerationCacheRate(snapshot.session);
+  root.textContent = `本次命中 ${latestRate} ｜ 平均命中 ${sessionRate}`;
+  root.title = [
+    generationCacheMetricTitle("本次命中", snapshot.latest),
+    generationCacheMetricTitle("平均命中", snapshot.session),
+  ].join("；");
+  root.setAttribute("aria-label", `${root.textContent}。${root.title}`);
+}
+
 function renderDialogueMemory(session) {
   const root = el("dialogue-memory");
   if (!root) return;
@@ -470,6 +605,7 @@ function renderDialogueMemory(session) {
   const snapshot = buildDialogueMemorySnapshot(session);
   const modalOpen = isDialogueMemoryModalOpen();
   root.classList.remove("hidden");
+  renderDialogueGenerationCacheStats(session);
   setText("dialogue-memory-recap", snapshot.recap, "");
   setText("dialogue-memory-cast", snapshot.cast, "");
   setText("dialogue-memory-relation", snapshot.relation, "");
@@ -1535,6 +1671,10 @@ window.buildSessionMetaMessage = buildSessionMetaMessage;
 window.renderDialogueTranscript = renderDialogueTranscript;
 window.trimInlineMessage = trimInlineMessage;
 window.buildDialogueMemorySnapshot = buildDialogueMemorySnapshot;
+window.normalizeGenerationCacheMetric = normalizeGenerationCacheMetric;
+window.buildGenerationCacheSnapshot = buildGenerationCacheSnapshot;
+window.formatGenerationCacheRate = formatGenerationCacheRate;
+window.renderDialogueGenerationCacheStats = renderDialogueGenerationCacheStats;
 window.renderDialogueMemory = renderDialogueMemory;
 window.buildDialogueMemoryClipboardText = buildDialogueMemoryClipboardText;
 window.copyDialogueMemorySummary = copyDialogueMemorySummary;

@@ -300,7 +300,7 @@ class DialogueServiceMixin:
 
     def _generate_dialogue_responses(
         self, run_id: str, payload: dict[str, Any]
-    ) -> list[dict[str, str]]:
+    ) -> dict[str, Any]:
         return generate_dialogue_responses_for_run(
             run_dir=self.runs_root / run_id,
             payload=payload,
@@ -383,7 +383,7 @@ class DialogueServiceMixin:
     @staticmethod
     def _build_dialogue_llm_messages(
         payload: dict[str, Any], *, retry_on_empty: bool = False
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         return build_dialogue_llm_messages(payload, retry_on_empty=retry_on_empty)
 
     @staticmethod

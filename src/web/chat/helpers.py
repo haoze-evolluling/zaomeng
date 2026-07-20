@@ -253,6 +253,37 @@ def _compact_persona_context(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compact_static_persona_context(item: dict[str, Any]) -> dict[str, Any]:
+    compact = _compact_persona_context(item)
+    profile = dict(compact.get("profile", {}) or {})
+    profile.pop("preference_like", None)
+    profile.pop("dislike_hate", None)
+    return {
+        "name": str(compact.get("name", "")).strip(),
+        "preview": dict(compact.get("preview", {}) or {}),
+        "profile": profile,
+    }
+
+
+def _compact_active_persona_state(item: dict[str, Any]) -> dict[str, Any]:
+    compact = _compact_persona_context(item)
+    profile = dict(compact.get("profile", {}) or {})
+    details = {
+        key: profile[key]
+        for key in ("preference_like", "dislike_hate")
+        if _has_meaningful_value(profile.get(key))
+    }
+    return {
+        key: value
+        for key, value in {
+            "name": str(compact.get("name", "")).strip(),
+            "profile_details": details,
+            "session_snapshot": dict(compact.get("session_snapshot", {}) or {}),
+        }.items()
+        if _has_meaningful_value(value)
+    }
+
+
 def _compact_user_persona(persona: dict[str, Any]) -> dict[str, Any]:
     profile = dict(persona.get("profile", {}) or {})
     compact_profile = {
@@ -436,7 +467,7 @@ def _trim_text(text: str, limit: int) -> str:
 
 def build_dialogue_llm_messages(
     payload: dict[str, Any], *, retry_on_empty: bool = False
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     input_block = dict(payload.get("input", {}) or {})
     session_mode = str(payload.get("mode", "")).strip() or "observe"
     message_kind = (
@@ -458,13 +489,21 @@ def build_dialogue_llm_messages(
         for item in raw_personas
         if isinstance(item, dict) and str(item.get("name", "")).strip()
     }
-    ordered_persona_names: list[str] = []
+    stable_persona_names: list[str] = []
+    for name in [*participants, *active_participants]:
+        if name in persona_map and name not in stable_persona_names:
+            stable_persona_names.append(name)
+    active_persona_names: list[str] = []
     for name in [*active_participants, *participants]:
-        if name in persona_map and name not in ordered_persona_names:
-            ordered_persona_names.append(name)
-    persona_contexts = [
-        _compact_persona_context(persona_map[name])
-        for name in ordered_persona_names[:6]
+        if name in persona_map and name not in active_persona_names:
+            active_persona_names.append(name)
+    stable_persona_contexts = [
+        _compact_static_persona_context(persona_map[name])
+        for name in stable_persona_names[:6]
+    ]
+    active_persona_states = [
+        _compact_active_persona_state(persona_map[name])
+        for name in active_persona_names[:6]
     ]
     relation_excerpt = _trim_text(
         str(
@@ -486,24 +525,40 @@ def build_dialogue_llm_messages(
     scene_card = dict(payload.get("scene_card", {}) or {})
     response_limit = int(host_action.get("response_limit_hint", 2) or 2)
 
-    system_parts = [
+    stable_system_parts = [
         str(payload.get("host_prompt_brief", "")).strip(),
         str(instructions.get("generation_goal", "")).strip(),
         str(instructions.get("mode_rule", "")).strip(),
         str(instructions.get("speaker_rule", "")).strip(),
         str(instructions.get("response_style", "")).strip(),
         str(instructions.get("scene_rule", "")).strip(),
-        str(instructions.get("progression_rule", "")).strip(),
-        str(instructions.get("response_count_rule", "")).strip(),
         str(host_action.get("output_rule", "")).strip(),
         "角色的明显小动作不要单独写成旁白或场景提示；应尽量内嵌到该角色自己的台词里，用很短的括号动作来带出。",
         "只返回 JSON 数组，每项必须包含 speaker 和 message。",
     ]
+    stable_context = {
+        "mode": session_mode,
+        "participants": participants,
+        "scene_card": scene_card,
+        "persona_contexts": stable_persona_contexts,
+    }
+    stable_system_parts.append(
+        "STATIC_CHARACTER_CONTEXT\n"
+        + json.dumps(stable_context, ensure_ascii=False, indent=2)
+    )
+
+    turn_system_parts = [
+        str(instructions.get("progression_rule", "")).strip(),
+        str(instructions.get("response_count_rule", "")).strip(),
+    ]
     if retry_on_empty:
-        system_parts.append(
+        turn_system_parts.append(
             "这次至少返回 1 条可用回复；只有在确实需要场景切换、人物进退场或环境变化时，才返回 speaker 为“旁白”或“场景提示”的一条提示。"
         )
-    system_prompt = "\n".join(part for part in system_parts if part)
+    stable_system_prompt = "\n".join(
+        part for part in stable_system_parts if part
+    )
+    turn_system_prompt = "\n".join(part for part in turn_system_parts if part)
 
     user_payload = {
         "mode": session_mode,
@@ -512,10 +567,9 @@ def build_dialogue_llm_messages(
         "message": str(input_block.get("message", "")).strip(),
         "participants": participants,
         "active_participants": active_participants,
-        "scene_card": scene_card,
         "memory_context": memory_context,
         "response_limit": response_limit,
-        "persona_contexts": persona_contexts,
+        "active_persona_state": active_persona_states,
         "history": history,
         "relation_excerpt": relation_excerpt,
         "expected_output": host_action.get(
@@ -525,7 +579,12 @@ def build_dialogue_llm_messages(
     }
     user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
     return [
-        {"role": "system", "content": system_prompt},
+        {
+            "role": "system",
+            "content": stable_system_prompt,
+            "cache_static": True,
+        },
+        {"role": "system", "content": turn_system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -1190,9 +1249,10 @@ def generate_dialogue_responses(
     allowed_speakers: list[str],
     temperature: float,
     max_tokens: int,
-    chat_completion: Callable[[list[dict[str, str]], float, int], dict[str, Any]],
-    build_messages: Callable[[dict[str, Any], bool], list[dict[str, str]]],
+    chat_completion: Callable[[list[dict[str, Any]], float, int], dict[str, Any]],
+    build_messages: Callable[[dict[str, Any], bool], list[dict[str, Any]]],
     parse_responses: Callable[[str, list[str]], list[dict[str, str]]],
+    completion_observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, str]]:
     attempts = (
         build_messages(payload, False),
@@ -1201,6 +1261,8 @@ def generate_dialogue_responses(
     last_error: Exception | None = None
     for index, llm_messages in enumerate(attempts):
         llm_result = chat_completion(llm_messages, temperature, max_tokens)
+        if callable(completion_observer):
+            completion_observer(dict(llm_result or {}))
         content = str(llm_result.get("content", "")).strip()
         if not content:
             last_error = ValueError("Model returned an empty reply.")

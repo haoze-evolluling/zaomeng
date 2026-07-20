@@ -43,7 +43,7 @@ class LLMRetryTests(unittest.TestCase):
         clear_config_cache()
         clear_markdown_data_cache()
 
-    def _make_client(self) -> LLMClient:
+    def _make_client(self, provider: str = "openai") -> LLMClient:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         config_path = Path(tmp.name) / "config.yaml"
@@ -51,7 +51,7 @@ class LLMRetryTests(unittest.TestCase):
             "\n".join(
                 [
                     "llm:",
-                    "  provider: openai",
+                    f"  provider: {provider}",
                     "  model: gpt-test",
                     "  api_key: test-key",
                     "  retry_attempts: 3",
@@ -185,14 +185,32 @@ class LLMRetryTests(unittest.TestCase):
                     "model": "host-llm",
                     "prompt_tokens": 11,
                     "completion_tokens": 7,
+                    "usage": {
+                        "prompt_tokens": 11,
+                        "prompt_cache_hit_tokens": 8,
+                        "prompt_cache_miss_tokens": 3,
+                    },
                 }
             ),
-        ):
-            result = client.chat_completion([{"role": "user", "content": "你好"}])
+        ) as urlopen:
+            result = client.chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": "稳定角色资料",
+                        "cache_static": True,
+                    },
+                    {"role": "user", "content": "你好"},
+                ]
+            )
 
         self.assertEqual(result["provider"], "host-bridge")
         self.assertEqual(result["content"], "桥接回复")
         self.assertEqual(result["model"], "host-llm")
+        self.assertEqual(result["cache_usage"]["hit_tokens"], 8)
+        self.assertAlmostEqual(result["cache_usage"]["hit_rate"], 8 / 11)
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertNotIn("cache_static", request_payload["messages"][0])
 
     def test_openai_like_extracts_text_from_content_parts(self):
         client = self._make_client()
@@ -220,6 +238,171 @@ class LLMRetryTests(unittest.TestCase):
 
         self.assertEqual(result["content"], "???\n???")
         self.assertEqual(result["finish_reason"], "length")
+
+    def test_openai_cache_usage_is_normalized_and_internal_hint_is_stripped(self):
+        client = self._make_client()
+        with patch(
+            "src.core.llm_client.request.urlopen",
+            return_value=_Response(
+                {
+                    "choices": [{"message": {"content": "回复"}}],
+                    "model": "gpt-test",
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 5,
+                        "prompt_tokens_details": {"cached_tokens": 64},
+                    },
+                }
+            ),
+        ) as urlopen:
+            result = client.chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": "稳定角色资料",
+                        "cache_static": True,
+                    },
+                    {"role": "user", "content": "继续"},
+                ]
+            )
+
+        self.assertEqual(
+            result["cache_usage"],
+            {
+                "observable": True,
+                "hit_tokens": 64,
+                "miss_tokens": 36,
+                "creation_tokens": 0,
+                "input_tokens": 100,
+                "hit_rate": 0.64,
+            },
+        )
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertNotIn("cache_static", request_payload["messages"][0])
+
+    def test_deepseek_cache_hit_and_miss_are_not_double_counted(self):
+        client = self._make_client(provider="openai-compatible")
+        with patch(
+            "src.core.llm_client.request.urlopen",
+            return_value=_Response(
+                {
+                    "choices": [{"message": {"content": "回复"}}],
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 5,
+                        "prompt_cache_hit_tokens": 75,
+                        "prompt_cache_miss_tokens": 25,
+                    },
+                }
+            ),
+        ):
+            result = client.chat_completion([{"role": "user", "content": "继续"}])
+
+        self.assertEqual(result["cache_usage"]["input_tokens"], 100)
+        self.assertEqual(result["cache_usage"]["hit_tokens"], 75)
+        self.assertEqual(result["cache_usage"]["miss_tokens"], 25)
+        self.assertEqual(result["cache_usage"]["hit_rate"], 0.75)
+
+    def test_anthropic_cache_usage_and_static_system_block_are_normalized(self):
+        client = self._make_client(provider="anthropic")
+        with patch(
+            "src.core.llm_client.request.urlopen",
+            return_value=_Response(
+                {
+                    "content": [{"type": "text", "text": "回复"}],
+                    "model": "claude-test",
+                    "usage": {
+                        "input_tokens": 20,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 70,
+                        "cache_creation_input_tokens": 10,
+                    },
+                }
+            ),
+        ) as urlopen:
+            result = client.chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": "稳定角色资料",
+                        "cache_static": True,
+                    },
+                    {"role": "system", "content": "动态场景"},
+                    {"role": "user", "content": "继续"},
+                ]
+            )
+
+        self.assertEqual(
+            result["cache_usage"],
+            {
+                "observable": True,
+                "hit_tokens": 70,
+                "miss_tokens": 20,
+                "creation_tokens": 10,
+                "input_tokens": 100,
+                "hit_rate": 0.7,
+            },
+        )
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(
+            request_payload["system"][0]["cache_control"], {"type": "ephemeral"}
+        )
+        self.assertNotIn("cache_control", request_payload["system"][1])
+        self.assertNotIn("cache_static", request_payload["messages"][0])
+
+    def test_anthropic_unmarked_system_messages_keep_string_payload(self):
+        client = self._make_client(provider="anthropic")
+        with patch(
+            "src.core.llm_client.request.urlopen",
+            return_value=_Response(
+                {
+                    "content": [{"type": "text", "text": "回复"}],
+                    "usage": {"input_tokens": 10, "output_tokens": 2},
+                }
+            ),
+        ) as urlopen:
+            result = client.chat_completion(
+                [
+                    {"role": "system", "content": "角色资料"},
+                    {"role": "system", "content": "场景资料"},
+                    {"role": "user", "content": "继续"},
+                ]
+            )
+
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(request_payload["system"], "角色资料\n\n场景资料")
+        self.assertFalse(result["cache_usage"]["observable"])
+        self.assertIsNone(result["cache_usage"]["hit_rate"])
+
+    def test_ollama_strips_internal_cache_hint_and_marks_usage_unobservable(self):
+        client = self._make_local_client()
+        with patch(
+            "src.core.llm_client.request.urlopen",
+            return_value=_Response(
+                {
+                    "message": {"content": "回复"},
+                    "prompt_eval_count": 12,
+                    "eval_count": 3,
+                }
+            ),
+        ) as urlopen:
+            result = client._chat_ollama(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "稳定角色资料",
+                        "cache_static": True,
+                    }
+                ],
+                model="qwen-test",
+                temperature=None,
+                max_tokens=None,
+            )
+
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertNotIn("cache_static", request_payload["messages"][0])
+        self.assertFalse(result["cache_usage"]["observable"])
+        self.assertIsNone(result["cache_usage"]["hit_rate"])
 
 
 if __name__ == "__main__":

@@ -3,12 +3,22 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
+from collections import OrderedDict
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, Iterable
 
 from .workflow_completion import build_persona_completion_status, write_json
+
+
+_PROFILE_SOURCE_CACHE_MAX_SIZE = 256
+_PROFILE_SOURCE_CACHE: OrderedDict[
+    Path, tuple[tuple[int, int], dict[str, Any]]
+] = OrderedDict()
+_PROFILE_SOURCE_CACHE_LOCK = RLock()
 
 DEFAULT_NAV_LOAD_ORDER = (
     "SOUL",
@@ -374,16 +384,45 @@ def _coerce_int(value: Any) -> int:
         return 0
 
 
-def load_profile_source(path: str | Path) -> dict[str, Any]:
-    source = Path(path)
-    if source.suffix.lower() == ".json":
-        payload = json.loads(source.read_text(encoding="utf-8"))
+def _profile_source_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _read_profile_source(path: Path) -> dict[str, Any]:
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, dict) and isinstance(payload.get("profile"), dict):
             payload = payload["profile"]
         if not isinstance(payload, dict):
             raise ValueError("JSON profile source must be an object")
-        return normalize_profile(payload, source_hint=source)
-    return parse_profile_markdown(source.read_text(encoding="utf-8"), source_hint=source)
+        return normalize_profile(payload, source_hint=path)
+    return parse_profile_markdown(path.read_text(encoding="utf-8"), source_hint=path)
+
+
+def load_profile_source(path: str | Path) -> dict[str, Any]:
+    source = Path(path).resolve()
+    try:
+        signature = _profile_source_signature(source)
+    except OSError:
+        with _PROFILE_SOURCE_CACHE_LOCK:
+            _PROFILE_SOURCE_CACHE.pop(source, None)
+        raise
+
+    with _PROFILE_SOURCE_CACHE_LOCK:
+        cached = _PROFILE_SOURCE_CACHE.get(source)
+        if cached is not None and cached[0] == signature:
+            _PROFILE_SOURCE_CACHE.move_to_end(source)
+            return copy.deepcopy(cached[1])
+
+    profile = _read_profile_source(source)
+    cached_profile = copy.deepcopy(profile)
+    with _PROFILE_SOURCE_CACHE_LOCK:
+        _PROFILE_SOURCE_CACHE[source] = (signature, cached_profile)
+        _PROFILE_SOURCE_CACHE.move_to_end(source)
+        while len(_PROFILE_SOURCE_CACHE) > _PROFILE_SOURCE_CACHE_MAX_SIZE:
+            _PROFILE_SOURCE_CACHE.popitem(last=False)
+    return copy.deepcopy(cached_profile)
 
 
 def parse_profile_markdown(text: str, *, source_hint: Path | None = None) -> dict[str, Any]:
@@ -414,7 +453,7 @@ def load_existing_persona_bundle(persona_dir: str | Path) -> dict[str, Any]:
         if not path.exists() or not path.is_file():
             continue
         loaded_any = True
-        current = parse_profile_markdown(path.read_text(encoding="utf-8"), source_hint=path)
+        current = load_profile_source(path)
         merged = _merge_normalized_profiles(merged, current)
 
     if not loaded_any:

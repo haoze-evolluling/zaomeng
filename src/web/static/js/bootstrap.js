@@ -6,7 +6,7 @@
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }
 
-  const version = "20260720065126";
+  const version = "20260720103936";
   window.__ZAOMENG_WEB_UI_VERSION__ = version;
   const rootFragments = [
     { id: "header-root", url: `/web/fragments/header.html?v=${version}` },

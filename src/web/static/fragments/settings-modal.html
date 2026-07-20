@@ -346,23 +346,35 @@
     data-modal-id="dialogue-memory-modal"
     onclick="window.closeDialogueMemoryModal && window.closeDialogueMemoryModal()"
   ></div>
-  <div class="modal-card dialogue-memory-modal-card">
+  <div class="modal-card dialogue-memory-modal-card" role="dialog" aria-modal="true" aria-labelledby="dialogue-memory-modal-title">
     <div class="panel-head dialogue-memory-modal-head">
-      <div>
-        <p class="eyebrow">本局记忆</p>
-        <h3>把这一局先捋顺</h3>
-        <p id="dialogue-memory-modal-updated" class="panel-copy">更新于刚刚</p>
+      <div class="dialogue-memory-modal-title-group">
+        <p class="eyebrow">聊天记录</p>
+        <h3 id="dialogue-memory-modal-title">本局记忆</h3>
+        <p class="panel-copy">场景、人物与未完的线索都收在这里。</p>
+        <span id="dialogue-memory-modal-updated" class="dialogue-memory-modal-updated">更新于刚刚</span>
       </div>
-      <button
-        id="close-dialogue-memory-modal-button"
-        type="button"
-        class="soft-button"
-        data-close-modal="true"
-        data-modal-id="dialogue-memory-modal"
-        onclick="window.closeDialogueMemoryModal && window.closeDialogueMemoryModal()"
-      >
-        关闭
-      </button>
+      <div class="dialogue-memory-modal-actions">
+        <button
+          type="button"
+          class="soft-button dialogue-memory-modal-copy"
+          onclick="window.copyDialogueMemorySummary && window.copyDialogueMemorySummary()"
+        >
+          复制摘要
+        </button>
+        <button
+          id="close-dialogue-memory-modal-button"
+          type="button"
+          class="dialogue-memory-modal-close"
+          aria-label="关闭本局记忆"
+          title="关闭"
+          data-close-modal="true"
+          data-modal-id="dialogue-memory-modal"
+          onclick="window.closeDialogueMemoryModal && window.closeDialogueMemoryModal()"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
     </div>
     <div class="modal-scroll dialogue-memory-modal-scroll">
       <div id="dialogue-memory-modal-mount"></div>

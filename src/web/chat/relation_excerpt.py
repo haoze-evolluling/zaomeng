@@ -1,16 +1,58 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from src.web.chat.text_utils import trim_summary_text
+
+
+_RELATION_TEXT_CACHE_MAX_SIZE = 64
+_RELATION_TEXT_CACHE: OrderedDict[Path, tuple[tuple[int, int], str]] = OrderedDict()
+_RELATION_TEXT_CACHE_LOCK = RLock()
+
+
+def _relation_file_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _read_relation_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def load_text_excerpt(path_text: str, *, limit: int) -> str:
     path = Path(str(path_text or ""))
     if not path.exists() or not path.is_file():
         return ""
-    return path.read_text(encoding="utf-8")[:limit].strip()
+    resolved = path.resolve()
+    try:
+        signature = _relation_file_signature(resolved)
+    except OSError:
+        with _RELATION_TEXT_CACHE_LOCK:
+            _RELATION_TEXT_CACHE.pop(resolved, None)
+        return ""
+
+    with _RELATION_TEXT_CACHE_LOCK:
+        cached = _RELATION_TEXT_CACHE.get(resolved)
+        if cached is not None and cached[0] == signature:
+            _RELATION_TEXT_CACHE.move_to_end(resolved)
+            return cached[1][:limit].strip()
+
+    try:
+        text = _read_relation_text(resolved)
+    except OSError:
+        with _RELATION_TEXT_CACHE_LOCK:
+            _RELATION_TEXT_CACHE.pop(resolved, None)
+        return ""
+
+    with _RELATION_TEXT_CACHE_LOCK:
+        _RELATION_TEXT_CACHE[resolved] = (signature, text)
+        _RELATION_TEXT_CACHE.move_to_end(resolved)
+        while len(_RELATION_TEXT_CACHE) > _RELATION_TEXT_CACHE_MAX_SIZE:
+            _RELATION_TEXT_CACHE.popitem(last=False)
+    return text[:limit].strip()
 
 
 def build_relation_excerpt(

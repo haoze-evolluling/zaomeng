@@ -15,6 +15,10 @@ from src.web.manifest.compat import (
     relative_to_run_dir,
 )
 import src.web.chat.event_signals as _event_signals
+from src.web.chat.cache_stats import (
+    empty_generation_cache_stats,
+    record_generation_cache_observation,
+)
 from src.web.chat.io_utils import read_json, write_json
 import src.web.chat.memory_summary as _memory_summary
 import src.web.chat.persona_context as _persona_context
@@ -217,6 +221,7 @@ class DialogueService:
             "branch_origin": dict(branch_origin or {}),
             "history": [],
             "pending_turn": {},
+            "generation_cache_stats": empty_generation_cache_stats(),
             "state": self._empty_session_state(),
             "created_at": _utc_now(),
             "updated_at": _utc_now(),
@@ -591,6 +596,7 @@ class DialogueService:
         session_id: str,
         responses: list[dict[str, str]],
         remember_turn_memory: bool = False,
+        generation_cache: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session = self._read_json(self._session_file(run_id, session_id))
         pending = dict(session.get("pending_turn", {}) or {})
@@ -676,8 +682,16 @@ class DialogueService:
         if remembered_responses:
             session["history"][-len(remembered_responses) :] = remembered_responses
         session["pending_turn"] = {}
-        session["updated_at"] = _utc_now()
+        completed_at = _utc_now()
+        session["updated_at"] = completed_at
         session["status"] = "ready"
+        if generation_cache is not None:
+            record_generation_cache_observation(
+                session,
+                generation_cache,
+                turn_id=str(pending.get("turn_id", "")).strip(),
+                updated_at=completed_at,
+            )
         if session_store is not None:
             session_store.compress_context(session)
         result_path = (
@@ -685,16 +699,18 @@ class DialogueService:
             / "turns"
             / f"{pending.get('turn_id', 'turn')}.result.json"
         )
-        self._write_json(
-            result_path,
-            {
-                "kind": "zaomeng_dialogue_result",
-                "session_id": session_id,
-                "turn_id": pending.get("turn_id", ""),
-                "responses": clean_responses,
-                "updated_at": _utc_now(),
-            },
-        )
+        result_payload = {
+            "kind": "zaomeng_dialogue_result",
+            "session_id": session_id,
+            "turn_id": pending.get("turn_id", ""),
+            "responses": clean_responses,
+            "updated_at": completed_at,
+        }
+        if generation_cache is not None:
+            result_payload["generation_cache"] = dict(
+                session.get("generation_cache_stats", {}).get("latest", {}) or {}
+            )
+        self._write_json(result_path, result_payload)
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 

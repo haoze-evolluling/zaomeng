@@ -7294,9 +7294,21 @@ class WebAppRouteTests(unittest.TestCase):
             with patch.object(
                 WebRunService,
                 "_generate_dialogue_responses",
-                return_value=[
-                    {"speaker": "林黛玉", "message": "你既来了，先坐下说话。"}
-                ],
+                return_value={
+                    "responses": [
+                        {"speaker": "林黛玉", "message": "你既来了，先坐下说话。"}
+                    ],
+                    "generation_cache": {
+                        "provider": "openai-compatible",
+                        "model": "deepseek-chat",
+                        "observed": True,
+                        "input_tokens": 200,
+                        "cache_read_tokens": 120,
+                        "cache_write_tokens": 0,
+                        "cache_miss_tokens": 80,
+                        "attempt_count": 1,
+                    },
+                },
             ):
                 reply_response = client.post(
                     f"/api/web/runs/{run['run_id']}/dialogue/sessions/{session['session_id']}/reply",
@@ -7307,6 +7319,13 @@ class WebAppRouteTests(unittest.TestCase):
             payload = reply_response.json()
             self.assertEqual(payload["status"], "ready")
             self.assertEqual(payload["transcript"][-1]["speaker"], "林黛玉")
+            self.assertEqual(
+                payload["generation_cache_stats"]["latest"]["hit_rate"], 0.6
+            )
+            self.assertEqual(
+                payload["generation_cache_stats"]["session"]["cache_read_tokens"],
+                120,
+            )
 
     def test_dialogue_reply_route_can_suppress_transcript_message(self):
         with tempfile.TemporaryDirectory() as tmp:

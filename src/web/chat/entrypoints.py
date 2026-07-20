@@ -5,6 +5,34 @@ from typing import Any, Callable
 from src.core.exceptions import LLMRequestError
 
 
+def _unpack_dialogue_generation(
+    generated: Any,
+) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+    if isinstance(generated, dict) and isinstance(generated.get("responses"), list):
+        observation = generated.get("generation_cache")
+        return list(generated.get("responses", []) or []), (
+            dict(observation or {}) if isinstance(observation, dict) else None
+        )
+    return list(generated or []), None
+
+
+def _ingest_generated_dialogue(
+    dialogue: Any,
+    run_id: str,
+    session_id: str,
+    responses: list[dict[str, str]],
+    generation_cache: dict[str, Any] | None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "session_id": session_id,
+        "responses": responses,
+        "remember_turn_memory": True,
+    }
+    if generation_cache is not None:
+        kwargs["generation_cache"] = generation_cache
+    return dialogue.ingest_turn_responses(run_id, **kwargs)
+
+
 def create_dialogue_session_payload(
     *,
     run_id: str,
@@ -17,7 +45,7 @@ def create_dialogue_session_payload(
     self_profile: dict[str, str] | None,
     build_dialogue_opening_message: Callable[[dict[str, Any]], str],
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
-    generate_dialogue_responses: Callable[[str, dict[str, Any]], list[dict[str, str]]],
+    generate_dialogue_responses: Callable[[str, dict[str, Any]], Any],
     friendly_dialogue_llm_error: Callable[[Exception], str],
     evolve_relations_from_turn: Callable[
         [str, dict[str, Any], list[dict[str, str]]], None
@@ -45,15 +73,13 @@ def create_dialogue_session_payload(
     )
     pending_payload = load_pending_turn_payload(run_id, session_id)
     try:
-        responses = generate_dialogue_responses(run_id, pending_payload)
+        generated = generate_dialogue_responses(run_id, pending_payload)
     except LLMRequestError as exc:
         raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+    responses, generation_cache = _unpack_dialogue_generation(generated)
     evolve_relations_from_turn(run_id, pending_payload, responses)
-    ingested = dialogue.ingest_turn_responses(
-        run_id,
-        session_id=session_id,
-        responses=responses,
-        remember_turn_memory=True,
+    ingested = _ingest_generated_dialogue(
+        dialogue, run_id, session_id, responses, generation_cache
     )
     if callable(refresh_scene_progress):
         ingested = refresh_scene_progress(run_id, ingested)
@@ -68,7 +94,7 @@ def continue_dialogue_scene_opening_payload(
     dialogue: Any,
     build_dialogue_opening_message: Callable[[dict[str, Any]], str],
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
-    generate_dialogue_responses: Callable[[str, dict[str, Any]], list[dict[str, str]]],
+    generate_dialogue_responses: Callable[[str, dict[str, Any]], Any],
     friendly_dialogue_llm_error: Callable[[Exception], str],
     evolve_relations_from_turn: Callable[
         [str, dict[str, Any], list[dict[str, str]]], None
@@ -90,15 +116,13 @@ def continue_dialogue_scene_opening_payload(
     )
     pending_payload = load_pending_turn_payload(run_id, session_id)
     try:
-        responses = generate_dialogue_responses(run_id, pending_payload)
+        generated = generate_dialogue_responses(run_id, pending_payload)
     except LLMRequestError as exc:
         raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+    responses, generation_cache = _unpack_dialogue_generation(generated)
     evolve_relations_from_turn(run_id, pending_payload, responses)
-    ingested = dialogue.ingest_turn_responses(
-        run_id,
-        session_id=session_id,
-        responses=responses,
-        remember_turn_memory=True,
+    ingested = _ingest_generated_dialogue(
+        dialogue, run_id, session_id, responses, generation_cache
     )
     if callable(refresh_scene_progress):
         ingested = refresh_scene_progress(run_id, ingested)
@@ -115,7 +139,7 @@ def reply_dialogue_turn_payload(
     manifest: dict[str, Any],
     dialogue: Any,
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
-    generate_dialogue_responses: Callable[[str, dict[str, Any]], list[dict[str, str]]],
+    generate_dialogue_responses: Callable[[str, dict[str, Any]], Any],
     friendly_dialogue_llm_error: Callable[[Exception], str],
     evolve_relations_from_turn: Callable[
         [str, dict[str, Any], list[dict[str, str]]], None
@@ -137,15 +161,13 @@ def reply_dialogue_turn_payload(
     )
     pending_payload = load_pending_turn_payload(run_id, session_id)
     try:
-        responses = generate_dialogue_responses(run_id, pending_payload)
+        generated = generate_dialogue_responses(run_id, pending_payload)
     except LLMRequestError as exc:
         raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+    responses, generation_cache = _unpack_dialogue_generation(generated)
     evolve_relations_from_turn(run_id, pending_payload, responses)
-    ingested = dialogue.ingest_turn_responses(
-        run_id,
-        session_id=session_id,
-        responses=responses,
-        remember_turn_memory=True,
+    ingested = _ingest_generated_dialogue(
+        dialogue, run_id, session_id, responses, generation_cache
     )
     if callable(refresh_scene_progress):
         ingested = refresh_scene_progress(run_id, ingested)

@@ -37,6 +37,23 @@ class _HostChatStructuredContent:
         }
 
 
+class _HostChatCacheUsage:
+    def __init__(self):
+        self.messages = []
+
+    def chat_completion(self, messages, *, model=None, temperature=None, max_tokens=None, stream=False):
+        del model, temperature, max_tokens, stream
+        self.messages = messages
+        return {
+            "content": "宿主回复",
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 4,
+                "prompt_tokens_details": {"cached_tokens": 30},
+            },
+        }
+
+
 class _HostContext:
     def __init__(self, host):
         self.host = host
@@ -48,7 +65,14 @@ class HostLLMAdapterTests(unittest.TestCase):
         adapter = HostProvidedLLM(host, provider_name="openclaw-host", model_name="host-default")
 
         result = adapter.chat_completion(
-            [{"role": "system", "content": "你是林黛玉"}, {"role": "user", "content": "今日心事如何？"}],
+            [
+                {
+                    "role": "system",
+                    "content": "你是林黛玉",
+                    "cache_static": True,
+                },
+                {"role": "user", "content": "今日心事如何？"},
+            ],
             temperature=0.3,
             max_tokens=80,
         )
@@ -59,6 +83,9 @@ class HostLLMAdapterTests(unittest.TestCase):
         self.assertEqual(len(host.calls), 1)
         self.assertIn("user: 今日心事如何？", host.calls[0][0])
         self.assertEqual(host.calls[0][1]["temperature"], 0.3)
+        self.assertNotIn("cache_static", host.calls[0][1]["messages"][0])
+        self.assertFalse(result["cache_usage"]["observable"])
+        self.assertIsNone(result["cache_usage"]["hit_rate"])
 
     def test_from_host_context_uses_context_host(self):
         host = _HostGenerateOnly()
@@ -123,6 +150,34 @@ class HostLLMAdapterTests(unittest.TestCase):
         self.assertEqual(result["model"], "host-structured")
         self.assertEqual(result["prompt_tokens"], 12)
         self.assertEqual(result["completion_tokens"], 8)
+
+    def test_host_chat_completion_normalizes_cache_usage_and_strips_hint(self):
+        host = _HostChatCacheUsage()
+        adapter = HostProvidedLLM(host, provider_name="openclaw-host")
+
+        result = adapter.chat_completion(
+            [
+                {
+                    "role": "system",
+                    "content": "稳定角色资料",
+                    "cache_static": True,
+                },
+                {"role": "user", "content": "继续"},
+            ]
+        )
+
+        self.assertNotIn("cache_static", host.messages[0])
+        self.assertEqual(
+            result["cache_usage"],
+            {
+                "observable": True,
+                "hit_tokens": 30,
+                "miss_tokens": 20,
+                "creation_tokens": 0,
+                "input_tokens": 50,
+                "hit_rate": 0.6,
+            },
+        )
 
 
 if __name__ == "__main__":

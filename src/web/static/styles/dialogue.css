@@ -89,6 +89,14 @@
   line-height: 1.45;
 }
 
+.dialogue-cache-stats {
+  color: var(--ink-faint);
+  font-size: 0.64rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .dialogue-memory-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -879,6 +887,10 @@
   justify-content: flex-end;
   min-height: 24px;
   padding: 0 10px;
+}
+
+#dialogue-association-toggle-row {
+  justify-content: space-between;
 }
 
 .dialogue-association-toggle-control {

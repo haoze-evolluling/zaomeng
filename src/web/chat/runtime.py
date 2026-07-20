@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from src.web.chat.cache_stats import summarize_completion_results
 from src.web.path_safety import resolve_storage_child
 
 
@@ -37,9 +38,9 @@ def generate_dialogue_responses_for_run(
     build_runtime_config_for_run: Callable[..., Any],
     build_runtime_parts: Callable[[Any], Any],
     generate_dialogue_responses: Callable[..., list[dict[str, str]]],
-    build_dialogue_llm_messages: Callable[[dict[str, Any], bool], list[dict[str, str]]],
+    build_dialogue_llm_messages: Callable[[dict[str, Any], bool], list[dict[str, Any]]],
     parse_dialogue_responses: Callable[[str, list[str]], list[dict[str, str]]],
-) -> list[dict[str, str]]:
+) -> dict[str, Any]:
     config = build_runtime_config_for_run(run_dir=run_dir)
     parts = build_runtime_parts(config)
     if not hasattr(parts.llm, "chat_completion"):
@@ -49,7 +50,8 @@ def generate_dialogue_responses_for_run(
         str(item.get("name", "")).strip() for item in payload.get("responder_hints", [])
     ]
     allowed_speakers.extend(["旁白", "场景提示"])
-    return generate_dialogue_responses(
+    completions: list[dict[str, Any]] = []
+    responses = generate_dialogue_responses(
         payload=payload,
         allowed_speakers=allowed_speakers,
         temperature=float(config.get("llm.temperature", 0.35) or 0.35),
@@ -64,7 +66,12 @@ def generate_dialogue_responses_for_run(
             retry_on_empty,
         ),
         parse_responses=parse_dialogue_responses,
+        completion_observer=completions.append,
     )
+    return {
+        "responses": responses,
+        "generation_cache": summarize_completion_results(completions),
+    }
 
 
 def generate_dialogue_suggestion_for_run(

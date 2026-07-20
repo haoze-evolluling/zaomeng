@@ -100,6 +100,28 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn('window.applyDialogueSceneTimelineEntry(item);', content)
         self.assertIn('window.branchDialogueSessionFromScene(index);', content)
 
+    def test_dialogue_renders_generation_cache_hit_rates_in_composer_utility_row(self):
+        content = read_js("dialogue.js")
+        fragment = read_fragment("main-shell.html")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+        memory_meta = fragment.split('<div class="dialogue-memory-meta">', 1)[1].split("</div>", 1)[0]
+        utility_row = fragment.split('id="dialogue-association-toggle-row"', 1)[1].split("</div>", 1)[0]
+
+        self.assertIn("function normalizeGenerationCacheMetric(source) {", content)
+        self.assertIn('source.observed === false || unsupportedStatuses.has(status)', content)
+        self.assertIn('if (!metric?.observed || metric.hitRate === null) return "-";', content)
+        self.assertIn('root.textContent = `本次命中 ${latestRate} ｜ 平均命中 ${sessionRate}`;', content)
+        self.assertIn("缓存读取 ${formatGenerationCacheTokenCount(metric.cacheReadTokens)} / 输入", content)
+        self.assertIn("renderDialogueGenerationCacheStats(session);", content)
+        self.assertNotIn('id="dialogue-cache-stats"', memory_meta)
+        self.assertIn('id="dialogue-cache-stats" class="dialogue-cache-stats"', utility_row)
+        self.assertIn("本次命中 - ｜ 平均命中 -", fragment)
+        self.assertNotIn('id="dialogue-cache-latest"', fragment)
+        self.assertNotIn('id="dialogue-cache-session"', fragment)
+        self.assertIn(".dialogue-cache-stats {", styles)
+        self.assertNotIn(".dialogue-cache-stat {", styles)
+        self.assertIn("#dialogue-association-toggle-row", styles)
+
     def test_main_publishes_optimistic_dialogue_and_suggest_retry_state(self):
         content = read_js("main.js")
         self.assertIn('UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-optimistic", {', content)
