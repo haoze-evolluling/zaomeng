@@ -12,6 +12,7 @@ from src.web.time_utils import utc_now as _utc_now
 from src.web.manifest import load_json_file, write_json_file
 from src.web.pipeline import (
     build_background_run_kwargs,
+    finalize_workflow_failed,
     prepare_background_manifest,
     run_pipeline_safely,
     start_background_thread,
@@ -66,7 +67,31 @@ class RuntimeSupportMixin:
             run_pipeline=self._run_automatic_pipeline,
             active_run_threads=self._active_run_threads,
             logger=logger,
+            on_failure=lambda exc: self._record_background_pipeline_failure(kwargs, exc),
         )
+
+    def _record_background_pipeline_failure(self, kwargs: dict[str, Any], exc: Exception) -> None:
+        manifest_path = Path(kwargs.get("manifest_path", ""))
+        if not manifest_path.name:
+            return
+
+        def mark_failed(current: dict[str, Any]) -> dict[str, Any]:
+            if str(current.get("status", "")).strip() in {"failed", "ready", "stopped"}:
+                return current
+            detail = str(exc).strip() or type(exc).__name__
+            finalize_workflow_failed(
+                current,
+                message=f"蒸馏任务失败：{detail}",
+                error_type=type(exc).__name__,
+                utc_now=_utc_now,
+                finalize_manifest_timing=lambda target, outcome: self._finalize_manifest_timing(
+                    target,
+                    outcome=outcome,
+                ),
+            )
+            return current
+
+        self._update_manifest(manifest_path, mark_failed)
 
     def _build_runtime_config_for_run(self, *, run_dir: Path) -> Config:
         return build_runtime_config_for_run(

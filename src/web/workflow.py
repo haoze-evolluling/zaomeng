@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.core.runtime_factory import build_runtime_parts
 from src.web.chat import DialogueService
+from src.web.secrets import ProtectedSecretStore
 from src.web.review import (
     PERSONA_REVIEW_FIELDS,
     PROFILE_LIST_FIELDS,
@@ -232,6 +233,8 @@ class WebRunService(
         self.self_cards_root = self.storage_root / "self-cards"
         self.opening_presets_root = self.storage_root / "opening-presets"
         self.settings_path = self.storage_root / "model_settings.json"
+        self._secret_store = ProtectedSecretStore(self.storage_root / "secrets")
+        self._model_api_key_secret_name = "model_api_key"
         self.runs_root.mkdir(parents=True, exist_ok=True)
         self.builtin_novels_root.mkdir(parents=True, exist_ok=True)
         self.scene_cards_root.mkdir(parents=True, exist_ok=True)

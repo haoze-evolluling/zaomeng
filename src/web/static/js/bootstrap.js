@@ -1,5 +1,12 @@
 (() => {
-  const version = "20260719011845";
+  const authHash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const authToken = String(authHash.get("token") || "").trim();
+  if (authToken) {
+    window.sessionStorage.setItem("zaomeng_web_auth_token", authToken);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }
+
+  const version = "20260720044031";
   window.__ZAOMENG_WEB_UI_VERSION__ = version;
   const rootFragments = [
     { id: "header-root", url: `/web/fragments/header.html?v=${version}` },
@@ -38,6 +45,8 @@
     `/web/vendor/vue.global.prod.js?v=${version}`,
     `/web/js/legacy-bridge.js?v=${version}`,
     `/web/js/core.js?v=${version}`,
+    `/web/js/flow-feedback.js?v=${version}`,
+    `/web/js/app-update.js?v=${version}`,
     `/web/js/bookshelf-state.js?v=${version}`,
     `/web/js/work-overview-state.js?v=${version}`,
     `/web/js/character-overview-state.js?v=${version}`,

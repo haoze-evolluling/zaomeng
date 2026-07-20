@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict
 
 from src.utils.file_utils import coerce_int, safe_filename
 from src.web.artifacts.ingest import decode_text_content
+from src.web.path_safety import resolve_storage_child
 
 
 def ingest_character_result(
@@ -190,7 +191,7 @@ def update_relation_detail(
 
 
 def resolve_run_file(*, runs_root: Path, run_id: str, relative_path: str) -> Path:
-    run_dir = runs_root / run_id
+    run_dir = resolve_storage_child(runs_root, run_id, field_name="run_id")
     if not run_dir.exists():
         raise FileNotFoundError(run_id)
     candidate = (run_dir / relative_path).resolve()

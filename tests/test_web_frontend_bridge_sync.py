@@ -26,6 +26,20 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertLess(api_index, main_index)
         self.assertLess(api_index, island_index)
 
+    def test_bootstrap_loads_feedback_and_update_modules_before_main(self):
+        content = read_js("bootstrap.js")
+        feedback_index = content.index('/web/js/flow-feedback.js?v=${version}')
+        update_index = content.index('/web/js/app-update.js?v=${version}')
+        main_index = content.index('/web/js/main.js?v=${version}')
+        self.assertLess(feedback_index, update_index)
+        self.assertLess(update_index, main_index)
+
+        main_content = read_js("main.js")
+        update_content = read_js("app-update.js")
+        self.assertNotIn("function openAppUpdateModal()", main_content)
+        self.assertIn("function openAppUpdateModal()", update_content)
+        self.assertIn("window.__ZAOMENG_APP_UPDATE__", update_content)
+
     def test_bootstrap_keeps_optional_islands_non_fatal(self):
         content = read_js("bootstrap.js")
         self.assertIn("const coreScripts = [", content)

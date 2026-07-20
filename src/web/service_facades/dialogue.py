@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import wraps
 from typing import Any
 
 import src.web.chat.scene_signals as _scene_signals
@@ -31,6 +32,18 @@ from src.web.chat import (
     suggest_dialogue_turn_payload,
 )
 from src.web.service_facades.scene_cards import SceneCardServiceMixin
+
+
+def _with_dialogue_session_lock(method):
+    @wraps(method)
+    def locked(self, run_id: str, pending_payload: dict[str, Any], *args, **kwargs):
+        session_id = str(pending_payload.get("session_id", "")).strip()
+        if not session_id:
+            return method(self, run_id, pending_payload, *args, **kwargs)
+        with self.dialogue.session_lock(run_id, session_id):
+            return method(self, run_id, pending_payload, *args, **kwargs)
+
+    return locked
 
 
 def build_runtime_parts(config: Any) -> Any:
@@ -495,6 +508,7 @@ class DialogueServiceMixin:
             return False
         return True
 
+    @_with_dialogue_session_lock
     def _evolve_relations_from_turn(
         self,
         run_id: str,

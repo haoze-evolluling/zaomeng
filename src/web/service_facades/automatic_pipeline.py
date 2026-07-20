@@ -110,6 +110,7 @@ def _apply_finalize_failed_update(
     current: dict[str, Any],
     *,
     message: str,
+    error_type: str = "",
     utc_now,
     finalize_manifest_timing,
     discover_artifacts,
@@ -118,6 +119,7 @@ def _apply_finalize_failed_update(
     finalize_workflow_failed(
         failed,
         message=message,
+        error_type=error_type,
         utc_now=utc_now,
         finalize_manifest_timing=finalize_manifest_timing,
     )
@@ -307,6 +309,7 @@ class AutomaticPipelineMixin:
                 lambda current: _apply_finalize_failed_update(
                     current,
                     message=str(exc),
+                    error_type=type(exc).__name__,
                     utc_now=_utc_now,
                     discover_artifacts=self._discover_artifacts,
                     finalize_manifest_timing=lambda target, outcome: self._finalize_manifest_timing(

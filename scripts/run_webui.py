@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 from pathlib import Path
 import sys
 
@@ -19,6 +20,16 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", type=int, default=8000, help="Bind port")
     parser.add_argument("--storage-root", help="Optional storage root for web runs")
+    parser.add_argument(
+        "--auth-token",
+        default=str(os.getenv("ZAOMENG_WEB_AUTH_TOKEN", "")).strip(),
+        help="Bearer token for API access (prefer ZAOMENG_WEB_AUTH_TOKEN)",
+    )
+    parser.add_argument(
+        "--allow-remote-update",
+        action="store_true",
+        help="Allow the authenticated Web UI to execute application updates when bound remotely",
+    )
     parser.add_argument("--reload", action="store_true", help="Enable auto reload")
     parser.add_argument(
         "--bump-web-assets",
@@ -44,6 +55,7 @@ def main() -> int:
     try:
         import uvicorn
         from src.web.app import create_app
+        from src.web.security import is_loopback_host
         from src.web.workflow import WebRunService
     except ModuleNotFoundError as exc:
         print(
@@ -55,6 +67,16 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    loopback = is_loopback_host(args.host)
+    auth_token = str(args.auth_token or "").strip()
+    if not loopback and not auth_token:
+        parser.error(
+            "--auth-token or ZAOMENG_WEB_AUTH_TOKEN is required when --host is not a loopback address"
+        )
+    if not loopback and len(auth_token) < 24:
+        parser.error("The remote Web UI auth token must contain at least 24 characters")
+    allow_app_update = loopback or bool(args.allow_remote_update)
+
     if args.reload:
         if args.storage_root:
             print(
@@ -64,13 +86,23 @@ def main() -> int:
             )
             return 1
         static_version = _web_asset_version.read_web_asset_version(PROJECT_ROOT)
+        os.environ["ZAOMENG_WEB_AUTH_TOKEN"] = auth_token
+        os.environ["ZAOMENG_WEB_ALLOW_APP_UPDATE"] = "1" if allow_app_update else "0"
         print(f"Starting zaomeng Web UI with static asset version: {static_version}")
+        if auth_token:
+            print("Authentication enabled. Open /#token=<your token> in the browser.")
         uvicorn.run("src.web.asgi:app", host=args.host, port=args.port, reload=True)
         return 0
 
-    app = create_app(WebRunService(args.storage_root))
+    app = create_app(
+        WebRunService(args.storage_root),
+        auth_token=auth_token,
+        allow_app_update=allow_app_update,
+    )
     static_version = _web_asset_version.read_web_asset_version(PROJECT_ROOT)
     print(f"Starting zaomeng Web UI with static asset version: {static_version}")
+    if auth_token:
+        print("Authentication enabled. Open /#token=<your token> in the browser.")
     uvicorn.run(app, host=args.host, port=args.port, reload=False)
     return 0
 

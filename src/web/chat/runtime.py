@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from src.web.path_safety import resolve_storage_child
+
 
 def load_pending_turn_payload(
     *,
@@ -11,7 +13,10 @@ def load_pending_turn_payload(
     session_id: str,
     load_json_file: Callable[[Path], dict[str, Any] | None],
 ) -> dict[str, Any]:
-    session_path = runs_root / run_id / "dialogue" / session_id / "session.json"
+    run_dir = resolve_storage_child(runs_root, run_id, field_name="run_id")
+    dialogue_dir = resolve_storage_child(run_dir, "dialogue", field_name="dialogue directory")
+    session_dir = resolve_storage_child(dialogue_dir, session_id, field_name="session_id")
+    session_path = session_dir / "session.json"
     session_payload = load_json_file(session_path) or {}
     pending_path_text = str(
         session_payload.get("pending_turn", {}).get("payload_path", "")

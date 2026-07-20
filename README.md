@@ -120,6 +120,15 @@ python scripts/run_webui.py --reload
 
 启动后打开浏览器访问 `http://127.0.0.1:8000`，就可以直接走这条完整工作流：
 
+默认只监听本机。若要监听局域网或公网地址，必须设置 bearer token；远程模式默认禁用 Web 更新：
+
+```bash
+ZAOMENG_WEB_AUTH_TOKEN='replace-with-a-long-random-token' \
+  python scripts/run_webui.py --host 0.0.0.0
+```
+
+首次打开时访问 `http://<host>:8000/#token=<token>`；fragment 不会发送到服务端，页面会在当前标签页保存 token 并为 API 请求添加 bearer header。API 客户端也可直接发送 `Authorization: Bearer <token>`。
+
 1. 先配置模型
 2. 上传小说并锁定角色
 3. 自动蒸馏人物并生成关系图谱

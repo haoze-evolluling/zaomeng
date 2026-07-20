@@ -23,6 +23,8 @@ import src.web.chat.prompt_rules as _prompt_rules
 import src.web.chat.relation_state as _relation_state
 import src.web.chat.runtime_overview as _runtime_overview
 import src.web.chat.scene_signals as _scene_signals
+from src.web.chat.session_storage import SessionFileStore, with_session_lock
+import src.web.chat.session_views as _session_views
 import src.web.chat.state_utils as _state_utils
 import src.web.chat.text_utils as _text_utils
 from src.web.artifacts.ingest import load_relations_source
@@ -38,7 +40,8 @@ class DialogueService:
         *,
         memory_store_resolver: Callable[[str], MarkdownSessionStore] | None = None,
     ) -> None:
-        self.runs_root = Path(runs_root)
+        self._session_files = SessionFileStore(runs_root)
+        self.runs_root = self._session_files.runs_root
         self._memory_store_resolver = memory_store_resolver
         self._memory_stores: dict[str, MarkdownSessionStore] = {}
 
@@ -249,16 +252,19 @@ class DialogueService:
                 )
         return self._serialize_session(run_id, payload)
 
+    @with_session_lock
     def get_session(self, run_id: str, session_id: str) -> dict[str, Any]:
         payload = self._read_json(self._session_file(run_id, session_id))
         return self._serialize_session(run_id, payload)
 
+    @with_session_lock
     def delete_session(self, run_id: str, session_id: str) -> None:
         session_dir = self._session_dir(run_id, session_id)
         if not session_dir.exists():
             raise FileNotFoundError(str(session_dir))
         shutil.rmtree(session_dir)
 
+    @with_session_lock
     def update_scene_card(
         self,
         run_id: str,
@@ -307,6 +313,7 @@ class DialogueService:
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 
+    @with_session_lock
     def update_scene_progress_state(
         self,
         run_id: str,
@@ -325,6 +332,7 @@ class DialogueService:
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 
+    @with_session_lock
     def branch_session_from_scene(
         self,
         run_manifest: dict[str, Any],
@@ -362,6 +370,7 @@ class DialogueService:
             },
         )
 
+    @with_session_lock
     def prepare_turn(
         self,
         run_manifest: dict[str, Any],
@@ -374,6 +383,8 @@ class DialogueService:
     ) -> dict[str, Any]:
         run_id = str(run_manifest.get("run_id", "")).strip()
         session = self._read_json(self._session_file(run_id, session_id))
+        if session.get("pending_turn"):
+            raise ValueError("当前已有一轮等待回复，请勿重复提交。")
         normalized_message_kind = self._normalize_message_kind(message_kind)
         effective_speaker_override = str(speaker_override or "").strip()
         if normalized_message_kind == "narration" and not effective_speaker_override:
@@ -413,6 +424,7 @@ class DialogueService:
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 
+    @with_session_lock
     def build_suggestion_payload(
         self,
         run_manifest: dict[str, Any],
@@ -569,6 +581,7 @@ class DialogueService:
             "offstage_participants": offstage,
         }
 
+    @with_session_lock
     def ingest_turn_responses(
         self,
         run_id: str,
@@ -1873,114 +1886,22 @@ class DialogueService:
         session["runtime_state_overview"] = self._build_runtime_state_overview(session)
         return session
 
-    def _serialize_transcript(self, session: dict[str, Any]) -> list[dict[str, Any]]:
-        controlled = str(session.get("controlled_character", "")).strip()
-        self_insert_name = str(
-            session.get("self_insert", {}).get("display_name", "")
-        ).strip()
-        mode = str(session.get("mode", "observe")).strip() or "observe"
-        items: list[dict[str, Any]] = []
-        for entry in session.get("history", []):
-            speaker = str(entry.get("speaker", "")).strip()
-            role = "character"
-            if speaker in {"旁白", "场景提示"}:
-                role = "director" if mode == "observe" else "scene"
-            elif mode == "act" and speaker == controlled:
-                role = "user"
-            elif mode == "insert" and speaker == self_insert_name:
-                role = "user"
-            elif mode == "observe" and speaker == "User":
-                role = "director"
-            items.append(
-                {
-                    "speaker": speaker,
-                    "message": str(entry.get("message", "")).strip(),
-                    "role": role,
-                }
-            )
-        return items
+    _serialize_transcript = staticmethod(_session_views.serialize_transcript)
 
     _mode_display = staticmethod(_text_utils.mode_display)
 
     def _build_session_card(self, session: dict[str, Any]) -> dict[str, Any]:
-        mode = str(session.get("mode", "observe")).strip() or "observe"
-        card = {
-            "mode": mode,
-            "mode_display": self._mode_display(mode),
-            "participants": list(session.get("participants", [])),
-            "controlled_character": str(
-                session.get("controlled_character", "")
-            ).strip(),
-            "scene_card_id": str(session.get("scene_card_id", "")).strip(),
-            "scene_card": dict(session.get("scene_card", {})),
-            "self_card_id": str(session.get("self_card_id", "")).strip(),
-            "self_insert": dict(session.get("self_insert", {})),
-        }
-        return card
+        return _session_views.build_session_card(session, mode_display=self._mode_display)
 
-    def _serialize_scene_history(self, session: dict[str, Any]) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        current_scene_id = str(session.get("scene_card_id", "")).strip()
-        for entry in list(session.get("scene_history", []) or []):
-            title = str(entry.get("title", "")).strip()
-            location = str(entry.get("location", "")).strip()
-            atmosphere = str(entry.get("atmosphere", "")).strip()
-            transition_message = str(entry.get("transition_message", "")).strip()
-            scene_card_id = str(entry.get("scene_card_id", "")).strip()
-            items.append(
-                {
-                    "scene_card_id": scene_card_id,
-                    "title": title,
-                    "location": location,
-                    "atmosphere": atmosphere,
-                    "transition_message": transition_message,
-                    "scene_card": dict(entry.get("scene_card", {}) or {}),
-                    "memory_summary": dict(entry.get("memory_summary", {}) or {}),
-                    "ts": str(entry.get("ts", "")).strip(),
-                    "is_current": (
-                        "true"
-                        if current_scene_id and scene_card_id == current_scene_id
-                        else ""
-                    ),
-                }
-            )
-        return items
+    _serialize_scene_history = staticmethod(_session_views.serialize_scene_history)
 
-    @staticmethod
-    def _build_scene_history_entry(
-        scene_profile: dict[str, Any],
-        *,
-        transition_message: str = "",
-        memory_summary: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        scene = dict(scene_profile or {})
-        return {
-            "scene_card_id": str(scene.get("scene_card_id", "")).strip(),
-            "title": str(scene.get("title", "")).strip(),
-            "location": str(scene.get("location", "")).strip(),
-            "atmosphere": str(scene.get("atmosphere", "")).strip(),
-            "transition_message": str(transition_message or "").strip(),
-            "scene_card": dict(scene),
-            "memory_summary": dict(memory_summary or {}),
-            "ts": _utc_now(),
-        }
+    _build_scene_history_entry = staticmethod(_session_views.build_scene_history_entry)
 
     def _build_pending_turn_summary(self, session: dict[str, Any]) -> dict[str, Any]:
-        pending = dict(session.get("pending_turn", {}) or {})
-        if not pending:
-            return {}
-        return {
-            "turn_id": str(pending.get("turn_id", "")).strip(),
-            "speaker": str(pending.get("speaker", "")).strip(),
-            "message": str(pending.get("user_message", "")).strip(),
-            "message_kind": self._normalize_message_kind(
-                str(pending.get("message_kind", "")).strip()
-            ),
-            "mode": str(pending.get("mode", "")).strip(),
-            "participants": list(pending.get("participants", [])),
-            "active_participants": list(pending.get("active_participants", [])),
-            "response_limit_hint": int(pending.get("response_limit_hint", 0) or 0),
-        }
+        return _session_views.build_pending_turn_summary(
+            session,
+            normalize_message_kind=self._normalize_message_kind,
+        )
 
     def _build_runtime_state_overview(self, session: dict[str, Any]) -> dict[str, Any]:
         return _runtime_overview.build_runtime_state_overview(
@@ -2312,13 +2233,16 @@ class DialogueService:
     _entry_to_memory_text = staticmethod(_text_utils.entry_to_memory_text)
 
     def _sessions_root(self, run_id: str) -> Path:
-        return self.runs_root / run_id / "dialogue"
+        return self._session_files.sessions_root(run_id)
 
     def _session_dir(self, run_id: str, session_id: str) -> Path:
-        return self._sessions_root(run_id) / session_id
+        return self._session_files.session_dir(run_id, session_id)
 
     def _session_file(self, run_id: str, session_id: str) -> Path:
-        return self._session_dir(run_id, session_id) / "session.json"
+        return self._session_files.session_file(run_id, session_id)
+
+    def session_lock(self, run_id: str, session_id: str):
+        return self._session_files.lock(run_id, session_id)
 
     def _file_url(self, run_id: str, relative_path: Path) -> str:
         return f"/api/web/runs/{run_id}/files/{relative_path.as_posix()}"

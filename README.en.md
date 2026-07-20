@@ -121,6 +121,15 @@ For a manual Termux install, replace the dependency command with
 
 Then open `http://127.0.0.1:8000` and go through the full workflow in one place:
 
+The server listens on loopback by default. Binding to a LAN or public address requires a bearer token, and Web UI updates are disabled remotely by default:
+
+```bash
+ZAOMENG_WEB_AUTH_TOKEN='replace-with-a-long-random-token' \
+  python scripts/run_webui.py --host 0.0.0.0
+```
+
+Open `http://<host>:8000/#token=<token>` once. The fragment is not sent to the server; the page keeps the token in the current tab and adds a bearer header to API requests. API clients can also send `Authorization: Bearer <token>` directly.
+
 1. configure a model first
 2. upload a novel and lock the cast
 3. automatically distill characters and generate the relationship graph

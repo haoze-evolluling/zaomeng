@@ -6,11 +6,12 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+from src.web.path_safety import resolve_storage_child
 from src.web.run_ops.state import project_manifest_summary
 
 
 def manifest_path(runs_root: Path, run_id: str) -> Path:
-    return runs_root / run_id / "run_manifest.json"
+    return resolve_storage_child(runs_root, run_id, field_name="run_id") / "run_manifest.json"
 
 
 def require_manifest(

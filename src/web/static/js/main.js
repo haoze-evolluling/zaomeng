@@ -3,8 +3,6 @@ const existingMainModule = window.__ZAOMENG_MAIN_MODULE__;
 if (existingMainModule?.initialized) {
   return;
 }
-let appUpdateStatus = null;
-let appUpdatePollTimer = 0;
 let exportRunPackagePendingId = "";
 let dialogueAssociationRequestId = 0;
 let dialogueAssociationLastRequestKey = "";
@@ -24,68 +22,7 @@ let dialogueAssociationState = {
   error: "",
 };
 
-const APP_UPDATE_DISMISS_PREFIX = "zaomeng:update-dismissed:";
 const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
-const FLOW_FEEDBACK_TOOLS = window.__ZAOMENG_FLOW_FEEDBACK__ || {};
-
-function setFlowStatusMessage(statusId, options = {}) {
-  const payload = {
-    ...options,
-    phase: options.phase || (options.impact ? "failure" : ""),
-  };
-  if (typeof FLOW_FEEDBACK_TOOLS.setFlowStatus === "function") {
-    FLOW_FEEDBACK_TOOLS.setFlowStatus(statusId, payload);
-    return;
-  }
-  setStatus(statusId, String(payload.message || "").trim());
-}
-
-function setButtonBusyState(target, pending, options = {}) {
-  if (typeof FLOW_FEEDBACK_TOOLS.setButtonBusy === "function") {
-    FLOW_FEEDBACK_TOOLS.setButtonBusy(target, pending, options);
-    return;
-  }
-  const node = typeof target === "string" ? el(target) : target;
-  if (!node) return;
-  node.disabled = Boolean(pending);
-  if (pending && options.busyText) {
-    node.textContent = String(options.busyText).trim();
-    return;
-  }
-  if (!pending && options.idleText) {
-    node.textContent = String(options.idleText).trim();
-  }
-}
-
-function setDistillFlowStatus(statusId, options = {}) {
-  setFlowStatusMessage(statusId, options);
-}
-
-function setFlowLoadingStatus(statusId, message, nextStep = "") {
-  setFlowStatusMessage(statusId, {
-    phase: "loading",
-    message,
-    nextStep,
-  });
-}
-
-function setFlowSuccessStatus(statusId, message, nextStep = "") {
-  setFlowStatusMessage(statusId, {
-    phase: "success",
-    message,
-    nextStep,
-  });
-}
-
-function setFlowFailureStatus(statusId, message, nextStep = "", options = {}) {
-  setFlowStatusMessage(statusId, {
-    phase: "failure",
-    message,
-    impact: options.impact || "",
-    affectsChatFlow: Boolean(options.affectsChatFlow),
-    nextStep,
-  });
-}
 
 function setDialogueSessionLoading(message, nextStep = "") {
   setFlowLoadingStatus("dialogue-session-status", message, nextStep);
@@ -2536,7 +2473,10 @@ async function handleExportRunPackage() {
     "打包完成后会自动开始下载。"
   );
   try {
-    const response = await fetch(`/api/web/runs/${encodeURIComponent(runId)}/export`);
+    const response = await fetch(
+      `/api/web/runs/${encodeURIComponent(runId)}/export`,
+      webAuthFetchOptions()
+    );
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || "导出小说包失败。");
@@ -2559,136 +2499,6 @@ async function handleExportRunPackage() {
   } finally {
     setRunPackageExportPending(runId, false);
     setButtonBusyState("detail-export-package-button", false, { idleText: "导出小说包", busyText: "导出中..." });
-  }
-}
-
-function openAppUpdateModal() {
-  toggle("app-update-modal", true);
-  if (typeof syncModalScrollLock === "function") syncModalScrollLock();
-}
-
-function closeAppUpdateModal() {
-  toggle("app-update-modal", false);
-  if (typeof syncModalScrollLock === "function") syncModalScrollLock();
-}
-
-function appUpdateDismissKey(currentVersion, remoteVersion) {
-  return `${APP_UPDATE_DISMISS_PREFIX}${String(currentVersion || "").trim()}->${String(remoteVersion || "").trim()}`;
-}
-
-function rememberDismissedAppUpdate(status = appUpdateStatus) {
-  const currentVersion = String(status?.current_version || "").trim();
-  const remoteVersion = String(status?.remote_version || "").trim();
-  if (!currentVersion || !remoteVersion || !window.localStorage) return;
-  window.localStorage.setItem(appUpdateDismissKey(currentVersion, remoteVersion), "1");
-}
-
-function wasAppUpdateDismissed(status = appUpdateStatus) {
-  const currentVersion = String(status?.current_version || "").trim();
-  const remoteVersion = String(status?.remote_version || "").trim();
-  if (!currentVersion || !remoteVersion || !window.localStorage) return false;
-  return window.localStorage.getItem(appUpdateDismissKey(currentVersion, remoteVersion)) === "1";
-}
-
-function clearAppUpdatePolling() {
-  if (!appUpdatePollTimer) return;
-  window.clearTimeout(appUpdatePollTimer);
-  appUpdatePollTimer = 0;
-}
-
-function renderAppUpdateStatus(status) {
-  appUpdateStatus = status || null;
-  setText("app-update-current-version", status?.current_version || "-", "");
-  setText("app-update-remote-version", status?.remote_version || "-", "");
-  setFlowStatusMessage("app-update-status", {
-    message: status?.message || "",
-    nextStep: String(status?.status || "") === "completed" && status?.reload_required ? "页面很快会自动刷新。" : "",
-  });
-  const confirmButton = el("confirm-app-update-button");
-  const closeButton = el("close-app-update-button");
-  const dismissButton = el("dismiss-app-update-button");
-  const updating = String(status?.status || "") === "updating";
-  if (confirmButton) {
-    confirmButton.disabled = updating || !status?.update_available;
-    confirmButton.textContent = updating ? "更新中..." : "现在更新";
-  }
-  if (closeButton) closeButton.disabled = updating;
-  if (dismissButton) dismissButton.disabled = updating;
-}
-
-async function fetchAppUpdateStatus(force = false) {
-  const suffix = force ? "?force=true" : "";
-  const status = await apiJson(`/api/web/settings/update${suffix}`, {}, "检查更新失败。");
-  renderAppUpdateStatus(status);
-  return status;
-}
-
-function scheduleAppUpdatePolling() {
-  clearAppUpdatePolling();
-  appUpdatePollTimer = window.setTimeout(async () => {
-    try {
-      const status = await fetchAppUpdateStatus(false);
-      if (status?.status === "updating") {
-        scheduleAppUpdatePolling();
-        return;
-      }
-      if (status?.status === "completed" && status?.reload_required) {
-        window.setTimeout(() => window.location.reload(), 900);
-      }
-    } catch (error) {
-      setFlowFailureStatus(
-        "app-update-status",
-        error.message || "刚才那次更新状态暂时没取到。",
-        "稍后可以再手动检查一次更新。",
-        { impact: "这不会影响你继续使用当前版本。", affectsChatFlow: false }
-      );
-    }
-  }, 1200);
-}
-
-async function checkAppUpdateOnBoot() {
-  try {
-    const status = await fetchAppUpdateStatus(true);
-    if (!status?.supported || !status?.update_available || wasAppUpdateDismissed(status)) {
-      return;
-    }
-    openAppUpdateModal();
-  } catch (error) {
-    console.warn("checkAppUpdateOnBoot failed", error);
-  }
-}
-
-function dismissAppUpdateModal() {
-  rememberDismissedAppUpdate(appUpdateStatus);
-  closeAppUpdateModal();
-}
-
-async function handleConfirmAppUpdate() {
-  setButtonBusyState("confirm-app-update-button", true, { idleText: "现在更新", busyText: "更新中..." });
-  setFlowLoadingStatus(
-    "app-update-status",
-    "正在替你接上更新...",
-    "更新完成后会自动刷新当前页面。"
-  );
-  try {
-    const status = await apiJson(
-      "/api/web/settings/update",
-      {
-        method: "POST",
-      },
-      "开始更新失败。"
-    );
-    renderAppUpdateStatus(status);
-    openAppUpdateModal();
-    scheduleAppUpdatePolling();
-  } catch (error) {
-    setButtonBusyState("confirm-app-update-button", false, { idleText: "现在更新", busyText: "更新中..." });
-    setFlowFailureStatus(
-      "app-update-status",
-      error.message || "这次更新没有接上。",
-      "可以稍后再试更新。",
-      { impact: "这不会影响你继续使用当前版本聊天。", affectsChatFlow: false }
-    );
   }
 }
 
@@ -4223,18 +4033,6 @@ window.triggerImportRunPackage = triggerImportRunPackage;
 window.handleImportRunPackage = handleImportRunPackage;
 window.isRunPackageExportPending = isRunPackageExportPending;
 window.handleExportRunPackage = handleExportRunPackage;
-window.openAppUpdateModal = openAppUpdateModal;
-window.closeAppUpdateModal = closeAppUpdateModal;
-window.appUpdateDismissKey = appUpdateDismissKey;
-window.rememberDismissedAppUpdate = rememberDismissedAppUpdate;
-window.wasAppUpdateDismissed = wasAppUpdateDismissed;
-window.clearAppUpdatePolling = clearAppUpdatePolling;
-window.renderAppUpdateStatus = renderAppUpdateStatus;
-window.fetchAppUpdateStatus = fetchAppUpdateStatus;
-window.scheduleAppUpdatePolling = scheduleAppUpdatePolling;
-window.checkAppUpdateOnBoot = checkAppUpdateOnBoot;
-window.dismissAppUpdateModal = dismissAppUpdateModal;
-window.handleConfirmAppUpdate = handleConfirmAppUpdate;
 window.buildComposerUiState = buildComposerUiState;
 window.publishComposerUiState = publishComposerUiState;
 window.normalizeDialogueMessageKind = normalizeDialogueMessageKind;

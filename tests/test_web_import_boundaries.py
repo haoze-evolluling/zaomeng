@@ -21,6 +21,8 @@ class WebImportBoundaryTests(unittest.TestCase):
             import src.web.chat.relation_state
             import src.web.chat.runtime_overview
             import src.web.chat.scene_signals
+            import src.web.chat.session_storage
+            import src.web.chat.session_views
             import src.web.chat.state_utils
             import src.web.chat.text_utils
             import src.web.api.schemas

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.web.api.deps import get_run_service
-from src.web.api.schemas import SaveModelSettingsRequest
+from src.web.api.schemas import SaveModelSettingsRequest, StartAppUpdateRequest
 from src.web.workflow import WebRunService
 
 router = APIRouter()
@@ -50,7 +50,15 @@ def get_app_update_status(
 
 
 @router.post("/api/web/settings/update")
-def start_app_update(run_service: WebRunService = Depends(get_run_service)) -> dict[str, Any]:
+def start_app_update(
+    payload: StartAppUpdateRequest,
+    request: Request,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    if not bool(getattr(request.app.state, "allow_app_update", True)):
+        raise HTTPException(status_code=403, detail="Remote application updates are disabled.")
+    if payload.confirm != "update":
+        raise HTTPException(status_code=400, detail="Application update confirmation is required.")
     try:
         return run_service.start_app_update()
     except ValueError as exc:

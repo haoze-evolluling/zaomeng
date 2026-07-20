@@ -43,6 +43,10 @@ class RunServiceMixin:
             max_tokens=max_tokens,
             utc_now=_utc_now,
         )
+        api_key_value = str(normalized.pop("api_key", "")).strip()
+        if api_key_value:
+            self._secret_store.write(self._model_api_key_secret_name, api_key_value)
+            normalized["api_key_ref"] = self._model_api_key_secret_name
         self._write_json(self.settings_path, normalized)
         return self.get_model_settings()
 

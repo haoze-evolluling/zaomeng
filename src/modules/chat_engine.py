@@ -18,6 +18,14 @@ from src.core.relation_store import MarkdownRelationStore
 from src.core.rulebook import RuleBook
 from src.core.session_store import MarkdownSessionStore
 from src.modules.distillation import NovelDistiller
+from src.modules.persona_profile_io import (
+    merge_profile_item,
+    parse_navigation_markdown,
+    parse_persona_markdown,
+    safe_int,
+    split_metric_map,
+    split_persona_value,
+)
 from src.modules.reflection import ReflectionEngine
 from src.modules.speaker import Speaker
 from src.utils.file_utils import (
@@ -1279,29 +1287,7 @@ class ChatEngine:
             merged["files"][base_name] = entry
         return merged
 
-    @staticmethod
-    def _parse_navigation_markdown(path: Path) -> Dict[str, Any]:
-        parsed: Dict[str, Any] = {"runtime": {}, "files": {}}
-        current_section = ""
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if line.startswith("## "):
-                current_section = line[3:].strip().upper()
-                if current_section and current_section != "RUNTIME":
-                    parsed["files"].setdefault(current_section, {})
-                continue
-            if not line.startswith("- ") or ":" not in line:
-                continue
-            key, value = line[2:].split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if not value:
-                continue
-            if current_section == "RUNTIME":
-                parsed["runtime"][key] = value
-            elif current_section:
-                parsed["files"].setdefault(current_section, {})[key] = value
-        return parsed
+    _parse_navigation_markdown = staticmethod(parse_navigation_markdown)
 
     @staticmethod
     def _parse_navigation_order(value: Any) -> List[str]:
@@ -1311,23 +1297,7 @@ class ChatEngine:
         parts = [item.strip().upper() for item in re.split(r"->|,|\|", text) if item.strip()]
         return parts or list(NovelDistiller.DEFAULT_NAV_LOAD_ORDER)
 
-    @staticmethod
-    def _parse_persona_markdown(path: Path) -> Dict[str, Any]:
-        parsed: Dict[str, Any] = {}
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line.startswith("- ") or ":" not in line:
-                continue
-            key, value = line[2:].split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if not value:
-                continue
-            if key in parsed and parsed[key]:
-                parsed[key] = f"{parsed[key]}；{value}"
-            else:
-                parsed[key] = value
-        return parsed
+    _parse_persona_markdown = staticmethod(parse_persona_markdown)
 
     def _apply_persona_overrides(self, profile: Dict[str, Any], parsed: Dict[str, Any]) -> Dict[str, Any]:
         merged = dict(profile)
@@ -1365,61 +1335,10 @@ class ChatEngine:
                 merged[key] = self._split_persona_value(value)
         return merged
 
-    @staticmethod
-    def _split_persona_value(value: str) -> List[str]:
-        return [item.strip() for item in re.split(r"[；;]\s*", value) if item.strip()]
-
-    @staticmethod
-    def _split_metric_map(value: str) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
-        for item in re.split(r"[；;]\s*", str(value or "").strip()):
-            if not item or "=" not in item:
-                continue
-            key, raw = item.split("=", 1)
-            key = key.strip()
-            raw = raw.strip()
-            if not key:
-                continue
-            if re.fullmatch(r"-?\d+", raw):
-                result[key] = int(raw)
-            else:
-                result[key] = raw
-        return result
-
-    @staticmethod
-    def _safe_int(value: Any) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 0
-
-    @staticmethod
-    def _merge_profile_item(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]:
-        if not existing:
-            return incoming
-        current_score = len(existing.get("typical_lines", [])) + len(existing.get("core_traits", []))
-        incoming_score = len(incoming.get("typical_lines", [])) + len(incoming.get("core_traits", []))
-        if incoming_score > current_score:
-            merged = incoming.copy()
-            fallback = existing
-        else:
-            merged = existing.copy()
-            fallback = incoming
-
-        for key in ("core_traits", "typical_lines", "decision_rules"):
-            merged_values = list(merged.get(key, []))
-            seen = set(merged_values)
-            for item in fallback.get(key, []):
-                if item not in seen:
-                    merged_values.append(item)
-                    seen.add(item)
-            merged[key] = merged_values
-
-        if not merged.get("speech_style") and fallback.get("speech_style"):
-            merged["speech_style"] = fallback["speech_style"]
-        if not merged.get("values") and fallback.get("values"):
-            merged["values"] = fallback["values"]
-        return merged
+    _split_persona_value = staticmethod(split_persona_value)
+    _split_metric_map = staticmethod(split_metric_map)
+    _safe_int = staticmethod(safe_int)
+    _merge_profile_item = staticmethod(merge_profile_item)
 
     @staticmethod
     def _pair_key(a: str, b: str) -> str:

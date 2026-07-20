@@ -76,7 +76,7 @@ def run_distill_chunk_drafts(
         thread_name_prefix="zaomeng-distill",
         stopped_error_type=stopped_error_type,
         fallback_warning=lambda exc: logger.warning(
-            "Parallel distill chunk execution failed for %s, falling back to sequential mode: %s",
+            "Parallel distill chunk execution failed for %s; retrying failed chunks sequentially: %s",
             character,
             exc,
         ),
@@ -138,7 +138,7 @@ def run_relation_chunk_drafts(
         thread_name_prefix="zaomeng-relation",
         stopped_error_type=stopped_error_type,
         fallback_warning=lambda exc: logger.warning(
-            "Parallel relation chunk execution failed, falling back to sequential mode: %s",
+            "Parallel relation chunk execution failed; retrying failed chunks sequentially: %s",
             exc,
         ),
         before_each=lambda index, _: assert_not_stopped(manifest_path, message=stopped_message),
@@ -162,26 +162,33 @@ def _run_chunk_drafts(
             before_each=before_each,
         )
 
-    try:
-        futures: dict[concurrent.futures.Future[dict[str, str]], int] = {}
-        drafts: list[dict[str, str]] = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix=thread_name_prefix) as executor:
-            for index, chunk_entry in enumerate(chunk_entries, start=1):
-                futures[executor.submit(run_one, index, chunk_entry)] = index
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                if result["content"]:
-                    drafts.append(result)
-        return sorted(drafts, key=lambda item: int(item["index"]))
-    except Exception as exc:
-        if isinstance(exc, stopped_error_type):
-            raise
-        fallback_warning(exc)
-        return _run_chunk_drafts_sequential(
-            run_one=run_one,
-            chunk_entries=chunk_entries,
-            before_each=before_each,
-        )
+    futures: dict[concurrent.futures.Future[dict[str, str]], int] = {}
+    results: dict[int, dict[str, str]] = {}
+    failures: dict[int, Exception] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix=thread_name_prefix) as executor:
+        for index, chunk_entry in enumerate(chunk_entries, start=1):
+            futures[executor.submit(run_one, index, chunk_entry)] = index
+        for future in concurrent.futures.as_completed(futures):
+            index = futures[future]
+            try:
+                results[index] = future.result()
+            except Exception as exc:
+                if isinstance(exc, stopped_error_type):
+                    for pending in futures:
+                        pending.cancel()
+                    raise
+                failures[index] = exc
+
+    if failures:
+        first_failed_index = min(failures)
+        fallback_warning(failures[first_failed_index])
+        for index in sorted(failures):
+            chunk_entry = chunk_entries[index - 1]
+            before_each(index, chunk_entry)
+            results[index] = run_one(index, chunk_entry)
+
+    drafts = [result for _, result in sorted(results.items()) if result["content"]]
+    return sorted(drafts, key=lambda item: int(item["index"]))
 
 
 def _run_chunk_drafts_sequential(

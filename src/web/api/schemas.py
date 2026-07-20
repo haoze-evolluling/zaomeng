@@ -45,6 +45,10 @@ class SaveModelSettingsRequest(BaseModel):
     max_tokens: int = Field(default=0, ge=0, le=16000)
 
 
+class StartAppUpdateRequest(BaseModel):
+    confirm: str = Field(..., min_length=1)
+
+
 class IngestCharacterRequest(BaseModel):
     character: str = Field(..., min_length=1)
     content_base64: str = Field(..., min_length=1)

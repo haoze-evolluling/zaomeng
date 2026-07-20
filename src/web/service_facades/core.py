@@ -113,7 +113,19 @@ class CoreServiceMixin:
         )
 
     def _load_model_settings_payload(self) -> dict[str, Any]:
-        return self._load_json_file(self.settings_path) or {}
+        payload = self._load_json_file(self.settings_path) or {}
+        inline_api_key = str(payload.get("api_key", "")).strip()
+        stored_api_key = self._secret_store.read(self._model_api_key_secret_name)
+        if inline_api_key:
+            self._secret_store.write(self._model_api_key_secret_name, inline_api_key)
+            stored_api_key = inline_api_key
+            sanitized = dict(payload)
+            sanitized.pop("api_key", None)
+            sanitized["api_key_ref"] = self._model_api_key_secret_name
+            self._write_json(self.settings_path, sanitized)
+        resolved = dict(payload)
+        resolved["api_key"] = stored_api_key or inline_api_key
+        return resolved
 
     def _load_pending_turn_payload(self, run_id: str, session_id: str) -> dict[str, Any]:
         return load_dialogue_pending_turn_payload(

@@ -9,6 +9,15 @@ async function fileToBase64(file) {
   return btoa(binary);
 }
 
+function webAuthFetchOptions(options = {}) {
+  const headers = new Headers(options.headers || {});
+  const authToken = String(window.sessionStorage.getItem("zaomeng_web_auth_token") || "").trim();
+  if (authToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+  return { ...options, headers };
+}
+
 function textToBase64(text) {
   const bytes = new TextEncoder().encode(String(text || ""));
   let binary = "";
@@ -1546,7 +1555,7 @@ function closeOpeningPresetModal() {
 }
 
 async function apiJson(url, options = {}, fallbackMessage = "请求失败。") {
-  const response = await fetch(url, options);
+  const response = await fetch(url, webAuthFetchOptions(options));
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload.detail || fallbackMessage);

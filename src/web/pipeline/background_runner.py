@@ -48,12 +48,18 @@ def run_pipeline_safely(
     run_pipeline: Callable[..., Any],
     active_run_threads: dict[str, threading.Thread],
     logger: logging.Logger,
+    on_failure: Callable[[Exception], None] | None = None,
 ) -> None:
     run_id = str(kwargs.get("run_id", "")).strip()
     try:
         run_pipeline(**kwargs)
     except Exception as exc:
         logger.warning("Background distill run failed: %s", exc)
+        if on_failure is not None:
+            try:
+                on_failure(exc)
+            except Exception:
+                logger.exception("Failed to persist background distill failure state")
     finally:
         if run_id:
             thread = active_run_threads.get(run_id)

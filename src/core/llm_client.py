@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import threading
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ except ImportError:
 
 from .config import Config
 from .exceptions import BudgetExceededError, LLMRequestError, MissingAPIKeyError
-from src.utils.file_utils import load_markdown_data, save_markdown_data
+from src.utils.file_utils import load_markdown_data
 
 logger = logging.getLogger(__name__)
 _TIKTOKEN_FALLBACK_LOGGED = False
@@ -67,6 +68,8 @@ class LLMClient:
     AUTO_PROVIDER = "auto"
     LOCAL_PROVIDER = "local-rule-engine"
     DEFAULT_RETRY_STATUS_CODES = (408, 429, 500, 502, 503, 504)
+    COST_STATS_FLUSH_INTERVAL_SECONDS = 2.0
+    COST_STATS_FLUSH_BATCH_SIZE = 20
 
     def __init__(self, config: Optional[Config] = None):
         self.config = config or Config()
@@ -79,7 +82,12 @@ class LLMClient:
         self.last_reset_date = datetime.now().date()
         self.request_count = 0
         self.total_tokens = 0
-        self._usage_lock = threading.Lock()
+        self._usage_lock = threading.RLock()
+        self._stats_write_lock = threading.Lock()
+        self._stats_flush_timer: threading.Timer | None = None
+        self._pending_usage_records = 0
+        self._usage_version = 0
+        self._cost_stats_path = Path(self.config.project_root) / "data" / "cost_stats.json"
 
         self._load_cost_stats()
 
@@ -92,43 +100,119 @@ class LLMClient:
             self.encoder = None
 
     def _load_cost_stats(self):
-        stats_file = Path(self.config.project_root) / "data" / "cost_stats.md"
+        stats_file = self._cost_stats_path
+        legacy_stats_file = Path(self.config.project_root) / "data" / "cost_stats.md"
+        data: dict[str, Any] = {}
+        source_path = stats_file
         if stats_file.exists():
             try:
-                data = load_markdown_data(stats_file, default={}) or {}
-                self.daily_cost = float(data.get("daily_cost", 0.0))
-                last = data.get("last_reset_date")
-                if last:
-                    self.last_reset_date = datetime.fromisoformat(last).date()
-            except (OSError, TypeError, ValueError) as exc:
+                loaded = json.loads(stats_file.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (json.JSONDecodeError, OSError) as exc:
                 logger.warning("Failed to load cost stats from %s: %s", stats_file, exc)
-        self._check_reset_daily()
+        elif legacy_stats_file.exists():
+            source_path = legacy_stats_file
+            try:
+                data = load_markdown_data(legacy_stats_file, default={}) or {}
+            except (OSError, TypeError, ValueError) as exc:
+                logger.warning("Failed to load cost stats from %s: %s", legacy_stats_file, exc)
+
+        try:
+            self.daily_cost = float(data.get("daily_cost", 0.0))
+            self.request_count = int(data.get("total_requests", 0) or 0)
+            self.total_tokens = int(data.get("total_tokens", 0) or 0)
+            last = data.get("last_reset_date")
+            if last:
+                self.last_reset_date = datetime.fromisoformat(str(last)).date()
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid cost stats in %s: %s", source_path, exc)
+
+        reset = self._check_reset_daily()
+        if (legacy_stats_file.exists() and not stats_file.exists()) or reset:
+            self._save_cost_stats()
 
     def _save_cost_stats(self):
-        stats_file = Path(self.config.project_root) / "data" / "cost_stats.md"
-        payload = {
-            "daily_cost": self.daily_cost,
-            "last_reset_date": self.last_reset_date.isoformat(),
-            "total_requests": self.request_count,
-            "total_tokens": self.total_tokens,
-        }
-        save_markdown_data(
-            stats_file,
-            payload,
-            title="COST_STATS",
-            summary=[
-                f"- daily_cost: {self.daily_cost}",
-                f"- total_requests: {self.request_count}",
-                f"- total_tokens: {self.total_tokens}",
-            ],
-        )
+        with self._usage_lock:
+            version = self._usage_version
+            payload = {
+                "daily_cost": self.daily_cost,
+                "last_reset_date": self.last_reset_date.isoformat(),
+                "total_requests": self.request_count,
+                "total_tokens": self.total_tokens,
+            }
+        stats_file = self._cost_stats_path
+        stats_file.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        temp_name = ""
+        with self._stats_write_lock:
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w",
+                    encoding="utf-8",
+                    dir=stats_file.parent,
+                    prefix=f".{stats_file.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temp_file:
+                    temp_name = temp_file.name
+                    temp_file.write(text)
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_name, stats_file)
+            finally:
+                if temp_name:
+                    temp_path = Path(temp_name)
+                    if temp_path.exists():
+                        temp_path.unlink()
+        with self._usage_lock:
+            if self._usage_version == version:
+                self._pending_usage_records = 0
 
-    def _check_reset_daily(self):
+    def _check_reset_daily(self) -> bool:
         today = datetime.now().date()
         if today > self.last_reset_date:
             self.daily_cost = 0.0
             self.last_reset_date = today
-            self._save_cost_stats()
+            self._usage_version += 1
+            return True
+        return False
+
+    def _schedule_cost_stats_flush(self) -> None:
+        if self._stats_flush_timer is not None:
+            return
+        timer = threading.Timer(self.COST_STATS_FLUSH_INTERVAL_SECONDS, self._flush_cost_stats_from_timer)
+        timer.daemon = True
+        self._stats_flush_timer = timer
+        timer.start()
+
+    def _flush_cost_stats_from_timer(self) -> None:
+        with self._usage_lock:
+            self._stats_flush_timer = None
+            has_pending = self._pending_usage_records > 0
+        if has_pending:
+            try:
+                self._save_cost_stats()
+            except OSError as exc:
+                logger.warning("Failed to persist cost stats: %s", exc)
+        with self._usage_lock:
+            if self._pending_usage_records > 0:
+                self._schedule_cost_stats_flush()
+
+    def flush_cost_stats(self) -> None:
+        with self._usage_lock:
+            timer = self._stats_flush_timer
+            self._stats_flush_timer = None
+            has_pending = self._pending_usage_records > 0
+        if timer is not None:
+            timer.cancel()
+        if has_pending:
+            try:
+                self._save_cost_stats()
+            except OSError as exc:
+                logger.warning("Failed to persist cost stats: %s", exc)
+                with self._usage_lock:
+                    self._schedule_cost_stats_flush()
 
     def _check_budget(self):
         daily_budget = float(self.cost_config.get("daily_budget_usd", 10.0))
@@ -164,6 +248,7 @@ class LLMClient:
         self, prompt_tokens: int, completion_tokens: int = 0, elapsed_time: float = 0.0
     ):
         with self._usage_lock:
+            self._check_reset_daily()
             self._check_budget()
             total_tokens = prompt_tokens + completion_tokens
             cost = self._calculate_cost(prompt_tokens, completion_tokens)
@@ -171,7 +256,13 @@ class LLMClient:
             self.daily_cost += cost
             self.request_count += 1
             self.total_tokens += total_tokens
-            self._save_cost_stats()
+            self._usage_version += 1
+            self._pending_usage_records += 1
+            flush_now = self._pending_usage_records >= self.COST_STATS_FLUSH_BATCH_SIZE
+            if not flush_now:
+                self._schedule_cost_stats_flush()
+        if flush_now:
+            self.flush_cost_stats()
         if self.cost_config.get("enable_cost_warning", True):
             logger.info(
                 f"[Tokens: {prompt_tokens}+{completion_tokens}={total_tokens}] "

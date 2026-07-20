@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -31,6 +33,8 @@ CHAT_HELPER_TYPE_TARGETS = [
     "src/web/chat/relation_state.py",
     "src/web/chat/runtime_overview.py",
     "src/web/chat/scene_signals.py",
+    "src/web/chat/session_storage.py",
+    "src/web/chat/session_views.py",
     "src/web/chat/state_utils.py",
     "src/web/chat/text_utils.py",
 ]
@@ -58,6 +62,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    configured_temp_root = str(os.getenv("TMPDIR", "") or os.getenv("TEMP", "") or os.getenv("TMP", "")).strip()
+    temp_root = Path(configured_temp_root) if configured_temp_root else Path(tempfile.gettempdir()) / "zaomeng-tests"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    test_env = dict(os.environ)
+    test_env["TMPDIR"] = str(temp_root)
+    test_env["TEMP"] = str(temp_root)
+    test_env["TMP"] = str(temp_root)
     run_step("run smoke guardrails", [sys.executable, "-m", "unittest", *SMOKE_TEST_MODULES])
     run_step("run mypy", [sys.executable, "-m", "mypy", "--config-file", "mypy.ini"])
     run_step(
@@ -85,7 +96,7 @@ def main() -> int:
     if str(args.release_tag or "").strip():
         gate_command.extend(["--release-tag", str(args.release_tag).strip()])
     run_step("run release regression gate", gate_command)
-    run_step("run unit tests", [sys.executable, "-m", "pytest", "-q"])
+    run_step("run unit tests", [sys.executable, "-m", "pytest", "-q"], env=test_env)
     print("[done] development checks passed")
     return 0
 

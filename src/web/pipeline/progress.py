@@ -322,6 +322,7 @@ def finalize_workflow_failed(
     failed: dict[str, Any],
     *,
     message: str,
+    error_type: str = "",
     utc_now: Callable[[], str],
     finalize_manifest_timing: Callable[[dict[str, Any], str], None],
 ) -> None:
@@ -330,7 +331,18 @@ def finalize_workflow_failed(
     failed["updated_at"] = utc_now()
     finalize_manifest_timing(failed, "failed")
     failed.setdefault("summary", {})
-    failed.setdefault("progress", {})["message"] = message
+    progress = failed.setdefault("progress", {})
+    progress["stage"] = "failed"
+    progress["current_character"] = ""
+    progress["message"] = message
+    progress["error_type"] = str(error_type or "").strip()
+    progress["error"] = message
+    failed.setdefault("capabilities", {})["verify_workflow"] = {
+        "status": "failed",
+        "success": False,
+        "updated_at": utc_now(),
+        "message": message,
+    }
     failed.setdefault("events", []).append(
         {
             "stage": "failed",
