@@ -59,6 +59,7 @@
 
 .dialogue-memory-head-title {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.52rem;
 }
@@ -622,6 +623,20 @@
 .transcript-item.loading,
 .transcript-item.scene {
   justify-content: flex-start;
+}
+
+.dialogue-consistency-launcher {
+  min-height: 1.65rem;
+  padding: 0 0.62rem;
+  border-color: rgba(112, 138, 112, 0.24);
+  color: rgba(75, 108, 77, 0.96);
+  font-size: 0.68rem;
+}
+
+.dialogue-consistency-launcher.warning {
+  border-color: rgba(190, 126, 91, 0.3);
+  background: rgba(253, 246, 239, 0.94);
+  color: var(--accent-strong);
 }
 
 .dialogue-event-timeline {
@@ -1743,6 +1758,24 @@
   color: var(--ink-soft);
 }
 
+.dialogue-consistency-modal-card {
+  width: min(760px, calc(100vw - 28px));
+  max-height: calc(100dvh - 2rem);
+}
+
+.dialogue-consistency-modal-head {
+  gap: 0.7rem;
+}
+
+.dialogue-consistency-modal-scroll {
+  min-height: 0;
+}
+
+.dialogue-consistency-modal-scroll .consistency-monitor {
+  width: 100%;
+  margin: 0;
+}
+
 .consistency-monitor.warning {
   border-color: rgba(190, 126, 91, 0.26);
   background: rgba(253, 246, 239, 0.92);
@@ -2298,12 +2331,46 @@
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "kind kind"
+    "mentions mentions"
     "input actions";
   gap: 10px;
   align-items: end;
   padding: 8px 8px 8px 14px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.84);
+}
+
+.composer-mention-menu {
+  grid-area: mentions;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 88px;
+  overflow-y: auto;
+  padding: 7px 8px;
+  border: 1px solid rgba(184, 132, 113, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 251, 247, 0.98);
+  box-shadow: 0 10px 24px rgba(126, 92, 70, 0.1);
+}
+
+.composer-mention-option {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(188, 154, 135, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.composer-mention-option:hover,
+.composer-mention-option.active,
+.composer-mention-option[aria-selected="true"] {
+  border-color: rgba(184, 132, 113, 0.4);
+  background: rgba(191, 143, 123, 0.14);
+  color: var(--accent-strong);
 }
 
 .composer-kind-toggle {

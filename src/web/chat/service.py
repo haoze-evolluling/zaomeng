@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -38,11 +39,13 @@ import src.web.chat.state_utils as _state_utils
 import src.web.chat.text_utils as _text_utils
 import src.web.chat.turn_memory as _turn_memory
 from src.web.artifacts.ingest import load_relations_source
+from src.web.path_safety import InvalidStorageIdentifier, validate_storage_id
 from src.web.time_utils import utc_now as _utc_now
 
 
 class DialogueService:
     SESSION_STATE_VERSION = 1
+    PENDING_TURN_STALE_SECONDS = 30 * 60
 
     def __init__(
         self,
@@ -222,6 +225,50 @@ class DialogueService:
             return f"分支：{origin_label}"
         scene_title = str(dict(session.get("scene_card", {}) or {}).get("title", "")).strip()
         return scene_title or "主剧情"
+
+    def _turn_file(
+        self,
+        run_id: str,
+        session_id: str,
+        turn_id: str,
+        artifact: str,
+    ) -> Path:
+        safe_turn_id = validate_storage_id(turn_id, field_name="turn_id")
+        if artifact not in {"payload", "result"}:
+            raise ValueError("Unsupported turn artifact.")
+        return (
+            self._session_dir(run_id, session_id)
+            / "turns"
+            / f"{safe_turn_id}.{artifact}.json"
+        )
+
+    def _read_pending_turn_payload(
+        self,
+        run_id: str,
+        session_id: str,
+        pending: dict[str, Any],
+    ) -> dict[str, Any]:
+        turn_id = validate_storage_id(
+            str(pending.get("turn_id", "")).strip(), field_name="turn_id"
+        )
+        turn_dir = self._session_dir(run_id, session_id) / "turns"
+        canonical_path = self._turn_file(
+            run_id, session_id, turn_id, "payload"
+        )
+        if canonical_path.is_file():
+            return self._read_json(canonical_path)
+        stored_path_text = str(pending.get("payload_path", "")).strip()
+        if stored_path_text:
+            stored_path = Path(stored_path_text)
+            try:
+                stored_is_local = stored_path.resolve().is_relative_to(
+                    turn_dir.resolve()
+                )
+            except (OSError, RuntimeError, ValueError):
+                stored_is_local = False
+            if stored_is_local and stored_path.is_file():
+                return self._read_json(stored_path)
+        return {}
 
     def _branch_relation_changes(
         self, baseline: dict[str, Any], candidate: dict[str, Any]
@@ -408,6 +455,7 @@ class DialogueService:
             "latest_context_usage": {},
             "history": [],
             "pending_turn": {},
+            "aborted_turns": [],
             "generation_cache_stats": empty_generation_cache_stats(),
             "state": self._empty_session_state(),
             "created_at": _utc_now(),
@@ -468,6 +516,15 @@ class DialogueService:
         transition_message: str = "",
     ) -> dict[str, Any]:
         session = self._read_json(self._session_file(run_id, session_id))
+        pending = dict(session.get("pending_turn", {}) or {})
+        if pending:
+            stale_reason = self._stale_pending_turn_reason(
+                run_id, session_id, pending
+            )
+            if stale_reason:
+                self._abort_pending_turn_state(
+                    session, reason=stale_reason, aborted_at=_utc_now()
+                )
         if session.get("pending_turn"):
             raise ValueError("当前还有一轮待收口，请先等这拍结束再转场。")
         normalized_scene = dict(scene_profile or {})
@@ -476,20 +533,85 @@ class DialogueService:
             normalized_scene.get("scene_card_id", "")
         ).strip()
         scene_note = self._build_scene_switch_note(normalized_scene, transition_message)
+        switched_at = _utc_now()
         if scene_note:
             session.setdefault("history", []).append(
                 {
                     "speaker": "场景提示",
                     "message": scene_note,
                     "target": "",
-                    "ts": _utc_now(),
+                    "ts": switched_at,
                 }
             )
+        scene_title = str(normalized_scene.get("title", "")).strip()
+        scene_location = str(normalized_scene.get("location", "")).strip()
+        scene_time = str(normalized_scene.get("time_hint", "")).strip()
+        scene_atmosphere = str(normalized_scene.get("atmosphere", "")).strip()
+        scene_cue = scene_note or scene_title or scene_location or "切换到新场景"
+        transition_events: list[dict[str, Any]] = []
+        if normalized_scene:
+            transition_events.append(
+                {
+                    "kind": "scene_transition",
+                    "scope": "scene",
+                    "actor": "场景提示",
+                    "cue": scene_cue,
+                    "source": "scene_card_switch",
+                    "location_hint": scene_location,
+                    "ts": switched_at,
+                }
+            )
+        if scene_time:
+            transition_events.append(
+                {
+                    "kind": "time_change",
+                    "scope": "scene",
+                    "actor": "场景提示",
+                    "cue": f"新场景时间：{scene_time}",
+                    "source": "scene_card_switch",
+                    "time_hint": scene_time,
+                    "ts": switched_at,
+                }
+            )
+        if scene_atmosphere:
+            transition_events.append(
+                {
+                    "kind": "atmosphere_shift",
+                    "scope": "scene",
+                    "actor": "场景提示",
+                    "cue": scene_atmosphere,
+                    "source": "scene_card_switch",
+                    "ts": switched_at,
+                }
+            )
+        if transition_events:
+            self._set_session_event_signals(
+                session,
+                self._merge_event_signals_state(session, transition_events),
+            )
+        derived_progress = self._derive_scene_progress_state(
+            session, self._serialize_transcript(session)
+        )
+        if scene_location:
+            derived_progress["location"] = scene_location
+        if scene_time:
+            derived_progress["time_hint"] = scene_time
+        if scene_atmosphere:
+            derived_progress["atmosphere_summary"] = scene_atmosphere
+        derived_progress.update(
+            {
+                "progression_note": "",
+                "should_offer_scene_shift": False,
+                "scene_shift_reason": "",
+                "turns_in_current_scene": 0,
+                "beat_maturity": 0,
+                "world_tension_summary": "",
+                "updated_at": switched_at,
+            }
+        )
         self._set_session_scene_progress(
             session,
-            self._derive_scene_progress_state(
-                session, self._serialize_transcript(session)
-            ),
+            derived_progress,
         )
         transcript = self._serialize_transcript(session)
         memory_summary = self._build_session_memory_summary(run_id, session, transcript)
@@ -811,9 +933,12 @@ class DialogueService:
         if not turn_id or not issues:
             raise ValueError("Latest turn has no consistency issue to correct.")
 
-        turn_dir = self._session_dir(run_id, session_id) / "turns"
-        turn_payload = self._read_json(turn_dir / f"{turn_id}.payload.json")
-        turn_result = self._read_json(turn_dir / f"{turn_id}.result.json")
+        turn_payload = self._read_json(
+            self._turn_file(run_id, session_id, turn_id, "payload")
+        )
+        turn_result = self._read_json(
+            self._turn_file(run_id, session_id, turn_id, "result")
+        )
         original_responses = [
             dict(item or {})
             for item in list(turn_result.get("responses", []) or [])
@@ -845,10 +970,12 @@ class DialogueService:
         )
         branch_id = str(branch.get("session_id", "")).strip()
         branch_payload = self._read_json(self._session_file(run_id, branch_id))
-        branch_payload["relation_locks"] = dict(
-            source.get("relation_locks", {}) or {}
-        )
         checkpoint_before = dict(turn_payload.get("checkpoint_before", {}) or {})
+        branch_payload["relation_locks"] = dict(
+            checkpoint_before.get("relation_locks", {})
+            or source.get("relation_locks", {})
+            or {}
+        )
         branch_payload["memory_ledger"] = [
             dict(item or {})
             for item in list(
@@ -905,57 +1032,120 @@ class DialogueService:
             inherited_arcs.append(copied)
         branch_payload["inherited_character_arcs"] = inherited_arcs
 
-        history = [dict(item or {}) for item in list(source.get("history", []) or [])]
-        for response in reversed(original_responses):
-            if not history:
-                break
-            tail = history[-1]
-            if (
-                str(tail.get("speaker", "")).strip()
-                == str(response.get("speaker", "")).strip()
-                and str(tail.get("message", "")).strip()
-                == str(response.get("message", "")).strip()
+        history = [
+            dict(item or {})
+            for item in list(checkpoint_before.get("history", []) or [])
+            if isinstance(item, dict)
+        ]
+        if not history:
+            history = [
+                dict(item or {}) for item in list(source.get("history", []) or [])
+            ]
+            for response in reversed(original_responses):
+                if not history:
+                    break
+                tail = history[-1]
+                if (
+                    str(tail.get("speaker", "")).strip()
+                    == str(response.get("speaker", "")).strip()
+                    and str(tail.get("message", "")).strip()
+                    == str(response.get("message", "")).strip()
+                ):
+                    history.pop()
+            original_speaker = str(input_payload.get("speaker", "")).strip()
+            if history and (
+                str(history[-1].get("speaker", "")).strip() == original_speaker
+                and str(history[-1].get("message", "")).strip()
+                == original_message
             ):
                 history.pop()
-        original_speaker = str(input_payload.get("speaker", "")).strip()
-        if history and (
-            str(history[-1].get("speaker", "")).strip() == original_speaker
-            and str(history[-1].get("message", "")).strip() == original_message
-        ):
-            history.pop()
         branch_payload["history"] = history
 
-        restored_progress = dict(turn_payload.get("scene_progress", {}) or {})
+        restored_scene_card = dict(checkpoint_before.get("scene_card", {}) or {})
+        if restored_scene_card:
+            branch_payload["scene_card"] = restored_scene_card
+            branch_payload["scene_card_id"] = str(
+                checkpoint_before.get(
+                    "scene_card_id", restored_scene_card.get("scene_card_id", "")
+                )
+            ).strip()
+        restored_scene_history = [
+            dict(item or {})
+            for item in list(checkpoint_before.get("scene_history", []) or [])
+            if isinstance(item, dict)
+        ]
+        if restored_scene_history:
+            branch_payload["scene_history"] = restored_scene_history
+
+        restored_progress = dict(
+            checkpoint_before.get("scene_progress", {})
+            or turn_payload.get("scene_progress", {})
+            or {}
+        )
         if restored_progress:
             self._set_session_scene_progress(branch_payload, restored_progress)
-        restored_snapshots = dict(input_payload.get("character_snapshots", {}) or {})
+        restored_snapshots = dict(
+            checkpoint_before.get("character_snapshots", {})
+            or input_payload.get("character_snapshots", {})
+            or {}
+        )
         if restored_snapshots:
             self._set_session_character_snapshots(branch_payload, restored_snapshots)
         memory_context = dict(turn_payload.get("memory_context", {}) or {})
-        restored_relation_delta = dict(memory_context.get("relation_delta", {}) or {})
-        if restored_relation_delta:
-            self._set_session_relation_delta(branch_payload, restored_relation_delta)
-        restored_events = [
-            dict(item or {})
-            for item in list(memory_context.get("event_signals", []) or [])
-            if isinstance(item, dict)
-        ]
-        if restored_events:
+        self._set_session_relation_delta(
+            branch_payload,
+            dict(
+                checkpoint_before.get("relation_delta", {})
+                or memory_context.get("relation_delta", {})
+                or {}
+            ),
+        )
+        restored_relation_matrix = dict(
+            checkpoint_before.get("relation_matrix", {}) or {}
+        )
+        if restored_relation_matrix:
+            self._set_session_relation_matrix(
+                branch_payload, restored_relation_matrix
+            )
+        restored_event_state = dict(
+            checkpoint_before.get("event_signals", {}) or {}
+        )
+        if restored_event_state:
             self._set_session_event_signals(
                 branch_payload,
-                self._merge_event_signals_state(branch_payload, restored_events),
+                restored_event_state,
             )
-        restored_memory_state = dict(memory_context.get("archived_summary", {}) or {})
+        else:
+            restored_events = [
+                dict(item or {})
+                for item in list(memory_context.get("event_signals", []) or [])
+                if isinstance(item, dict)
+            ]
+            if restored_events:
+                self._set_session_event_signals(
+                    branch_payload,
+                    self._merge_event_signals_state(branch_payload, restored_events),
+                )
+        restored_memory_state = dict(
+            checkpoint_before.get("memory_summary_state", {})
+            or memory_context.get("archived_summary", {})
+            or {}
+        )
         if restored_memory_state:
             self._set_session_memory_summary_state(
                 branch_payload, restored_memory_state
             )
-        branch_payload["consistency_monitor"] = {
+        prior_monitor = dict(
+            checkpoint_before.get("consistency_monitor", {}) or {}
+        )
+        branch_payload["consistency_monitor"] = prior_monitor or {
             "latest": {},
             "history": [],
             "checked_turns": 0,
             "issue_count": 0,
-            "knowledge_ledger": list(turn_payload.get("knowledge_context", []) or []),
+            "knowledge_ledger": list(
+                turn_payload.get("knowledge_context", []) or []
+            ),
         }
         branch_payload["updated_at"] = _utc_now()
         self._write_json(self._session_file(run_id, branch_id), branch_payload)
@@ -982,9 +1172,12 @@ class DialogueService:
         turn_id = str(latest.get("turn_id", "")).strip()
         if not turn_id:
             raise ValueError("No completed turn is available for deep review.")
-        turn_dir = self._session_dir(run_id, session_id) / "turns"
-        turn_payload = self._read_json(turn_dir / f"{turn_id}.payload.json")
-        turn_result = self._read_json(turn_dir / f"{turn_id}.result.json")
+        turn_payload = self._read_json(
+            self._turn_file(run_id, session_id, turn_id, "payload")
+        )
+        turn_result = self._read_json(
+            self._turn_file(run_id, session_id, turn_id, "result")
+        )
         responses = [
             dict(item or {})
             for item in list(turn_result.get("responses", []) or [])
@@ -1014,12 +1207,19 @@ class DialogueService:
         *,
         session_id: str,
         review: dict[str, Any],
+        expected_turn_id: str = "",
     ) -> dict[str, Any]:
         session = self._read_json(self._session_file(run_id, session_id))
         monitor = dict(session.get("consistency_monitor", {}) or {})
         latest = dict(monitor.get("latest", {}) or {})
         if not latest:
             raise ValueError("No consistency report is available to update.")
+        expected = str(expected_turn_id or "").strip()
+        latest_turn_id = str(latest.get("turn_id", "")).strip()
+        if expected and latest_turn_id != expected:
+            raise ValueError(
+                "会话已进入新一轮，本次深度复核结果已过期，请重新复核最新一轮。"
+            )
         old_issue_count = len(list(latest.get("issues", []) or []))
         merged = _consistency.merge_semantic_review(
             latest,
@@ -1184,11 +1384,20 @@ class DialogueService:
     ) -> dict[str, Any]:
         run_id = str(run_manifest.get("run_id", "")).strip()
         session = self._read_json(self._session_file(run_id, session_id))
+        pending = dict(session.get("pending_turn", {}) or {})
+        if pending:
+            stale_reason = self._stale_pending_turn_reason(
+                run_id, session_id, pending
+            )
+            if stale_reason:
+                self._abort_pending_turn_state(
+                    session, reason=stale_reason, aborted_at=_utc_now()
+                )
         if session.get("pending_turn"):
             raise ValueError("当前已有一轮等待回复，请勿重复提交。")
         normalized_message_kind = self._normalize_message_kind(message_kind)
         effective_speaker_override = str(speaker_override or "").strip()
-        if normalized_message_kind == "narration" and not effective_speaker_override:
+        if normalized_message_kind in {"narration", "plot"} and not effective_speaker_override:
             effective_speaker_override = "场景提示"
         turn_id = f"turn-{uuid4().hex[:8]}"
         payload = self._build_turn_payload(
@@ -1201,7 +1410,9 @@ class DialogueService:
         )
         turn_dir = self._session_dir(run_id, session_id) / "turns"
         turn_dir.mkdir(parents=True, exist_ok=True)
-        turn_payload_path = turn_dir / f"{turn_id}.payload.json"
+        turn_payload_path = self._turn_file(
+            run_id, session_id, turn_id, "payload"
+        )
         self._write_json(turn_payload_path, payload)
         session["pending_turn"] = {
             "turn_id": turn_id,
@@ -1222,6 +1433,95 @@ class DialogueService:
         }
         session["updated_at"] = _utc_now()
         session["status"] = "waiting_for_host_reply"
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
+    def _stale_pending_turn_reason(
+        self, run_id: str, session_id: str, pending: dict[str, Any]
+    ) -> str:
+        turn_id = str(pending.get("turn_id", "")).strip()
+        if not turn_id:
+            return "missing_turn_id"
+        try:
+            result_path = self._turn_file(
+                run_id, session_id, turn_id, "result"
+            )
+            canonical_payload = self._turn_file(
+                run_id, session_id, turn_id, "payload"
+            )
+        except InvalidStorageIdentifier:
+            return "invalid_turn_id"
+        turn_dir = self._session_dir(run_id, session_id) / "turns"
+        if result_path.exists():
+            return "result_already_exists"
+        stored_path_text = str(pending.get("payload_path", "")).strip()
+        stored_payload_exists = False
+        if stored_path_text:
+            stored_path = Path(stored_path_text)
+            try:
+                stored_payload_exists = stored_path.resolve().is_relative_to(
+                    turn_dir.resolve()
+                ) and stored_path.is_file()
+            except (OSError, RuntimeError, ValueError):
+                stored_payload_exists = False
+        if not canonical_payload.is_file() and not stored_payload_exists:
+            return "payload_missing"
+        created_at = str(pending.get("created_at", "")).strip()
+        if not created_at:
+            return "missing_created_at"
+        try:
+            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
+        except (TypeError, ValueError):
+            return "invalid_created_at"
+        if age_seconds >= self.PENDING_TURN_STALE_SECONDS:
+            return "pending_timeout"
+        return ""
+
+    @staticmethod
+    def _abort_pending_turn_state(
+        session: dict[str, Any], *, reason: str, aborted_at: str
+    ) -> None:
+        pending = dict(session.get("pending_turn", {}) or {})
+        if pending:
+            aborted = [
+                dict(item or {})
+                for item in list(session.get("aborted_turns", []) or [])
+                if isinstance(item, dict)
+            ]
+            aborted.append(
+                {
+                    "turn_id": str(pending.get("turn_id", "")).strip(),
+                    "reason": str(reason or "aborted").strip(),
+                    "created_at": str(pending.get("created_at", "")).strip(),
+                    "aborted_at": aborted_at,
+                }
+            )
+            session["aborted_turns"] = aborted[-20:]
+        session["pending_turn"] = {}
+        session["status"] = "ready"
+
+    @with_session_lock
+    def abort_pending_turn(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        expected_turn_id: str = "",
+        reason: str = "generation_failed",
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        pending = dict(session.get("pending_turn", {}) or {})
+        expected = str(expected_turn_id or "").strip()
+        current = str(pending.get("turn_id", "")).strip()
+        if not pending or (expected and current != expected):
+            return self._serialize_session(run_id, session)
+        self._abort_pending_turn_state(
+            session, reason=reason, aborted_at=_utc_now()
+        )
+        session["updated_at"] = _utc_now()
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 
@@ -1440,11 +1740,11 @@ class DialogueService:
             )
         if not clean_responses:
             raise ValueError("No valid responses provided.")
-        pending_payload_path = Path(str(pending.get("payload_path", "")).strip())
-        pending_payload = (
-            self._read_json(pending_payload_path)
-            if pending_payload_path.exists() and pending_payload_path.is_file()
-            else {
+        pending_payload = self._read_pending_turn_payload(
+            run_id, session_id, pending
+        )
+        if not pending_payload:
+            pending_payload = {
                 "turn_id": str(pending.get("turn_id", "")).strip(),
                 "mode": str(pending.get("mode", "")).strip(),
                 "input": {
@@ -1457,7 +1757,6 @@ class DialogueService:
                     ).strip(),
                 },
             }
-        )
         context_usage = self._build_context_usage(pending_payload)
         consistency_report = _consistency.evaluate_turn_consistency(
             pending_payload,
@@ -1561,10 +1860,11 @@ class DialogueService:
             )
         if session_store is not None:
             session_store.compress_context(session)
-        result_path = (
-            self._session_dir(run_id, session_id)
-            / "turns"
-            / f"{pending.get('turn_id', 'turn')}.result.json"
+        result_path = self._turn_file(
+            run_id,
+            session_id,
+            str(pending.get("turn_id", "")).strip(),
+            "result",
         )
         result_payload = {
             "kind": "zaomeng_dialogue_result",
@@ -1625,7 +1925,9 @@ class DialogueService:
         turn_id = str(latest.get("turn_id", "")).strip()
         if not turn_id:
             return
-        result_path = self._session_dir(run_id, session_id) / "turns" / f"{turn_id}.result.json"
+        result_path = self._turn_file(
+            run_id, session_id, turn_id, "result"
+        )
         if not result_path.exists():
             return
         result = dict(latest.get("result", {}) or {})
@@ -1665,6 +1967,15 @@ class DialogueService:
         character_snapshots = self._session_character_snapshots(session)
         active_participants = self._resolve_active_participants(
             participants, full_history, mode, speaker, scene_progress
+        )
+        mentionable_participants = [
+            name
+            for name in active_participants
+            if name and name != str(session.get("controlled_character", "")).strip()
+        ]
+        mention_targets = _speaker_balance.extract_mention_targets(
+            mentionable_participants,
+            message,
         )
         scene_card = dict(session.get("scene_card", {}) or {})
         transcript = self._serialize_transcript(session)
@@ -1715,12 +2026,35 @@ class DialogueService:
             turn_id=turn_id,
             message_kind=normalized_message_kind,
         )
+        required_response_slots = len(mention_targets) + (
+            1 if normalized_message_kind == "plot" else 0
+        )
+        if required_response_slots:
+            response_limit_hint = max(response_limit_hint, required_response_slots)
         response_count_rule = (
             f"Return 1-{response_limit_hint} in-world replies. "
             "Let only characters who are currently present respond; do not force every participant to speak each turn."
         )
-        if normalized_message_kind == "narration" and mode == "act" and controlled_character_name:
-            response_lower_bound = min(response_limit_hint, max(1, min(2, len(active_participants))))
+        if normalized_message_kind == "plot":
+            character_reply_limit = max(0, response_limit_hint - 1)
+            response_count_rule = (
+                "Return exactly one concrete scene-level beat first as 场景提示 or 旁白"
+                + (
+                    f", followed by 1-{character_reply_limit} present-character reactions."
+                    if character_reply_limit
+                    else "."
+                )
+            )
+            if mode == "act" and controlled_character_name and character_reply_limit:
+                response_count_rule += (
+                    f" Other participants besides {controlled_character_name} must react when present; "
+                    "do not return only the controlled character's line."
+                )
+        elif normalized_message_kind == "narration" and mode == "act" and controlled_character_name:
+            response_lower_bound = min(
+                response_limit_hint,
+                max(1, min(2, len(active_participants))),
+            )
             response_count_rule = (
                 f"Return {response_lower_bound}-{response_limit_hint} in-world replies "
                 f"when multiple cast members are present. Other participants besides {controlled_character_name} must speak; "
@@ -1728,7 +2062,11 @@ class DialogueService:
             )
         instructions = {
             "mode": mode,
-            "generation_goal": "Keep every reply faithful to the persona bundle, relationship context, and scene mode.",
+            "generation_goal": (
+                "Materially advance the story while keeping every reply faithful to the persona bundle, relationship context, and scene mode."
+                if normalized_message_kind == "plot"
+                else "Keep every reply faithful to the persona bundle, relationship context, and scene mode."
+            ),
             "mode_rule": self._mode_rule(mode, normalized_message_kind, controlled_character_name),
             "speaker_rule": self._speaker_rule(mode, session, normalized_message_kind),
             "response_style": self._response_style_rule(
@@ -1738,7 +2076,16 @@ class DialogueService:
             ),
             "scene_rule": self._scene_rule(scene_card),
             "progression_rule": self._scene_progress_rule(scene_progress),
+            "plot_progression_contract": self._plot_progression_contract(
+                normalized_message_kind,
+                scene_progress,
+            ),
             "response_count_rule": response_count_rule,
+            "mention_rule": (
+                f"The user directly addressed {', '.join(mention_targets)} with @. Every mentioned character is present and must reply in this turn before optional unmentioned cast members."
+                if mention_targets
+                else ""
+            ),
         }
         speaker_activity = _speaker_balance.build_speaker_activity(
             participants,
@@ -1782,6 +2129,7 @@ class DialogueService:
                 "message_kind": normalized_message_kind,
                 "participants": participants,
                 "active_participants": active_participants,
+                "mention_targets": mention_targets,
                 "controlled_character": session.get("controlled_character", ""),
                 "scene_card": scene_card,
                 "scene_progress": scene_progress,
@@ -1809,11 +2157,28 @@ class DialogueService:
             "speaker_activity": speaker_activity,
             "speaker_plan": speaker_plan,
             "host_action": {
-                "expected_output": [{"speaker": "CharacterName", "message": "..."}],
+                "expected_output": (
+                    [
+                        {"speaker": "场景提示", "message": "A concrete event or state change happening now."},
+                        {"speaker": "CharacterName", "message": "An in-character reaction with a next hook."},
+                    ]
+                    if normalized_message_kind == "plot"
+                    else [{"speaker": "CharacterName", "message": "..."}]
+                ),
                 "response_limit_hint": response_limit_hint,
                 "output_rule": (
-                    "Return only in-world character replies. Do not explain the workflow or mention prompts. "
-                    "Do not split obvious small actions into standalone narration; keep them inside the speaking character's line with brief parenthetical action."
+                    (
+                        "Return the required scene-level beat first, then in-world character reactions. "
+                        "The scene beat must materially change the situation; do not use it for a minor gesture or a summary of existing dialogue. "
+                    )
+                    if normalized_message_kind == "plot"
+                    else (
+                        "Return only in-world character replies. "
+                        "Do not split obvious small actions into standalone narration; keep them inside the speaking character's line with brief parenthetical action. "
+                    )
+                )
+                + (
+                    "Do not explain the workflow or mention prompts."
                 ),
             },
             "host_prompt_brief": self._host_prompt_brief(
@@ -1831,6 +2196,7 @@ class DialogueService:
     _response_style_rule = staticmethod(_prompt_rules._response_style_rule)
     _scene_rule = staticmethod(_prompt_rules._scene_rule)
     _scene_progress_rule = staticmethod(_prompt_rules._scene_progress_rule)
+    _plot_progression_contract = staticmethod(_prompt_rules._plot_progression_contract)
     _suggestion_mode_rule = staticmethod(_prompt_rules._suggestion_mode_rule)
     _suggestion_style_rule = staticmethod(_prompt_rules._suggestion_style_rule)
     _build_user_suggestion_persona = staticmethod(
@@ -1926,12 +2292,22 @@ class DialogueService:
             return 1
         seed = sum(ord(ch) for ch in str(turn_id or ""))
         rng = random.Random(seed)
+        if message_kind == "plot" and active_count == 1:
+            return 2
         if mode == "observe":
-            upper = min(4, max(2, active_count))
-            lower = 3 if active_count >= 4 else 2
-            if message_kind == "narration":
-                upper = min(5, max(upper, 3))
+            if message_kind == "plot":
+                upper = min(5, max(3, active_count + 1))
                 lower = min(upper, 2 if active_count <= 2 else 3)
+            else:
+                upper = min(4, max(2, active_count))
+                lower = 3 if active_count >= 4 else 2
+                if message_kind == "narration":
+                    upper = min(5, max(upper, 3))
+                    lower = min(upper, 2 if active_count <= 2 else 3)
+            return rng.randint(lower, upper)
+        if message_kind == "plot" and mode in {"act", "insert"}:
+            upper = min(5, max(2, active_count + 1))
+            lower = 3 if active_count >= 2 else 2
             return rng.randint(lower, upper)
         if message_kind == "narration" and mode in {"act", "insert"}:
             upper = min(4, max(1, active_count))
@@ -2413,7 +2789,12 @@ class DialogueService:
             turn_id = str(result.get("turn_id", "")).strip()
             if not turn_id:
                 continue
-            payload_path = turn_dir / f"{turn_id}.payload.json"
+            try:
+                payload_path = self._turn_file(
+                    run_id, session_id, turn_id, "payload"
+                )
+            except InvalidStorageIdentifier:
+                continue
             payload = self._read_json(payload_path) if payload_path.exists() else {}
             records.append(
                 {

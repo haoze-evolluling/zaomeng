@@ -124,6 +124,9 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
 
     def test_dialogue_renders_consistency_quality_history(self):
         content = read_js("dialogue.js")
+        main = read_js("main.js")
+        shell = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "main-shell.html").read_text(encoding="utf-8")
+        modals = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "settings-modal.html").read_text(encoding="utf-8")
         styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
 
         self.assertIn("function appendConsistencyQualityPanel(card, monitor) {", content)
@@ -135,6 +138,14 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("async function deepReviewLatestConsistencyTurn(button) {", content)
         self.assertIn('reviewButton.dataset.consistencyReview = "true";', content)
         self.assertIn(".consistency-review-button {", styles)
+        self.assertIn('id="dialogue-consistency-button"', shell)
+        self.assertIn('id="dialogue-consistency-modal"', modals)
+        self.assertIn("function renderDialogueConsistencyMonitor(monitor) {", content)
+        self.assertIn("window.openDialogueConsistencyModal = openDialogueConsistencyModal;", content)
+        self.assertIn('bind("dialogue-consistency-button", "click"', main)
+        transcript_renderer = content.split("function renderTranscript(items) {", 1)[1].split("function renderSessionBooting", 1)[0]
+        self.assertNotIn("appendConsistencyMonitor(root", transcript_renderer)
+        self.assertIn(".dialogue-consistency-launcher {", styles)
 
     def test_dialogue_event_timeline_and_turn_branch_are_wired(self):
         dialogue = read_js("dialogue.js")
@@ -196,6 +207,8 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn('data-director-action="slow_emotion"', shell)
         self.assertIn("function renderDialogueDirectorPanel(session)", dialogue)
         self.assertIn("function applyDialogueDirectorOption(option, button)", dialogue)
+        self.assertIn('await window.handleSendTurn(plotCue, "plot")', dialogue)
+        self.assertNotIn("api.suggestDialogueTurn(currentRunId, currentDialogueSessionId, direction)", dialogue)
         self.assertIn("generateDialogueDirectorOptions", api)
         self.assertIn("suggestDialogueTurn", api)
         self.assertIn(".dialogue-director-panel {", styles)
@@ -266,6 +279,38 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn('body: JSON.stringify({ seed_text: "", direction })', content)
         self.assertIn('status: "error",', content)
         self.assertIn('retry.textContent = "重试";', content)
+
+    def test_plot_push_can_advance_without_a_manual_cue(self):
+        main_content = read_js("main.js")
+        composer_content = read_js("composer-vue-island.js")
+        fragment_content = read_fragment("main-shell.html")
+
+        self.assertIn("const DIALOGUE_AUTO_PLOT_PUSH_MESSAGE =", main_content)
+        self.assertIn('const automaticPlotPush = messageKind === "plot" && !requestedMessage;', main_content)
+        self.assertIn('|| messageKind === "plot";', main_content)
+        self.assertIn("if (silentOptimistic && requestedMessage) {", main_content)
+        self.assertIn("留空则由系统主动推进", main_content)
+        self.assertIn('normalizeDialogueMessageKind(currentDialogueMessageKind) === "narration"', main_content)
+        self.assertIn('else if (draftKind.value === "narration")', composer_content)
+        self.assertIn("{{ draftKind === 'plot' ? '推进' : '送出' }}", composer_content)
+        self.assertIn('data-kind="plot"', fragment_content)
+        self.assertIn(">推进剧情</button>", fragment_content)
+
+    def test_composer_at_mentions_only_offer_present_characters(self):
+        main_content = read_js("main.js")
+        composer_content = read_js("composer-vue-island.js")
+        fragment_content = read_fragment("main-shell.html")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn("function buildDialogueMentionCandidates(session = currentDialogueSession) {", main_content)
+        self.assertIn("runtime_state_overview", main_content)
+        self.assertIn("present_participants", main_content)
+        self.assertIn("function extractDialogueMentionContext(value, caretPosition) {", main_content)
+        self.assertIn("mentionCandidates: buildDialogueMentionCandidates", main_content)
+        self.assertIn("function updateMentionMenu(value, caretPosition) {", composer_content)
+        self.assertIn("@mousedown.prevent=\"insertMention(name)\"", composer_content)
+        self.assertIn('id="dialogue-mention-menu"', fragment_content)
+        self.assertIn(".composer-mention-menu {", styles)
 
     def test_dialogue_association_toggle_persists_and_gates_requests(self):
         main_content = read_js("main.js")

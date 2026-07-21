@@ -574,8 +574,10 @@ def build_dialogue_llm_messages(
 
     turn_system_parts = [
         str(instructions.get("progression_rule", "")).strip(),
+        str(instructions.get("plot_progression_contract", "")).strip(),
         str(instructions.get("response_count_rule", "")).strip(),
         str(instructions.get("group_chat_rule", "")).strip(),
+        str(instructions.get("mention_rule", "")).strip(),
     ]
     speaker_plan = dict(payload.get("speaker_plan", {}) or {})
     responder_hints = list(payload.get("responder_hints", []) or [])
@@ -606,6 +608,10 @@ def build_dialogue_llm_messages(
         turn_system_parts.append(
             "这次至少返回 1 条可用回复；只有在确实需要场景切换、人物进退场或环境变化时，才返回 speaker 为“旁白”或“场景提示”的一条提示。"
         )
+        if message_kind == "plot":
+            turn_system_parts.append(
+                "上一版没有完成剧情推动。第一项必须是 speaker 为“场景提示”或“旁白”的具体新事件或状态变化，随后再写角色反应；不得只延续原话题闲聊。"
+            )
     stable_system_prompt = "\n".join(
         part for part in stable_system_parts if part
     )
@@ -618,6 +624,7 @@ def build_dialogue_llm_messages(
         "message": str(input_block.get("message", "")).strip(),
         "participants": participants,
         "active_participants": active_participants,
+        "mention_targets": list(input_block.get("mention_targets", []) or []),
         "memory_context": memory_context,
         "knowledge_boundary": knowledge_context,
         "correction_context": correction_context,
@@ -1504,8 +1511,10 @@ def generate_dialogue_responses(
             break
         try:
             responses = parse_responses(content, allowed_speakers)
+            reordered = _reorder_plot_push_responses(responses, payload)
+            reordered = _prioritize_mentioned_responses(reordered, payload)
             normalized = _normalize_dialogue_responses(
-                responses,
+                reordered,
                 response_limit=int(
                     dict(payload.get("host_action", {}) or {}).get(
                         "response_limit_hint", 0
@@ -1513,7 +1522,22 @@ def generate_dialogue_responses(
                     or 0
                 ),
             )
-            return _reorder_plot_push_responses(normalized, payload)
+            if _is_plot_push(payload) and not _has_plot_scene_beat(normalized):
+                last_error = ValueError(
+                    "剧情推动没有生成有效场景事件，模型只返回了角色闲聊。"
+                )
+                if index + 1 < len(attempts):
+                    continue
+                raise last_error
+            missing_mentions = _missing_mention_targets(normalized, payload)
+            if missing_mentions:
+                last_error = ValueError(
+                    f"被 @ 的在场角色没有回应：{', '.join(missing_mentions)}。"
+                )
+                if index + 1 < len(attempts):
+                    continue
+                raise last_error
+            return normalized
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = ValueError(str(exc)) if isinstance(exc, json.JSONDecodeError) else exc
             if index + 1 < len(attempts):
@@ -1571,7 +1595,7 @@ def _reorder_plot_push_responses(
     input_block = dict(payload.get("input", {}) or {})
     message_kind = str(input_block.get("message_kind", "")).strip()
     controlled = str(input_block.get("controlled_character", "")).strip()
-    if message_kind != "narration" or mode != "act" or not controlled:
+    if message_kind not in {"narration", "plot"}:
         return responses
 
     meta_speakers = {"旁白", "场景提示"}
@@ -1584,8 +1608,8 @@ def _reorder_plot_push_responses(
         else:
             characters.append(item)
 
-    if len(characters) <= 1:
-        return responses
+    if mode != "act" or not controlled or len(characters) <= 1:
+        return (meta[:1] + characters) if message_kind == "plot" else (characters + meta)
 
     last_idx = len(characters) - 1
     controlled_idx = next(
@@ -1593,14 +1617,73 @@ def _reorder_plot_push_responses(
         -1,
     )
     if controlled_idx != last_idx:
-        return responses
+        return (meta[:1] + characters) if message_kind == "plot" else (characters + meta)
 
     controlled_item = characters.pop(last_idx)
     if len(characters) >= 2:
         characters.insert(len(characters) - 1, controlled_item)
     else:
         characters.insert(0, controlled_item)
-    return characters + meta
+    return (meta[:1] + characters) if message_kind == "plot" else (characters + meta)
+
+
+def _is_plot_push(payload: dict[str, Any]) -> bool:
+    input_block = dict(payload.get("input", {}) or {})
+    return str(input_block.get("message_kind", "")).strip() == "plot"
+
+
+def _has_plot_scene_beat(responses: list[dict[str, str]]) -> bool:
+    if not responses:
+        return False
+    return str(responses[0].get("speaker", "")).strip() in {"旁白", "场景提示"}
+
+
+def _prioritize_mentioned_responses(
+    responses: list[dict[str, str]],
+    payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    input_block = dict(payload.get("input", {}) or {})
+    targets = [
+        str(name).strip()
+        for name in list(input_block.get("mention_targets", []) or [])
+        if str(name).strip()
+    ]
+    if not targets:
+        return responses
+    meta = [item for item in responses if str(item.get("speaker", "")).strip() in {"旁白", "场景提示"}]
+    characters = [item for item in responses if str(item.get("speaker", "")).strip() not in {"旁白", "场景提示"}]
+    targeted = [
+        item
+        for target in targets
+        for item in characters
+        if str(item.get("speaker", "")).strip() == target
+    ]
+    others = [
+        item
+        for item in characters
+        if str(item.get("speaker", "")).strip() not in targets
+    ]
+    return [*meta, *targeted, *others] if _is_plot_push(payload) else [*targeted, *others, *meta]
+
+
+def _missing_mention_targets(
+    responses: list[dict[str, str]],
+    payload: dict[str, Any],
+) -> list[str]:
+    input_block = dict(payload.get("input", {}) or {})
+    targets = [
+        str(name).strip()
+        for name in list(input_block.get("mention_targets", []) or [])
+        if str(name).strip()
+    ]
+    speakers = {
+        str(item.get("speaker", "")).strip()
+        for item in responses
+        if str(item.get("speaker", "")).strip()
+    }
+    return [name for name in targets if name not in speakers]
+
+
 def generate_dialogue_associations(
     *,
     payload: dict[str, Any],

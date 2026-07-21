@@ -8,6 +8,7 @@ from src.web.chat.speaker_balance import (
     apply_plan_to_hints,
     build_speaker_activity,
     build_speaker_plan,
+    extract_mention_targets,
 )
 
 
@@ -69,6 +70,43 @@ class SpeakerBalanceTests(unittest.TestCase):
         )
 
         self.assertNotIn("丙", plan["order"])
+
+    def test_at_mention_is_urgent_and_matches_the_exact_present_name(self):
+        activity = build_speaker_activity(["林", "林黛玉", "贾宝玉"], self.turns)
+        plan = build_speaker_plan(
+            activity=activity,
+            active_participants=["林", "林黛玉", "贾宝玉"],
+            message="@林黛玉 你怎么看？",
+            mode="observe",
+            input_speaker="User",
+            controlled_character="",
+            message_kind="dialogue",
+            response_limit=2,
+        )
+
+        self.assertEqual(extract_mention_targets(["林", "林黛玉"], "@林黛玉,你说呢"), ["林黛玉"])
+        self.assertEqual(
+            extract_mention_targets(
+                ["John", "John Doe"], "@John Doe, what do you think?"
+            ),
+            ["John Doe"],
+        )
+        self.assertEqual(plan["mention_targets"], ["林黛玉"])
+        self.assertEqual(plan["order"][0], "林黛玉")
+        self.assertIn("林黛玉", plan["priority_candidates"])
+        self.assertIn("必须在本轮直接回应", plan["rule"])
+
+        self_plan = build_speaker_plan(
+            activity=activity,
+            active_participants=["林", "林黛玉"],
+            message="@林 你自己答。",
+            mode="act",
+            input_speaker="林",
+            controlled_character="林",
+            message_kind="dialogue",
+            response_limit=2,
+        )
+        self.assertEqual(self_plan["mention_targets"], [])
 
     def test_plan_reorders_hints_and_reaches_final_prompt(self):
         activity = build_speaker_activity(["甲", "乙", "丙"], self.turns)

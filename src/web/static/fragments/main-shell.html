@@ -16,6 +16,15 @@
                 弹窗查看
               </button>
               <button id="dialogue-memory-copy-button" type="button" class="soft-button">复制摘要</button>
+              <button
+                id="dialogue-consistency-button"
+                type="button"
+                class="soft-button dialogue-consistency-launcher hidden"
+                aria-haspopup="dialog"
+                aria-controls="dialogue-consistency-modal"
+              >
+                一致性
+              </button>
             </div>
             <small id="dialogue-memory-updated">刚刚更新</small>
             <small id="dialogue-memory-copy-status" class="dialogue-memory-copy-status"></small>
@@ -197,8 +206,9 @@
       <div class="composer-main">
         <div id="dialogue-message-kind" class="composer-kind-toggle" role="group" aria-label="输入类型">
           <button type="button" class="kind-chip active" data-kind="dialogue">台词</button>
-          <button type="button" class="kind-chip" data-kind="narration">剧情推动</button>
+          <button type="button" class="kind-chip" data-kind="plot" title="可填写推进方向，也可以留空让系统主动推进">推进剧情</button>
         </div>
+        <div id="dialogue-mention-menu" class="composer-mention-menu hidden" role="listbox" aria-label="选择在场人物"></div>
         <textarea id="dialogue-message" rows="2" placeholder="写一句你想让他们听见的话"></textarea>
         <div class="composer-actions">
           <button

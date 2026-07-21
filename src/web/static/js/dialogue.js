@@ -108,7 +108,39 @@ function renderDialogueTranscript(session) {
     selfInsert: card.self_insert || {},
   });
   const items = metaMessage ? [metaMessage, ...(session?.transcript || [])] : session?.transcript || [];
-  renderTranscript(items, session?.consistency_monitor || null);
+  renderDialogueConsistencyMonitor(session?.consistency_monitor || null);
+  renderTranscript(items);
+}
+
+function renderDialogueConsistencyMonitor(monitor) {
+  const button = el("dialogue-consistency-button");
+  const mount = el("dialogue-consistency-modal-mount");
+  const latest = monitor?.latest || {};
+  const checkedTurns = Number(monitor?.checked_turns || 0) || 0;
+  const available = Boolean(checkedTurns && latest?.status);
+  if (button) {
+    button.classList.toggle("hidden", !available);
+  }
+  if (!available) {
+    if (mount) mount.innerHTML = "";
+    closeDialogueConsistencyModal();
+    return;
+  }
+
+  const issues = Array.isArray(latest.issues) ? latest.issues : [];
+  const score = Math.max(0, Math.min(100, Number(latest.score || 0)));
+  if (button) {
+    button.classList.toggle("warning", issues.length > 0);
+    button.textContent = issues.length ? `一致性提醒 ${issues.length}` : `✓ 一致性 ${score}`;
+    button.setAttribute(
+      "aria-label",
+      issues.length ? `人物一致性发现 ${issues.length} 个提醒，点击查看` : `人物一致性得分 ${score}，点击查看`
+    );
+  }
+  if (!mount) return;
+  mount.innerHTML = "";
+  appendConsistencyMonitor(mount, monitor);
+  bindTranscriptSendActions(mount);
 }
 
 function appendConsistencyMonitor(root, monitor) {
@@ -1085,24 +1117,22 @@ async function applyDialogueDirectorOption(option, button) {
     button.textContent = "正在落地...";
   }
   try {
-    const api = await requireWebUiApi();
-    const payload = await api.suggestDialogueTurn(currentRunId, currentDialogueSessionId, direction);
-    const suggestion = String(payload?.suggestion || "").trim();
-    if (!suggestion) throw new Error("模型没有返回可演绎的文本。 ");
+    const beat = String(option?.beat || "").trim();
+    const plotCue = beat && !direction.includes(beat)
+      ? `${beat}\n推进要求：${direction}`
+      : direction;
     dialogueDirectorState.options = [];
-    const mode = currentDialogueSession?.mode || currentDialogueSession?.session_card?.mode || "observe";
-    const kind = mode === "observe" ? "narration" : "dialogue";
     const sent = typeof window.handleSendTurn === "function"
-      ? await window.handleSendTurn(suggestion, kind)
+      ? await window.handleSendTurn(plotCue, "plot")
       : false;
     if (!sent) {
       if (typeof window.setComposerDraft === "function") {
-        window.setComposerDraft(suggestion, { focus: true });
+        window.setComposerDraft(plotCue, { focus: true });
       }
       if (typeof window.setDialogueMessageKind === "function") {
-        window.setDialogueMessageKind(kind);
+        window.setDialogueMessageKind("plot");
       }
-      setDialogueSessionFailure("方案已经写成文案，但这次没有发送成功。", "内容已放回输入框，可以直接重试。", true);
+        setDialogueSessionFailure("方案已经写成文案，但这次没有发送成功。", "内容已放回输入框，可以直接重试。", true);
     }
   } catch (error) {
     setDialogueSessionFailure(error.message || "导演方案落地失败。", "可以选择其他方案，或稍后重试。", false);
@@ -2313,8 +2343,30 @@ function closeDialogueMemoryModal(options = {}) {
   }
 }
 
+function isDialogueConsistencyModalOpen() {
+  const modal = el("dialogue-consistency-modal");
+  return Boolean(modal && !modal.classList.contains("hidden"));
+}
+
+function openDialogueConsistencyModal() {
+  const modal = el("dialogue-consistency-modal");
+  if (!modal || !el("dialogue-consistency-modal-mount")?.children.length) return;
+  toggle("dialogue-consistency-modal", true);
+  if (typeof syncModalScrollLock === "function") syncModalScrollLock();
+}
+
+function closeDialogueConsistencyModal() {
+  const modal = el("dialogue-consistency-modal");
+  if (modal) toggle("dialogue-consistency-modal", false);
+  if (typeof syncModalScrollLock === "function") syncModalScrollLock();
+}
+
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (isDialogueConsistencyModalOpen()) {
+    closeDialogueConsistencyModal();
+    return;
+  }
   if (!isDialogueMemoryModalOpen()) return;
   closeDialogueMemoryModal();
 });
@@ -2322,7 +2374,7 @@ document.addEventListener("keydown", (event) => {
 function buildOptimisticUserTranscriptEntry(session, message, messageKind = "dialogue") {
   const mode = session?.mode || session?.session_card?.mode || "observe";
   const selfInsert = session?.session_card?.self_insert || {};
-  const isNarration = String(messageKind || "").trim() === "narration";
+  const isNarration = ["narration", "plot"].includes(String(messageKind || "").trim());
   const speaker = isNarration
     ? "场景提示"
     : mode === "act"
@@ -2331,7 +2383,7 @@ function buildOptimisticUserTranscriptEntry(session, message, messageKind = "dia
         ? selfInsert.display_name || "你"
         : "你";
   const role = isNarration ? "scene" : mode === "observe" ? "director" : "user";
-  return { speaker, message, role, messageKind: isNarration ? "narration" : "dialogue" };
+  return { speaker, message, role, messageKind: isNarration ? String(messageKind || "narration").trim() : "dialogue" };
 }
 
 function buildFailedSendTranscript(session, message, messageKind, errorMessage) {
@@ -2412,7 +2464,7 @@ function bindTranscriptSendActions(root) {
   });
 }
 
-function renderTranscript(items, consistencyMonitor = null) {
+function renderTranscript(items) {
   const root = el("dialogue-transcript");
   if (!root) return;
   bindTranscriptSendActions(root);
@@ -2498,8 +2550,6 @@ function renderTranscript(items, consistencyMonitor = null) {
     root.appendChild(row);
   });
 
-  appendConsistencyMonitor(root, consistencyMonitor);
-
   if (typeof window.renderDialogueAssociations === "function") {
     window.renderDialogueAssociations();
   }
@@ -2513,6 +2563,7 @@ function renderSessionBooting(mode, participants) {
   if (meta) items.push(meta);
   items.push({ role: "loading", message: "正在替你铺开场景与第一轮对白..." });
   setSessionBadge("入场中");
+  renderDialogueConsistencyMonitor(null);
   renderTranscript(items);
 }
 
@@ -3164,6 +3215,8 @@ window.copyDialogueMemorySummary = copyDialogueMemorySummary;
 window.openDialogueMemoryModal = openDialogueMemoryModal;
 window.closeDialogueMemoryModal = closeDialogueMemoryModal;
 window.toggleDialogueMemory = toggleDialogueMemory;
+window.openDialogueConsistencyModal = openDialogueConsistencyModal;
+window.closeDialogueConsistencyModal = closeDialogueConsistencyModal;
 window.renderTranscript = renderTranscript;
 window.renderSessionBooting = renderSessionBooting;
 window.runDetailActionsForDialogue = runDetailActionsForDialogue;

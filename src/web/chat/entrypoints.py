@@ -16,6 +16,32 @@ def _unpack_dialogue_generation(
     return list(generated or []), None
 
 
+def _prepared_turn_id(prepared: dict[str, Any]) -> str:
+    return str(
+        dict(prepared.get("pending_turn_summary", {}) or {}).get("turn_id", "")
+    ).strip()
+
+
+def _abort_pending_turn_safely(
+    dialogue: Any,
+    run_id: str,
+    session_id: str,
+    *,
+    expected_turn_id: str,
+    reason: str,
+) -> None:
+    try:
+        dialogue.abort_pending_turn(
+            run_id,
+            session_id,
+            expected_turn_id=expected_turn_id,
+            reason=reason,
+        )
+    except Exception:
+        # Preserve the generation error that caused the abort attempt.
+        return
+
+
 def _ingest_generated_dialogue(
     dialogue: Any,
     run_id: str,
@@ -64,26 +90,37 @@ def create_dialogue_session_payload(
     )
     session_id = str(session.get("session_id", "")).strip()
     opening_message = build_dialogue_opening_message(session)
-    dialogue.prepare_turn(
+    prepared = dialogue.prepare_turn(
         manifest,
         session_id=session_id,
         message=opening_message,
         speaker_override="场景提示",
         transcript_message="",
     )
-    pending_payload = load_pending_turn_payload(run_id, session_id)
+    expected_turn_id = _prepared_turn_id(prepared)
     try:
-        generated = generate_dialogue_responses(run_id, pending_payload)
-    except LLMRequestError as exc:
-        raise ValueError(friendly_dialogue_llm_error(exc)) from exc
-    responses, generation_cache = _unpack_dialogue_generation(generated)
-    evolve_relations_from_turn(run_id, pending_payload, responses)
-    ingested = _ingest_generated_dialogue(
-        dialogue, run_id, session_id, responses, generation_cache
-    )
-    if callable(refresh_scene_progress):
-        ingested = refresh_scene_progress(run_id, ingested)
-    return ingested
+        pending_payload = load_pending_turn_payload(run_id, session_id)
+        try:
+            generated = generate_dialogue_responses(run_id, pending_payload)
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        responses, generation_cache = _unpack_dialogue_generation(generated)
+        evolve_relations_from_turn(run_id, pending_payload, responses)
+        ingested = _ingest_generated_dialogue(
+            dialogue, run_id, session_id, responses, generation_cache
+        )
+        if callable(refresh_scene_progress):
+            ingested = refresh_scene_progress(run_id, ingested)
+        return ingested
+    except Exception:
+        _abort_pending_turn_safely(
+            dialogue,
+            run_id,
+            session_id,
+            expected_turn_id=expected_turn_id,
+            reason="opening_failed",
+        )
+        raise
 
 
 def continue_dialogue_scene_opening_payload(
@@ -107,26 +144,37 @@ def continue_dialogue_scene_opening_payload(
     if not session_id:
         raise ValueError("Session not found.")
     opening_message = build_dialogue_opening_message(session)
-    dialogue.prepare_turn(
+    prepared = dialogue.prepare_turn(
         manifest,
         session_id=session_id,
         message=opening_message,
         speaker_override="场景提示",
         transcript_message="",
     )
-    pending_payload = load_pending_turn_payload(run_id, session_id)
+    expected_turn_id = _prepared_turn_id(prepared)
     try:
-        generated = generate_dialogue_responses(run_id, pending_payload)
-    except LLMRequestError as exc:
-        raise ValueError(friendly_dialogue_llm_error(exc)) from exc
-    responses, generation_cache = _unpack_dialogue_generation(generated)
-    evolve_relations_from_turn(run_id, pending_payload, responses)
-    ingested = _ingest_generated_dialogue(
-        dialogue, run_id, session_id, responses, generation_cache
-    )
-    if callable(refresh_scene_progress):
-        ingested = refresh_scene_progress(run_id, ingested)
-    return ingested
+        pending_payload = load_pending_turn_payload(run_id, session_id)
+        try:
+            generated = generate_dialogue_responses(run_id, pending_payload)
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        responses, generation_cache = _unpack_dialogue_generation(generated)
+        evolve_relations_from_turn(run_id, pending_payload, responses)
+        ingested = _ingest_generated_dialogue(
+            dialogue, run_id, session_id, responses, generation_cache
+        )
+        if callable(refresh_scene_progress):
+            ingested = refresh_scene_progress(run_id, ingested)
+        return ingested
+    except Exception:
+        _abort_pending_turn_safely(
+            dialogue,
+            run_id,
+            session_id,
+            expected_turn_id=expected_turn_id,
+            reason="opening_failed",
+        )
+        raise
 
 
 def reply_dialogue_turn_payload(
@@ -148,30 +196,45 @@ def reply_dialogue_turn_payload(
         Callable[[str, dict[str, Any]], dict[str, Any]] | None
     ) = None,
 ) -> dict[str, Any]:
+    normalized_kind = str(message_kind or "").strip().lower()
+    is_plot_push = normalized_kind in {"plot", "plot_push", "advance"}
     speaker_override = (
-        "场景提示" if str(message_kind or "").strip() == "narration" else ""
+        "场景提示"
+        if normalized_kind in {"narration", "plot", "plot_push", "advance"}
+        else ""
     )
-    dialogue.prepare_turn(
+    prepared = dialogue.prepare_turn(
         manifest,
         session_id=session_id,
         message=message,
         message_kind=message_kind,
         speaker_override=speaker_override,
-        transcript_message="" if suppress_transcript_message else None,
+        transcript_message="" if suppress_transcript_message or is_plot_push else None,
     )
-    pending_payload = load_pending_turn_payload(run_id, session_id)
+    expected_turn_id = _prepared_turn_id(prepared)
     try:
-        generated = generate_dialogue_responses(run_id, pending_payload)
-    except LLMRequestError as exc:
-        raise ValueError(friendly_dialogue_llm_error(exc)) from exc
-    responses, generation_cache = _unpack_dialogue_generation(generated)
-    evolve_relations_from_turn(run_id, pending_payload, responses)
-    ingested = _ingest_generated_dialogue(
-        dialogue, run_id, session_id, responses, generation_cache
-    )
-    if callable(refresh_scene_progress):
-        ingested = refresh_scene_progress(run_id, ingested)
-    return ingested
+        pending_payload = load_pending_turn_payload(run_id, session_id)
+        try:
+            generated = generate_dialogue_responses(run_id, pending_payload)
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        responses, generation_cache = _unpack_dialogue_generation(generated)
+        evolve_relations_from_turn(run_id, pending_payload, responses)
+        ingested = _ingest_generated_dialogue(
+            dialogue, run_id, session_id, responses, generation_cache
+        )
+        if callable(refresh_scene_progress):
+            ingested = refresh_scene_progress(run_id, ingested)
+        return ingested
+    except Exception:
+        _abort_pending_turn_safely(
+            dialogue,
+            run_id,
+            session_id,
+            expected_turn_id=expected_turn_id,
+            reason="reply_failed",
+        )
+        raise
 
 
 def suggest_dialogue_turn_payload(

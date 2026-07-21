@@ -71,6 +71,18 @@ class ChatConsistencyTests(unittest.TestCase):
         self.assertNotIn("forbidden_behavior_overlap", codes)
         self.assertIn("offstage_character_spoke", codes)
 
+    def test_director_beat_may_include_the_controlled_character_reaction(self):
+        payload = self._payload()
+        payload["input"]["message_kind"] = "plot"
+        report = evaluate_turn_consistency(
+            payload,
+            [{"speaker": "甲", "message": "（抬头看向门外）是谁来了？"}],
+            checked_at="now",
+        )
+
+        codes = {item["code"] for item in report["issues"]}
+        self.assertNotIn("controlled_character_overwritten", codes)
+
     def test_monitor_state_keeps_bounded_history_and_totals(self):
         state = {}
         for index in range(25):
@@ -348,6 +360,18 @@ class ChatConsistencyTests(unittest.TestCase):
                 session_id=session_id,
                 responses=[{"speaker": "乙", "message": "先说正事。"}],
             )
+            session_path = dialogue._session_file("run-1", session_id)
+            before_second_turn = dialogue._read_json(session_path)
+            pair_key = dialogue._pair_key("甲", "乙")
+            relation_matrix = dialogue._merged_relation_matrix(
+                before_second_turn,
+                list(before_second_turn.get("participants", []) or []),
+            )
+            relation_matrix[pair_key]["trust"] = 8
+            dialogue._set_session_relation_matrix(
+                before_second_turn, relation_matrix
+            )
+            dialogue._write_json(session_path, before_second_turn)
             dialogue.prepare_turn(
                 manifest,
                 session_id=session_id,
@@ -371,6 +395,8 @@ class ChatConsistencyTests(unittest.TestCase):
             )
             self.assertEqual(len(branch["event_timeline"]), 1)
             self.assertTrue(branch["event_timeline"][0]["inherited"])
+            self.assertEqual(branch["relation_matrix"][pair_key]["trust"], 8)
+            self.assertEqual(branch["consistency_monitor"]["checked_turns"], 1)
             self.assertEqual(correction["message"], "你怎么看？")
             self.assertEqual(
                 correction["original_responses"][0]["message"], "我替你回答。"
@@ -381,6 +407,13 @@ class ChatConsistencyTests(unittest.TestCase):
             self.assertEqual(
                 review_payload["responses"][0]["message"], "我替你回答。"
             )
+            with self.assertRaisesRegex(ValueError, "已过期"):
+                dialogue.apply_semantic_consistency_review(
+                    "run-1",
+                    session_id=session_id,
+                    review={"issues": []},
+                    expected_turn_id="turn-stale",
+                )
             reviewed = dialogue.apply_semantic_consistency_review(
                 "run-1",
                 session_id=session_id,

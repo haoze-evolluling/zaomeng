@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -79,16 +80,44 @@ TIME_FORWARD_CUES = (
 TIME_DRIFT_CUES = ("过了一会", "过了许久", "片刻后", "半晌", "良久", "随后", "一阵后", "再过一阵", "不多时")
 
 
-def infer_time_hint(transcript: list[dict[str, Any]]) -> str:
+def _is_scene_level_entry(item: dict[str, Any]) -> bool:
+    speaker = str(item.get("speaker", "")).strip()
+    role = str(item.get("role", "")).strip()
+    return speaker in {"旁白", "场景提示"} or (not speaker and role == "scene")
+
+
+def _is_projected_time_reference(message: str, start: int, end: int) -> bool:
+    prefix = message[max(0, start - 10) : start]
+    suffix = message[end : end + 4]
+    if re.search(r"(?:明天|明晚|以后|改天|等|等到|待|待到|要到|将到)$", prefix):
+        return True
+    if prefix.endswith(("一", "整", "整整", "每", "几", "两", "三")):
+        return True
+    return bool(re.match(r"(?:再|才|要|会)", suffix))
+
+
+def infer_time_hint(
+    transcript: list[dict[str, Any]], *, include_character_claims: bool = False
+) -> str:
     for item in reversed(list(transcript or [])[-14:]):
         message = str(item.get("message", "")).strip()
         if not message:
             continue
-        for token in TIME_HINT_SEQUENCE + tuple(TIME_HINT_ALIASES.keys()):
-            if token in message:
-                return canonical_time_hint(token)
+        if _is_scene_level_entry(item) or include_character_claims:
+            for token in TIME_HINT_SEQUENCE + tuple(TIME_HINT_ALIASES.keys()):
+                start = message.find(token)
+                if start >= 0 and not _is_projected_time_reference(
+                    message, start, start + len(token)
+                ):
+                    return canonical_time_hint(token)
+        role = str(item.get("role", "")).strip()
+        if role in {"user", "director"} and not _is_scene_level_entry(item):
+            continue
         for cue, target in TIME_FORWARD_CUES:
-            if cue in message:
+            start = message.find(cue)
+            if start >= 0 and not _is_projected_time_reference(
+                message, start, start + len(cue)
+            ):
                 return target
     return ""
 
@@ -100,6 +129,7 @@ def merge_time_hint(
     history: list[dict[str, Any]],
     scene_hint: str = "",
     allow_history_drift: bool = True,
+    history_since: str = "",
 ) -> str:
     incoming_hint = canonical_time_hint(incoming)
     base_hint = canonical_time_hint(base)
@@ -111,7 +141,9 @@ def merge_time_hint(
         if time_hint_rank(incoming_hint) >= time_hint_rank(current):
             return incoming_hint
         return current
-    if allow_history_drift and current and history_has_time_drift(history):
+    if allow_history_drift and current and history_has_time_drift(
+        history, since=history_since
+    ):
         return advance_time_hint(current)
     return current
 
@@ -140,8 +172,32 @@ def advance_time_hint(value: str) -> str:
     return TIME_HINT_SEQUENCE[rank + 1]
 
 
-def history_has_time_drift(history: list[dict[str, Any]]) -> bool:
-    recent_messages = [str(item.get("message", "")).strip() for item in list(history or [])[-8:] if str(item.get("message", "")).strip()]
+def _parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def history_has_time_drift(
+    history: list[dict[str, Any]], *, since: str = ""
+) -> bool:
+    since_at = _parse_timestamp(since)
+    recent_messages: list[str] = []
+    for item in list(history or [])[-8:]:
+        if not _is_scene_level_entry(item):
+            continue
+        if since_at is not None:
+            item_at = _parse_timestamp(item.get("ts", ""))
+            if item_at is None or item_at <= since_at:
+                continue
+        message = str(item.get("message", "")).strip()
+        if message:
+            recent_messages.append(message)
     return any(cue in message for message in recent_messages for cue in TIME_DRIFT_CUES)
 
 

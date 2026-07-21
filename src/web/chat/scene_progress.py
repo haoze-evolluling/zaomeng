@@ -259,6 +259,7 @@ def _derive_scene_frame_state(
         base=str(prior.get("time_hint", "")).strip(),
         history=list(session.get("history", []) or []),
         scene_hint=str(scene_card.get("time_hint", "")).strip(),
+        history_since=str(prior.get("updated_at", "")).strip(),
     )
     location = (
         str(latest_scene_event.get("location_hint", "")).strip()

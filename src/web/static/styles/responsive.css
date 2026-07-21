@@ -362,6 +362,7 @@
     grid-template-columns: 1fr;
     grid-template-areas:
       "kind"
+      "mentions"
       "input"
       "actions";
     border-radius: 22px;

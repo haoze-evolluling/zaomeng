@@ -382,6 +382,36 @@
   </div>
 </div>
 
+<div id="dialogue-consistency-modal" class="modal hidden">
+  <div
+    id="dialogue-consistency-modal-backdrop"
+    class="modal-backdrop"
+    data-close-modal="true"
+    data-modal-id="dialogue-consistency-modal"
+  ></div>
+  <div class="modal-card dialogue-consistency-modal-card" role="dialog" aria-modal="true" aria-labelledby="dialogue-consistency-modal-title">
+    <div class="panel-head dialogue-consistency-modal-head">
+      <div>
+        <p class="eyebrow">对话质量</p>
+        <h3 id="dialogue-consistency-modal-title">人物一致性检查</h3>
+        <p class="panel-copy">查看角色语气、动机、知识边界和关系态度是否连贯。</p>
+      </div>
+      <button
+        id="close-dialogue-consistency-modal-button"
+        type="button"
+        class="dialogue-memory-modal-close"
+        aria-label="关闭人物一致性检查"
+        title="关闭"
+      >
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
+    <div class="modal-scroll dialogue-consistency-modal-scroll">
+      <div id="dialogue-consistency-modal-mount"></div>
+    </div>
+  </div>
+</div>
+
 <div id="scene-card-modal" class="modal hidden">
   <div class="modal-backdrop" data-close-modal="true" data-modal-id="scene-card-modal"></div>
   <div class="modal-card inspector-modal-card">

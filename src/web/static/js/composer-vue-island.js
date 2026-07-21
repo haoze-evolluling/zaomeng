@@ -24,7 +24,9 @@
   }
 
   function normalizeKind(kind) {
-    return String(kind || "").trim() === "narration" ? "narration" : "dialogue";
+    const value = String(kind || "").trim();
+    if (value === "plot") return "plot";
+    return value === "narration" ? "narration" : "dialogue";
   }
 
   createApp({
@@ -44,6 +46,11 @@
       const draft = ref("");
       const draftKind = ref("dialogue");
       const textareaRef = ref(null);
+      const mentionOpen = ref(false);
+      const mentionQuery = ref("");
+      const mentionStart = ref(-1);
+      const mentionEnd = ref(-1);
+      const mentionIndex = ref(0);
       watch(
         () => composer.value.placeholder,
         () => {
@@ -53,7 +60,9 @@
       watch(
         () => composer.value.message,
         (nextMessage) => {
-          draft.value = String(nextMessage || "");
+          const nextValue = String(nextMessage || "");
+          if (nextValue !== draft.value) closeMentionMenu();
+          draft.value = nextValue;
           nextTick(() => resizeComposerTextarea(textareaRef.value));
         },
         { immediate: true }
@@ -70,6 +79,8 @@
         (nextMode) => {
           if (String(nextMode || "").trim() === "observe") {
             setKind("narration");
+          } else if (draftKind.value === "narration") {
+            setKind("dialogue");
           }
         },
         { immediate: true }
@@ -82,6 +93,16 @@
       const suggestDisabled = computed(() => Boolean(composer.value.suggestDisabled));
       const sendDisabled = computed(() => Boolean(composer.value.sendDisabled));
       const associationEnabled = computed(() => composer.value.associationEnabled !== false);
+      const mentionCandidates = computed(() => (
+        Array.isArray(composer.value.mentionCandidates)
+          ? composer.value.mentionCandidates.map((name) => String(name || "").trim()).filter(Boolean)
+          : []
+      ));
+      const mentionOptions = computed(() => {
+        if (!mentionOpen.value) return [];
+        const query = mentionQuery.value.toLocaleLowerCase();
+        return mentionCandidates.value.filter((name) => !query || name.toLocaleLowerCase().includes(query));
+      });
 
       onMounted(() => {
         stage.classList.add("has-vue-island");
@@ -99,7 +120,57 @@
       }
 
       function onDraftInput(event) {
-        setDraftValue(event?.target?.value || "");
+        const value = event?.target?.value || "";
+        setDraftValue(value);
+        updateMentionMenu(value, event?.target?.selectionStart);
+      }
+
+      function extractMentionContext(value, caretPosition) {
+        const text = String(value || "");
+        const caret = Math.max(0, Math.min(text.length, Number(caretPosition ?? text.length)));
+        const beforeCaret = text.slice(0, caret);
+        const start = beforeCaret.lastIndexOf("@");
+        if (start < 0) return null;
+        const query = beforeCaret.slice(start + 1);
+        if (/[@\r\n\t，。！？；：、（）(),.!?;:]/u.test(query)) return null;
+        return { start, end: caret, query };
+      }
+
+      function closeMentionMenu() {
+        mentionOpen.value = false;
+        mentionQuery.value = "";
+        mentionStart.value = -1;
+        mentionEnd.value = -1;
+        mentionIndex.value = 0;
+      }
+
+      function updateMentionMenu(value, caretPosition) {
+        const context = extractMentionContext(value, caretPosition);
+        if (!context || !mentionCandidates.value.length) {
+          closeMentionMenu();
+          return;
+        }
+        mentionQuery.value = context.query;
+        mentionStart.value = context.start;
+        mentionEnd.value = context.end;
+        mentionIndex.value = 0;
+        mentionOpen.value = true;
+        nextTick(() => {
+          if (!mentionOptions.value.length) closeMentionMenu();
+        });
+      }
+
+      function insertMention(name) {
+        const target = String(name || "").trim();
+        if (!target || !mentionCandidates.value.includes(target) || mentionStart.value < 0) return;
+        const nextValue = `${draft.value.slice(0, mentionStart.value)}@${target} ${draft.value.slice(mentionEnd.value)}`;
+        const nextCaret = mentionStart.value + target.length + 2;
+        closeMentionMenu();
+        setDraftValue(nextValue, { focus: true });
+        nextTick(() => {
+          textareaRef.value?.focus();
+          textareaRef.value?.setSelectionRange(nextCaret, nextCaret);
+        });
       }
 
       function setKind(nextKind) {
@@ -111,6 +182,7 @@
       }
 
       function send() {
+        closeMentionMenu();
         const actions = composerActions();
         if (typeof actions.send === "function") {
           const sendKind = mode.value === "observe" ? "narration" : draftKind.value;
@@ -139,7 +211,25 @@
         }
       }
 
-      function handleEnter(event) {
+      function handleComposerKeydown(event) {
+        if (mentionOpen.value && mentionOptions.value.length) {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            const step = event.key === "ArrowDown" ? 1 : -1;
+            mentionIndex.value = (mentionIndex.value + step + mentionOptions.value.length) % mentionOptions.value.length;
+            return;
+          }
+          if (event.key === "Enter" || event.key === "Tab") {
+            event.preventDefault();
+            insertMention(mentionOptions.value[mentionIndex.value]);
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeMentionMenu();
+            return;
+          }
+        }
         if (event.key !== "Enter" || event.shiftKey) return;
         event.preventDefault();
         if (!sendDisabled.value) {
@@ -153,7 +243,7 @@
         draftKind,
         textareaRef,
         onDraftInput,
-        handleEnter,
+        handleComposerKeydown,
         placeholder,
         quickReplies,
         quickReply,
@@ -167,6 +257,9 @@
         suggestHidden,
         associationEnabled,
         setAssociationEnabled,
+        insertMention,
+        mentionIndex,
+        mentionOptions,
       };
     },
     template: `
@@ -209,10 +302,26 @@
             <button
               type="button"
               class="kind-chip"
-              :class="{ active: draftKind === 'narration' }"
-              @click="setKind('narration')"
+              :class="{ active: draftKind === 'plot' }"
+              @click="setKind('plot')"
+              title="可填写推进方向，也可以留空让系统主动推进"
             >
-              剧情推动
+              推进剧情
+            </button>
+          </div>
+
+          <div v-if="mentionOptions.length" class="composer-mention-menu" role="listbox" aria-label="选择在场人物">
+            <button
+              v-for="(name, index) in mentionOptions"
+              :key="name"
+              type="button"
+              class="composer-mention-option"
+              :class="{ active: index === mentionIndex }"
+              :aria-selected="index === mentionIndex ? 'true' : 'false'"
+              role="option"
+              @mousedown.prevent="insertMention(name)"
+            >
+              {{ '@' + name }}
             </button>
           </div>
 
@@ -224,7 +333,7 @@
             :placeholder="placeholder"
             :disabled="disabled"
             @input="onDraftInput"
-            @keydown="handleEnter"
+            @keydown="handleComposerKeydown"
           ></textarea>
 
           <div class="composer-actions">
@@ -242,11 +351,11 @@
             <button
               type="button"
               class="send-button"
-              aria-label="送出"
+              :aria-label="draftKind === 'plot' ? '推进剧情' : '送出'"
               :disabled="sendDisabled"
               @click="send"
             >
-              送出
+              {{ draftKind === 'plot' ? '推进' : '送出' }}
             </button>
           </div>
         </div>

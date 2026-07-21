@@ -1,6 +1,30 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+def extract_mention_targets(
+    active_participants: list[str], message: str
+) -> list[str]:
+    text = str(message or "")
+    boundary = r"(?=$|[\s，。！？；：、（）(),.!?;:])"
+    longest_at_position: dict[int, str] = {}
+    for item in active_participants:
+        name = str(item).strip()
+        if not name:
+            continue
+        for match in re.finditer(r"@" + re.escape(name) + boundary, text):
+            current = longest_at_position.get(match.start(), "")
+            if len(name) > len(current):
+                longest_at_position[match.start()] = name
+    matched = set(longest_at_position.values())
+    return [
+        str(name).strip()
+        for name in active_participants
+        if str(name).strip()
+        and str(name).strip() in matched
+    ]
 
 
 def build_speaker_activity(
@@ -72,9 +96,10 @@ def build_speaker_plan(
     speaker = str(input_speaker or "").strip()
     controlled = str(controlled_character or "").strip()
     kind = str(message_kind or "dialogue").strip()
+    is_scene_kind = kind in {"narration", "plot"}
     eligible: list[str] = []
     for name in active:
-        if mode == "act" and kind != "narration" and name == speaker:
+        if mode == "act" and not is_scene_kind and name == speaker:
             continue
         if name not in eligible:
             eligible.append(name)
@@ -84,28 +109,38 @@ def build_speaker_plan(
         if str(item.get("name", "")).strip()
     }
     text = str(message or "")
+    direct_mentions = [
+        name
+        for name in extract_mention_targets(eligible, text)
+        if not controlled or name != controlled
+    ]
 
     def score(name: str) -> tuple[int, int, int, int, str]:
         row = by_name.get(name, {})
-        mentioned = 1 if name and name in text else 0
+        mentioned = 2 if name in direct_mentions else 1 if name and name in text else 0
         silence = int(row.get("turns_since_spoke", 0) or 0)
         spoken_turns = int(row.get("spoken_turns", 0) or 0)
-        controlled_penalty = 1 if kind == "narration" and name == controlled else 0
+        controlled_penalty = 1 if is_scene_kind and name == controlled else 0
         return (-mentioned, -silence, controlled_penalty, spoken_turns, name)
 
     ordered = sorted(eligible, key=score)
     limit = max(1, min(int(response_limit or 1), len(ordered) or 1))
     recommended = ordered[:limit]
-    priority_candidates = [
+    silence_candidates = [
         name
         for name in ordered
         if int(by_name.get(name, {}).get("turns_since_spoke", 0) or 0) >= 2
     ][:limit]
+    priority_candidates = list(
+        dict.fromkeys([*direct_mentions, *silence_candidates])
+    )[:limit]
     reasons: dict[str, str] = {}
     for name in ordered:
         row = by_name.get(name, {})
-        if name in text:
-            reasons[name] = "本轮被直接点名"
+        if name in direct_mentions:
+            reasons[name] = "本轮被 @ 直接点名"
+        elif name in text:
+            reasons[name] = "本轮被提及"
         elif int(row.get("turns_since_spoke", 0) or 0) >= 3:
             reasons[name] = f"已连续 {int(row.get('turns_since_spoke', 0) or 0)} 轮未发言"
         elif int(row.get("turns_since_spoke", 0) or 0) >= 2:
@@ -115,12 +150,17 @@ def build_speaker_plan(
     return {
         "order": ordered,
         "recommended_speakers": recommended,
+        "mention_targets": direct_mentions,
         "priority_candidates": priority_candidates,
         "reasons": reasons,
         "response_limit": limit,
         "rule": (
-            "优先让被点名、与当前行动直接相关或较久未发言的在场角色自然介入；"
-            "不要为了平均分配而强迫无关角色说话。"
+            (
+                f"用户明确 @ 了 {', '.join(direct_mentions)}；这些在场角色必须在本轮直接回应，且优先于未被点名的角色。"
+                if direct_mentions
+                else "优先让被点名、与当前行动直接相关或较久未发言的在场角色自然介入；"
+            )
+            + "不要为了平均分配而强迫无关角色说话。"
         ),
     }
 
@@ -145,4 +185,9 @@ def apply_plan_to_hints(
     return merged
 
 
-__all__ = ["apply_plan_to_hints", "build_speaker_activity", "build_speaker_plan"]
+__all__ = [
+    "apply_plan_to_hints",
+    "build_speaker_activity",
+    "build_speaker_plan",
+    "extract_mention_targets",
+]

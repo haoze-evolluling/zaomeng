@@ -105,6 +105,8 @@ def evaluate_turn_consistency(
     participants = _normalized_names(input_payload.get("participants", []))
     participant_set = set(participants)
     controlled = str(input_payload.get("controlled_character", "")).strip()
+    message_kind = str(input_payload.get("message_kind", "dialogue")).strip()
+    is_director_beat = message_kind in {"narration", "plot"}
     scene_progress = dict(
         pending_payload.get("scene_progress", input_payload.get("scene_progress", {})) or {}
     )
@@ -209,7 +211,12 @@ def evaluate_turn_consistency(
                 evidence=str(latest_presence.get("cue", "")).strip()[:80],
                 severity="error",
             )
-        if mode == "act" and controlled and speaker == controlled:
+        if (
+            mode == "act"
+            and controlled
+            and speaker == controlled
+            and not is_director_beat
+        ):
             add_issue(
                 "controlled_character_overwritten",
                 speaker,
@@ -220,7 +227,9 @@ def evaluate_turn_consistency(
             )
 
         if current_time and any(marker in message for marker in _CURRENT_TIME_MARKERS):
-            claimed_time = _scene_signals.infer_time_hint([{"message": message}])
+            claimed_time = _scene_signals.infer_time_hint(
+                [{"message": message}], include_character_claims=True
+            )
             current_rank = _scene_signals.time_hint_rank(current_time)
             claimed_rank = _scene_signals.time_hint_rank(claimed_time)
             if claimed_rank >= 0 and current_rank >= 0 and claimed_rank < current_rank:

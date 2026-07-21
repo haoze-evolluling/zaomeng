@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.web.chat.cache_stats import summarize_completion_results
-from src.web.path_safety import resolve_storage_child
+from src.web.path_safety import resolve_storage_child, validate_storage_id
 
 
 def load_pending_turn_payload(
@@ -19,13 +19,24 @@ def load_pending_turn_payload(
     session_dir = resolve_storage_child(dialogue_dir, session_id, field_name="session_id")
     session_path = session_dir / "session.json"
     session_payload = load_json_file(session_path) or {}
-    pending_path_text = str(
-        session_payload.get("pending_turn", {}).get("payload_path", "")
-    ).strip()
-    if not pending_path_text:
+    pending = dict(session_payload.get("pending_turn", {}) or {})
+    turn_id = str(pending.get("turn_id", "")).strip()
+    pending_path_text = str(pending.get("payload_path", "")).strip()
+    if not turn_id and not pending_path_text:
         raise ValueError("Pending turn payload was not created.")
-    pending_path = Path(pending_path_text)
-    pending_payload = load_json_file(pending_path)
+    safe_turn_id = validate_storage_id(turn_id, field_name="turn_id")
+    canonical_path = session_dir / "turns" / f"{safe_turn_id}.payload.json"
+    pending_payload = load_json_file(canonical_path)
+    if not pending_payload and pending_path_text:
+        pending_path = Path(pending_path_text)
+        try:
+            stored_is_local = pending_path.resolve().is_relative_to(
+                session_dir.resolve()
+            )
+        except (OSError, RuntimeError, ValueError):
+            stored_is_local = False
+        if stored_is_local and pending_path.is_file():
+            pending_payload = load_json_file(pending_path)
     if not pending_payload:
         raise ValueError("Pending turn payload is empty.")
     return pending_payload

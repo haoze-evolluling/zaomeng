@@ -126,7 +126,7 @@ class DialogueServiceMixin:
             manifest, session_id
         )
         branch_id = str(branch.get("session_id", "")).strip()
-        self.dialogue.prepare_turn(
+        prepared = self.dialogue.prepare_turn(
             manifest,
             session_id=branch_id,
             message=str(correction_context.get("message", "")).strip(),
@@ -135,35 +135,50 @@ class DialogueServiceMixin:
             ).strip()
             or "dialogue",
         )
-        pending_payload = self._load_pending_turn_payload(run_id, branch_id)
-        pending_payload["correction_context"] = correction_context
+        expected_turn_id = str(
+            dict(prepared.get("pending_turn_summary", {}) or {}).get("turn_id", "")
+        ).strip()
         try:
-            generated = self._generate_dialogue_responses(run_id, pending_payload)
-        except LLMRequestError as exc:
-            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
-        if isinstance(generated, dict):
-            responses = list(generated.get("responses", []) or [])
-            generation_cache = generated.get("generation_cache")
-        else:
-            responses = list(generated or [])
-            generation_cache = None
-        self._evolve_relations_from_turn(
-            run_id, pending_payload, responses, refine_with_llm=False
-        )
-        corrected = self.dialogue.ingest_turn_responses(
-            run_id,
-            session_id=branch_id,
-            responses=responses,
-            remember_turn_memory=True,
-            generation_cache=(
-                dict(generation_cache)
-                if isinstance(generation_cache, dict)
-                else None
-            ),
-        )
-        return self._refresh_dialogue_scene_progress(
-            run_id, corrected, use_llm=False
-        )
+            pending_payload = self._load_pending_turn_payload(run_id, branch_id)
+            pending_payload["correction_context"] = correction_context
+            try:
+                generated = self._generate_dialogue_responses(run_id, pending_payload)
+            except LLMRequestError as exc:
+                raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+            if isinstance(generated, dict):
+                responses = list(generated.get("responses", []) or [])
+                generation_cache = generated.get("generation_cache")
+            else:
+                responses = list(generated or [])
+                generation_cache = None
+            self._evolve_relations_from_turn(
+                run_id, pending_payload, responses, refine_with_llm=False
+            )
+            corrected = self.dialogue.ingest_turn_responses(
+                run_id,
+                session_id=branch_id,
+                responses=responses,
+                remember_turn_memory=True,
+                generation_cache=(
+                    dict(generation_cache)
+                    if isinstance(generation_cache, dict)
+                    else None
+                ),
+            )
+            return self._refresh_dialogue_scene_progress(
+                run_id, corrected, use_llm=False
+            )
+        except Exception:
+            try:
+                self.dialogue.abort_pending_turn(
+                    run_id,
+                    branch_id,
+                    expected_turn_id=expected_turn_id,
+                    reason="correction_failed",
+                )
+            except Exception:
+                pass
+            raise
 
     def deep_review_latest_dialogue_turn(
         self, run_id: str, *, session_id: str
@@ -178,6 +193,7 @@ class DialogueServiceMixin:
             run_id,
             session_id=session_id,
             review=review,
+            expected_turn_id=str(payload.get("turn_id", "")).strip(),
         )
 
     def branch_dialogue_session_from_scene(
@@ -778,16 +794,17 @@ class DialogueServiceMixin:
                 str(input_block.get("message_kind", "")).strip() or "dialogue"
             )
             detected_events: list[dict[str, Any]] = []
-            detected_events.extend(
-                self._extract_dialogue_event_signals(
-                    participants=participants,
-                    speaker=speaker,
-                    message=pending_message,
-                    source="pending_input",
-                    message_kind=pending_kind,
-                    target="",
+            if pending_kind != "plot":
+                detected_events.extend(
+                    self._extract_dialogue_event_signals(
+                        participants=participants,
+                        speaker=speaker,
+                        message=pending_message,
+                        source="pending_input",
+                        message_kind=pending_kind,
+                        target="",
+                    )
                 )
-            )
 
             for reply in responses:
                 responder = str(reply.get("speaker", "")).strip()
@@ -1053,7 +1070,7 @@ class DialogueServiceMixin:
         if not text:
             return []
         compact = "".join(text.split())
-        is_scene_level = str(message_kind or "").strip() == "narration" or speaker in {
+        is_scene_level = str(message_kind or "").strip() in {"narration", "plot"} or speaker in {
             "旁白",
             "场景提示",
         }
@@ -1089,7 +1106,15 @@ class DialogueServiceMixin:
                 event["location_hint"] = location_hint
             events.append(event)
 
-        time_hint = _scene_signals.infer_time_hint([{"message": text}])
+        time_hint = _scene_signals.infer_time_hint(
+            [
+                {
+                    "message": text,
+                    "speaker": speaker,
+                    "role": "scene" if is_scene_level else "character",
+                }
+            ]
+        )
         if time_hint:
             push(
                 "time_change",

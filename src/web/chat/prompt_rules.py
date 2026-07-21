@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 
+def _is_scene_message_kind(message_kind: str) -> bool:
+    return str(message_kind or "").strip() in {"narration", "plot"}
+
+
 def _trim_summary_text(value: str, limit: int) -> str:
     text = " ".join(str(value or "").split()).strip()
     if not text:
@@ -13,7 +17,7 @@ def _trim_summary_text(value: str, limit: int) -> str:
 
 
 def _mode_rule(mode: str, message_kind: str = "dialogue", controlled_character: str = "") -> str:
-    if message_kind == "narration":
+    if _is_scene_message_kind(message_kind):
         controlled = str(controlled_character or "").strip()
         if mode == "act" and controlled:
             return (
@@ -34,7 +38,7 @@ def _mode_rule(mode: str, message_kind: str = "dialogue", controlled_character: 
 
 
 def _speaker_rule(mode: str, session: dict[str, Any], message_kind: str = "dialogue") -> str:
-    if message_kind == "narration":
+    if _is_scene_message_kind(message_kind):
         return "Treat the user message as an in-world scene cue or director beat, not as a cast member's spoken line."
     if mode == "act":
         return f"Treat the user message as spoken by {session.get('controlled_character', '')}."
@@ -52,7 +56,7 @@ def _response_style_rule(
     message_kind: str = "dialogue",
     controlled_character: str = "",
 ) -> str:
-    if message_kind == "narration":
+    if _is_scene_message_kind(message_kind):
         base = (
             "The cue is scene-driving. Let the cast react with concrete action/emotion changes; "
             "use 场景提示 or 旁白 only for true scene beats such as entrances, exits, environment changes, or transitions; "
@@ -149,6 +153,30 @@ def _scene_progress_rule(scene_progress: dict[str, Any]) -> str:
             f"This beat is mature enough to hint a next scene or transition if it helps momentum. Reason: {reason or 'the current beat already feels complete'}."
         )
     return " ".join(bits)
+
+
+def _plot_progression_contract(
+    message_kind: str,
+    scene_progress: dict[str, Any],
+) -> str:
+    if str(message_kind or "").strip() != "plot":
+        return ""
+    state = dict(scene_progress or {})
+    beat_maturity = int(state.get("beat_maturity", 0) or 0)
+    turns_in_scene = int(state.get("turns_in_current_scene", 0) or 0)
+    contract = [
+        "PLOT_PROGRESSION_CONTRACT is mandatory for this turn.",
+        "The first output item must use speaker 场景提示 or 旁白 and establish one concrete scene-level change that happens now.",
+        "The change must introduce at least one of: a new event, interruption, revealed information, escalating conflict, consequential decision, entrance or exit, time advance, location transition, or a completed objective that opens the next beat.",
+        "Do not merely paraphrase the user's cue, repeat the current banter, or add only gestures and emotional reactions.",
+        "After the scene beat, let the present cast react in character and end with a clear consequence, choice, question, or unresolved hook that can drive the next turn.",
+        "Treat the user's text as a desired direction, not as a cast member's spoken line, even when it is phrased in first person or resembles dialogue.",
+    ]
+    if beat_maturity >= 70 or turns_in_scene >= 8:
+        contract.append(
+            "The current beat is already mature or long-running; prefer turning into the next beat over extending the same conversational topic."
+        )
+    return " ".join(contract)
 
 
 def _suggestion_mode_rule(mode: str) -> str:
@@ -273,7 +301,7 @@ def _responder_hints(
     controlled = str(controlled_character or "").strip()
     ordered: list[str] = []
     seen: set[str] = set()
-    if message_kind == "narration" and mode == "act" and controlled:
+    if _is_scene_message_kind(message_kind) and mode == "act" and controlled:
         others: list[str] = []
         for name in participants:
             normalized = str(name or "").strip()
@@ -298,10 +326,10 @@ def _responder_hints(
 
     hints: list[dict[str, str]] = []
     for name in ordered:
-        if mode == "act" and message_kind != "narration" and name == speaker:
+        if mode == "act" and not _is_scene_message_kind(message_kind) and name == speaker:
             continue
         priority = "normal"
-        if message_kind == "narration" and mode == "act" and controlled:
+        if _is_scene_message_kind(message_kind) and mode == "act" and controlled:
             priority = "normal" if name == controlled else "high"
         elif not hints:
             priority = "high"
@@ -322,7 +350,7 @@ def _host_prompt_brief(
     message_kind: str = "dialogue",
     controlled_character: str = "",
 ) -> str:
-    if message_kind == "narration":
+    if _is_scene_message_kind(message_kind):
         controlled = str(controlled_character or "").strip()
         if mode == "act" and controlled:
             others = [str(name).strip() for name in participants if str(name).strip() and str(name).strip() != controlled]
@@ -377,6 +405,8 @@ def _host_suggestion_prompt_brief(
 
 def _normalize_message_kind(message_kind: str) -> str:
     kind = str(message_kind or "").strip().lower()
+    if kind in {"plot", "plot_push", "advance"}:
+        return "plot"
     if kind in {"narration", "scene", "scene_prompt", "director"}:
         return "narration"
     return "dialogue"
@@ -391,6 +421,7 @@ __all__ = [
     "_responder_hints",
     "_response_style_rule",
     "_scene_progress_rule",
+    "_plot_progression_contract",
     "_scene_rule",
     "_speaker_rule",
     "_suggestion_mode_rule",

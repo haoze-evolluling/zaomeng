@@ -2250,7 +2250,8 @@ async function handleExportRunPackage() {
 }
 
 const DIALOGUE_PLACEHOLDER_DEFAULT = "写一句你想让他们听见的话";
-const DIALOGUE_PLACEHOLDER_NARRATION = "写一句推进剧情的场景提示";
+const DIALOGUE_PLACEHOLDER_NARRATION = "可写推进方向，留空则由系统主动推进";
+const DIALOGUE_AUTO_PLOT_PUSH_MESSAGE = "请基于当前场景、未完成线索与人物关系，主动推进到一个新的有效剧情节点。";
 const DIALOGUE_PLACEHOLDER_WAITING = "他们正在接住你的话。";
 const DIALOGUE_SUGGESTION_WAITING = "正在生成中...";
 const DIALOGUE_SUGGESTION_BUSY_LABEL = "…";
@@ -2466,7 +2467,132 @@ function buildComposerUiState() {
     quickHint: nextHint,
     observeAutoMode,
     associationEnabled: dialogueAssociationsEnabled,
+    mentionCandidates: buildDialogueMentionCandidates(currentDialogueSession),
   };
+}
+
+function buildDialogueMentionCandidates(session = currentDialogueSession) {
+  if (!session) return [];
+  const participants = Array.isArray(session?.participants)
+    ? session.participants
+    : Array.isArray(session?.session_card?.participants)
+      ? session.session_card.participants
+      : [];
+  const overview = session?.runtime_state_overview || {};
+  const progress = session?.scene_progress || {};
+  const present = Array.isArray(overview?.present) && overview.present.length
+    ? overview.present
+    : Array.isArray(progress?.present_participants)
+      ? progress.present_participants
+      : [];
+  const offstage = Array.isArray(overview?.offstage) && overview.offstage.length
+    ? overview.offstage
+    : Array.isArray(progress?.offstage_participants)
+      ? progress.offstage_participants
+      : [];
+  const presenceKnown = present.length > 0 || offstage.length > 0;
+  const pool = presenceKnown ? present : participants;
+  const mode = String(session?.mode || session?.session_card?.mode || "").trim();
+  const currentSpeaker = mode === "act"
+    ? String(session?.controlled_character || session?.session_card?.controlled_character || "").trim()
+    : mode === "insert"
+      ? String(session?.self_insert?.display_name || session?.session_card?.self_insert?.display_name || "").trim()
+      : "";
+  const allowed = new Set(participants.map((name) => String(name || "").trim()).filter(Boolean));
+  const seen = new Set();
+  return pool
+    .map((name) => String(name || "").trim())
+    .filter((name) => {
+      if (!name || name === currentSpeaker || ["User", "旁白", "场景提示"].includes(name)) return false;
+      if (allowed.size && !allowed.has(name)) return false;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+}
+
+function extractDialogueMentionContext(value, caretPosition) {
+  const text = String(value || "");
+  const caret = Math.max(0, Math.min(text.length, Number(caretPosition ?? text.length)));
+  const beforeCaret = text.slice(0, caret);
+  const start = beforeCaret.lastIndexOf("@");
+  if (start < 0) return null;
+  const query = beforeCaret.slice(start + 1);
+  if (/[@\r\n\t，。！？；：、（）(),.!?;:]/u.test(query)) return null;
+  return { start, end: caret, query };
+}
+
+let legacyDialogueMentionIndex = 0;
+
+function closeLegacyDialogueMentionMenu() {
+  const menu = el("dialogue-mention-menu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  menu.classList.add("hidden");
+  legacyDialogueMentionIndex = 0;
+}
+
+function renderLegacyDialogueMentionMenu() {
+  const area = el("dialogue-message");
+  const menu = el("dialogue-mention-menu");
+  if (!area || !menu || area.disabled) return closeLegacyDialogueMentionMenu();
+  const context = extractDialogueMentionContext(area.value, area.selectionStart);
+  const candidates = buildDialogueMentionCandidates().filter((name) => (
+    !context?.query || name.toLocaleLowerCase().includes(context.query.toLocaleLowerCase())
+  ));
+  if (!context || !candidates.length) return closeLegacyDialogueMentionMenu();
+  legacyDialogueMentionIndex = Math.min(legacyDialogueMentionIndex, candidates.length - 1);
+  menu.innerHTML = "";
+  candidates.forEach((name, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "composer-mention-option";
+    button.dataset.mentionName = name;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", index === legacyDialogueMentionIndex ? "true" : "false");
+    button.classList.toggle("active", index === legacyDialogueMentionIndex);
+    button.textContent = `@${name}`;
+    menu.appendChild(button);
+  });
+  menu.classList.remove("hidden");
+}
+
+function insertLegacyDialogueMention(name) {
+  const area = el("dialogue-message");
+  if (!area) return;
+  const context = extractDialogueMentionContext(area.value, area.selectionStart);
+  const target = String(name || "").trim();
+  if (!context || !buildDialogueMentionCandidates().includes(target)) return;
+  const nextValue = `${area.value.slice(0, context.start)}@${target} ${area.value.slice(context.end)}`;
+  const nextCaret = context.start + target.length + 2;
+  setComposerDraft(nextValue, { focus: true });
+  area.setSelectionRange(nextCaret, nextCaret);
+  closeLegacyDialogueMentionMenu();
+}
+
+function handleLegacyDialogueMentionKeydown(event) {
+  const menu = el("dialogue-mention-menu");
+  if (!menu || menu.classList.contains("hidden")) return false;
+  const options = Array.from(menu.querySelectorAll("[data-mention-name]"));
+  if (!options.length) return false;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    legacyDialogueMentionIndex = (legacyDialogueMentionIndex + step + options.length) % options.length;
+    renderLegacyDialogueMentionMenu();
+    return true;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    insertLegacyDialogueMention(options[legacyDialogueMentionIndex]?.dataset.mentionName || "");
+    return true;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeLegacyDialogueMentionMenu();
+    return true;
+  }
+  return false;
 }
 
 window.__ZAOMENG_BUILD_COMPOSER_STATE__ = buildComposerUiState;
@@ -2483,6 +2609,7 @@ function publishComposerUiState(source = "composer") {
 
 function normalizeDialogueMessageKind(kind) {
   const value = String(kind || "").trim().toLowerCase();
+  if (value === "plot") return "plot";
   return value === "narration" ? "narration" : "dialogue";
 }
 
@@ -2498,7 +2625,7 @@ function updateDialogueMessagePlaceholder() {
   const area = el("dialogue-message");
   if (!area) return;
   const kind = readDialogueMessageKind();
-  area.placeholder = kind === "narration" ? DIALOGUE_PLACEHOLDER_NARRATION : DIALOGUE_PLACEHOLDER_DEFAULT;
+  area.placeholder = kind === "plot" ? DIALOGUE_PLACEHOLDER_NARRATION : DIALOGUE_PLACEHOLDER_DEFAULT;
 }
 
 function setDialogueMessageKind(kind) {
@@ -2508,6 +2635,12 @@ function setDialogueMessageKind(kind) {
     node.classList.toggle("active", normalizeDialogueMessageKind(node.dataset.kind) === currentDialogueMessageKind);
   });
   updateDialogueMessagePlaceholder();
+  const sendButton = el("prepare-turn-button");
+  if (sendButton) {
+    const isPlotPush = currentDialogueMessageKind === "plot";
+    sendButton.textContent = isPlotPush ? "推进" : "送出";
+    sendButton.setAttribute("aria-label", isPlotPush ? "推进剧情" : "送出");
+  }
   publishComposerUiState("composer-kind-updated");
 }
 
@@ -2520,6 +2653,8 @@ function syncDialogueMessageKindVisibility(session = currentDialogueSession) {
   }
   if (hide) {
     setDialogueMessageKind("narration");
+  } else if (normalizeDialogueMessageKind(currentDialogueMessageKind) === "narration") {
+    setDialogueMessageKind("dialogue");
   }
 }
 
@@ -2956,12 +3091,14 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
     setComposerWaiting(false, "先进入这一幕，再把话递出去。");
     return false;
   }
-  const silentOptimistic = Boolean(options?.silentOptimistic);
-  const suppressTranscriptMessage = Boolean(options?.suppressTranscriptMessage);
-  const message = coerceMessageOverride(messageOverride).trim() || trimmedValue("dialogue-message", "");
   const messageKind = normalizeDialogueMessageKind(messageKindOverride || readDialogueMessageKind());
+  const requestedMessage = coerceMessageOverride(messageOverride).trim() || trimmedValue("dialogue-message", "");
+  const automaticPlotPush = messageKind === "plot" && !requestedMessage;
+  const message = requestedMessage || (automaticPlotPush ? DIALOGUE_AUTO_PLOT_PUSH_MESSAGE : "");
+  const silentOptimistic = Boolean(options?.silentOptimistic) || messageKind === "plot";
+  const suppressTranscriptMessage = Boolean(options?.suppressTranscriptMessage) || messageKind === "plot";
   if (!message) {
-    setComposerWaiting(false, messageKind === "narration" ? "先写一句剧情推动提示。" : "先写一句你想让他们听见的话。");
+    setComposerWaiting(false, "先写一句你想让他们听见的话。");
     return false;
   }
 
@@ -3051,6 +3188,9 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
           currentDialogueSession: failedSession,
         });
       }
+    }
+    if (silentOptimistic && requestedMessage) {
+      setComposerDraft(requestedMessage, { publish: true, focus: true });
     }
     setComposerWaiting(false, "");
     return false;
@@ -3426,6 +3566,21 @@ function bindEvents() {
       window.toggleDialogueMemory();
     }
   });
+  bind("dialogue-consistency-button", "click", () => {
+    if (typeof window.openDialogueConsistencyModal === "function") {
+      window.openDialogueConsistencyModal();
+    }
+  });
+  bind("close-dialogue-consistency-modal-button", "click", () => {
+    if (typeof window.closeDialogueConsistencyModal === "function") {
+      window.closeDialogueConsistencyModal();
+    }
+  });
+  bind("dialogue-consistency-modal-backdrop", "click", () => {
+    if (typeof window.closeDialogueConsistencyModal === "function") {
+      window.closeDialogueConsistencyModal();
+    }
+  });
   bind("observe-auto-toggle", "click", toggleObserveAutoMode);
   bind("close-dialogue-memory-modal-button", "click", () => {
     if (typeof window.closeDialogueMemoryModal === "function") {
@@ -3465,7 +3620,14 @@ function bindEvents() {
   bind("redistill-characters", "input", updateRedistillPillState);
   bind("dialogue-message", "input", () => {
     resizeComposer();
+    legacyDialogueMentionIndex = 0;
+    renderLegacyDialogueMentionMenu();
     publishComposerUiState("composer-input");
+  });
+  el("dialogue-mention-menu")?.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target.closest("[data-mention-name]") : null;
+    if (!(target instanceof HTMLElement)) return;
+    insertLegacyDialogueMention(target.dataset.mentionName || "");
   });
   bind("novel-file", "change", updateNovelFileView);
   bind("characters", "input", refreshSamplingHintEstimate);
@@ -3473,6 +3635,7 @@ function bindEvents() {
   bind("max-chars", "input", refreshSamplingHintEstimate);
   bind("redistill-novel-file", "change", updateRedistillFileView);
   bind("dialogue-message", "keydown", (event) => {
+    if (handleLegacyDialogueMentionKeydown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       el("prepare-turn-button")?.click();

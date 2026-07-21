@@ -13,9 +13,12 @@ from src.core.exceptions import LLMRequestError
 from src.web.chat.helpers import (
     _reorder_plot_push_responses,
     build_dialogue_association_llm_messages,
+    build_dialogue_llm_messages,
     compact_dialogue_suggestion_payload,
     generate_dialogue_associations,
+    generate_dialogue_responses,
     parse_dialogue_associations,
+    parse_dialogue_responses,
     parse_dialogue_suggestion,
 )
 from src.web.pipeline import process_relation_graph, update_manifest_chunk_progress
@@ -4802,6 +4805,46 @@ class WebRunServiceTests(unittest.TestCase):
             self.assertEqual(micro_action.get("actor"), "林黛玉")
             self.assertTrue(bool(micro_action.get("should_inline", False)))
 
+            plot_payload = {
+                "session_id": session["session_id"],
+                "input": {
+                    "speaker": "场景提示",
+                    "message": "早晨让院外的人闯进来。",
+                    "message_kind": "plot",
+                    "participants": ["林黛玉", "贾宝玉", "薛宝钗"],
+                    "active_participants": ["林黛玉", "贾宝玉", "薛宝钗"],
+                },
+            }
+            with patch.object(
+                service, "_generate_dialogue_relation_state", return_value={}
+            ):
+                service._evolve_relations_from_turn(
+                    run_id,
+                    plot_payload,
+                    responses=[
+                        {
+                            "speaker": "场景提示",
+                            "message": "院门猛地被撞开，来人举着一封急信。",
+                        }
+                    ],
+                )
+            plot_raw = service.dialogue._read_json(
+                service.dialogue._session_file(run_id, session["session_id"])
+            )
+            plot_events = list(
+                dict(plot_raw.get("state", {}).get("signals", {}) or {}).get(
+                    "recent", []
+                )
+                or []
+            )
+            self.assertFalse(
+                any(
+                    str(item.get("kind", "")).strip() == "time_change"
+                    and str(item.get("time_hint", "")).strip() == "早晨"
+                    for item in plot_events
+                )
+            )
+
     def test_build_turn_payload_prioritizes_active_personas_for_full_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
@@ -7960,7 +8003,7 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             self.assertEqual(pending.get("speaker"), "场景提示")
             self.assertTrue(2 <= int(pending.get("response_limit_hint", 0)) <= 5)
 
-    def test_prepare_turn_act_narration_prompt_prioritizes_other_cast_over_controlled_character(self):
+    def test_prepare_turn_act_plot_prompt_prioritizes_other_cast_over_controlled_character(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -7996,13 +8039,17 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             turn_payload = service.dialogue._build_turn_payload(
                 manifest,
                 raw_session,
-                turn_id="turn-act-narration",
+                turn_id="turn-act-plot",
                 message="第二天一早，虎妞催祥子出门办事。",
-                message_kind="narration",
+                message_kind="plot",
                 speaker_override="场景提示",
             )
             llm_messages = service._build_dialogue_llm_messages(turn_payload, retry_on_empty=False)
-            system_prompt = llm_messages[0]["content"]
+            system_prompt = "\n".join(
+                message["content"]
+                for message in llm_messages
+                if message.get("role") == "system"
+            )
             hints = turn_payload.get("responder_hints", [])
 
             self.assertIn("not by speaking as 祥子", system_prompt)
@@ -8010,13 +8057,16 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             self.assertIn("must not be the only voice", system_prompt)
             self.assertIn("do not return only 祥子's line", system_prompt)
             self.assertIn("not as the final character reply", system_prompt)
+            self.assertIn("PLOT_PROGRESSION_CONTRACT is mandatory", system_prompt)
+            self.assertIn("must use speaker 场景提示 or 旁白", system_prompt)
+            self.assertIn("Do not merely paraphrase", system_prompt)
             self.assertTrue(2 <= int(turn_payload["host_action"]["response_limit_hint"]) <= 4)
             self.assertEqual(hints[0]["name"], "祥子")
             self.assertEqual(hints[-1]["name"], "虎妞")
             self.assertEqual(hints[0]["priority"], "normal")
             self.assertEqual(hints[1]["priority"], "high")
 
-    def test_prepare_turn_act_narration_prompt_handles_single_responder(self):
+    def test_prepare_turn_act_plot_prompt_handles_single_responder(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
             service.save_model_settings(
@@ -8059,22 +8109,22 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
             turn_payload = service.dialogue._build_turn_payload(
                 manifest,
                 raw_session,
-                turn_id="turn-act-narration-single",
+                turn_id="turn-act-plot-single",
                 message="第二天一早，虎妞催祥子出门办事。",
-                message_kind="narration",
+                message_kind="plot",
                 speaker_override="场景提示",
             )
             response_rule = turn_payload["instructions"]["response_count_rule"]
 
-            self.assertEqual(turn_payload["host_action"]["response_limit_hint"], 1)
-            self.assertIn("Return 1-1 in-world replies", response_rule)
-            self.assertNotIn("Return 2-1", response_rule)
+            self.assertEqual(turn_payload["host_action"]["response_limit_hint"], 2)
+            self.assertIn("exactly one concrete scene-level beat first", response_rule)
+            self.assertIn("followed by 1-1 present-character reactions", response_rule)
 
     def test_reorder_plot_push_responses_moves_controlled_character_before_closing_line(self):
         payload = {
             "mode": "act",
             "input": {
-                "message_kind": "narration",
+                "message_kind": "plot",
                 "controlled_character": "祥子",
             },
         }
@@ -8092,6 +8142,138 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
         ]
         reordered_three = _reorder_plot_push_responses(three_way, payload)
         self.assertEqual([item["speaker"] for item in reordered_three], ["虎妞", "祥子", "刘四"])
+
+        with_scene_beat = [
+            {"speaker": "虎妞", "message": "快走。"},
+            {"speaker": "场景提示", "message": "院门忽然被人推开。"},
+            {"speaker": "祥子", "message": "谁来了？"},
+        ]
+        reordered_with_scene = _reorder_plot_push_responses(with_scene_beat, payload)
+        self.assertEqual(
+            [item["speaker"] for item in reordered_with_scene],
+            ["场景提示", "祥子", "虎妞"],
+        )
+
+    def test_plot_push_retries_when_first_reply_has_no_scene_event(self):
+        payload = {
+            "mode": "act",
+            "input": {
+                "message_kind": "plot",
+                "controlled_character": "祥子",
+            },
+            "host_action": {"response_limit_hint": 3},
+        }
+        completion = Mock()
+        completion.side_effect = [
+            {"content": '[{"speaker":"虎妞","message":"你倒是快说话。"}]'},
+            {
+                "content": (
+                    '[{"speaker":"场景提示","message":"院门忽然被撞开，刘四带着账本闯了进来。"},'
+                    '{"speaker":"虎妞","message":"爹，你这是做什么？"}]'
+                )
+            },
+        ]
+
+        responses = generate_dialogue_responses(
+            payload=payload,
+            allowed_speakers=["祥子", "虎妞", "旁白", "场景提示"],
+            temperature=0.2,
+            max_tokens=500,
+            chat_completion=completion,
+            build_messages=lambda _payload, retry: [
+                {"role": "user", "content": "retry" if retry else "first"}
+            ],
+            parse_responses=parse_dialogue_responses,
+        )
+
+        self.assertEqual(completion.call_count, 2)
+        self.assertEqual(responses[0]["speaker"], "场景提示")
+        self.assertIn("账本", responses[0]["message"])
+
+    def test_at_mention_only_targets_present_characters_and_retries_until_they_reply(self):
+        payload = {
+            "mode": "act",
+            "input": {
+                "message_kind": "dialogue",
+                "controlled_character": "甲",
+                "mention_targets": ["乙"],
+            },
+            "host_action": {"response_limit_hint": 2},
+        }
+        completion = Mock()
+        completion.side_effect = [
+            {"content": '[{"speaker":"丙","message":"我先说一句。"}]'},
+            {"content": '[{"speaker":"乙","message":"你既然问我，我便直说。"}]'},
+        ]
+
+        responses = generate_dialogue_responses(
+            payload=payload,
+            allowed_speakers=["乙", "丙"],
+            temperature=0.2,
+            max_tokens=500,
+            chat_completion=completion,
+            build_messages=lambda _payload, retry: [
+                {"role": "user", "content": "retry" if retry else "first"}
+            ],
+            parse_responses=parse_dialogue_responses,
+        )
+
+        self.assertEqual(completion.call_count, 2)
+        self.assertEqual(responses[0]["speaker"], "乙")
+
+    def test_turn_payload_keeps_only_in_scene_at_mentions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            service.save_model_settings(
+                provider="openai-compatible",
+                model="deepseek-chat",
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+            )
+            created = service.create_run(
+                novel_name="mention.txt",
+                novel_content_base64=base64.b64encode("甲乙丙同处一室。".encode("utf-8")).decode("ascii"),
+                characters=["甲", "乙", "丙"],
+            )
+            for name in ("甲", "乙", "丙"):
+                service.ingest_character_result(
+                    created["run_id"],
+                    character=name,
+                    content_base64=base64.b64encode(
+                        f"- name: {name}\n- novel_id: mention\n- core_identity: 人物\n".encode("utf-8")
+                    ).decode("ascii"),
+                )
+            manifest = service._require_manifest(created["run_id"])
+            serialized = service.dialogue.create_session(
+                manifest,
+                mode="act",
+                participants=["甲", "乙", "丙"],
+                controlled_character="甲",
+            )
+            session = service.dialogue._read_json(
+                service.dialogue._session_file(created["run_id"], serialized["session_id"])
+            )
+            service.dialogue._set_session_scene_progress(
+                session,
+                {
+                    "present_participants": ["甲", "乙"],
+                    "offstage_participants": ["丙"],
+                },
+            )
+
+            turn_payload = service.dialogue._build_turn_payload(
+                manifest,
+                session,
+                turn_id="turn-mention",
+                message="@甲 先问问自己，@乙,你怎么看？@丙 也说一句。",
+            )
+
+        self.assertEqual(turn_payload["input"]["mention_targets"], ["乙"])
+        self.assertEqual(turn_payload["speaker_plan"]["mention_targets"], ["乙"])
+        self.assertIn("Every mentioned character", turn_payload["instructions"]["mention_rule"])
+        llm_messages = build_dialogue_llm_messages(turn_payload)
+        user_payload = json.loads(llm_messages[-1]["content"])
+        self.assertEqual(user_payload["mention_targets"], ["乙"])
 
     def test_prepare_turn_filters_departed_participants_from_active_pool(self):
         with tempfile.TemporaryDirectory() as tmp:
