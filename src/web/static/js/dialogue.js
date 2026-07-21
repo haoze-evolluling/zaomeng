@@ -54,6 +54,46 @@ function applySessionListViewportLock() {
   root.style.height = "auto";
 }
 
+function dialogueTranscriptMentionNames() {
+  const participants = Array.isArray(currentDialogueSession?.participants)
+    ? currentDialogueSession.participants
+    : Array.isArray(currentDialogueSession?.session_card?.participants)
+      ? currentDialogueSession.session_card.participants
+      : [];
+  return [...new Set(participants.map((name) => String(name || "").trim()).filter(Boolean))]
+    .sort((left, right) => right.length - left.length);
+}
+
+function appendMessageTextWithMentions(target, value) {
+  const text = String(value || "");
+  const candidates = dialogueTranscriptMentionNames();
+  let scanFrom = 0;
+  let emittedThrough = 0;
+  while (scanFrom < text.length) {
+    const marker = text.indexOf("@", scanFrom);
+    if (marker < 0) break;
+    const name = candidates.find((candidate) => {
+      if (!text.startsWith(`@${candidate}`, marker)) return false;
+      const following = text[marker + candidate.length + 1] || "";
+      return !following || /[\s,，。！？；：、（）().!?;:]/u.test(following);
+    });
+    if (!name) {
+      scanFrom = marker + 1;
+      continue;
+    }
+    const prefix = text.slice(emittedThrough, marker);
+    if (prefix) target.appendChild(document.createTextNode(prefix));
+    const mention = document.createElement("span");
+    mention.className = "message-mention";
+    mention.textContent = `@${name}`;
+    target.appendChild(mention);
+    emittedThrough = marker + name.length + 1;
+    scanFrom = emittedThrough;
+  }
+  const remainder = text.slice(emittedThrough);
+  if (remainder) target.appendChild(document.createTextNode(remainder));
+}
+
 function appendStyledMessageContent(target, message) {
   const text = String(message || "");
   const pattern = /([（(][^（）()\n]*[）)])/g;
@@ -61,16 +101,16 @@ function appendStyledMessageContent(target, message) {
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0;
     if (start > lastIndex) {
-      target.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+      appendMessageTextWithMentions(target, text.slice(lastIndex, start));
     }
     const aside = document.createElement("span");
     aside.className = "message-aside";
-    aside.textContent = match[0] || "";
+    appendMessageTextWithMentions(aside, match[0] || "");
     target.appendChild(aside);
     lastIndex = start + String(match[0] || "").length;
   }
   if (lastIndex < text.length) {
-    target.appendChild(document.createTextNode(text.slice(lastIndex)));
+    appendMessageTextWithMentions(target, text.slice(lastIndex));
   }
 }
 

@@ -282,7 +282,6 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
 
     def test_plot_push_can_advance_without_a_manual_cue(self):
         main_content = read_js("main.js")
-        composer_content = read_js("composer-vue-island.js")
         fragment_content = read_fragment("main-shell.html")
 
         self.assertIn("const DIALOGUE_AUTO_PLOT_PUSH_MESSAGE =", main_content)
@@ -291,14 +290,14 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("if (silentOptimistic && requestedMessage) {", main_content)
         self.assertIn("留空则由系统主动推进", main_content)
         self.assertIn('normalizeDialogueMessageKind(currentDialogueMessageKind) === "narration"', main_content)
-        self.assertIn('else if (draftKind.value === "narration")', composer_content)
-        self.assertIn("{{ draftKind === 'plot' ? '推进' : '送出' }}", composer_content)
+        self.assertIn('sendButton.textContent = isPlotPush ? "推进" : "送出";', main_content)
         self.assertIn('data-kind="plot"', fragment_content)
         self.assertIn(">推进剧情</button>", fragment_content)
 
     def test_composer_at_mentions_only_offer_present_characters(self):
         main_content = read_js("main.js")
-        composer_content = read_js("composer-vue-island.js")
+        dialogue_content = read_js("dialogue.js")
+        bootstrap_content = read_js("bootstrap.js")
         fragment_content = read_fragment("main-shell.html")
         styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
 
@@ -306,15 +305,28 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("runtime_state_overview", main_content)
         self.assertIn("present_participants", main_content)
         self.assertIn("function extractDialogueMentionContext(value, caretPosition) {", main_content)
+        self.assertIn("function collectDialogueMentionNames(value, excludedContext = null", main_content)
+        self.assertIn("function availableDialogueMentionCandidates(value = \"\"", main_content)
         self.assertIn("mentionCandidates: buildDialogueMentionCandidates", main_content)
-        self.assertIn("function updateMentionMenu(value, caretPosition) {", composer_content)
-        self.assertIn("@mousedown.prevent=\"insertMention(name)\"", composer_content)
+        self.assertIn("function initializeDialogueComposerEditor() {", main_content)
+        self.assertIn("function renderComposerEditor(value, options = {}) {", main_content)
+        self.assertIn('token.className = "composer-mention-token";', main_content)
+        self.assertIn("function removeAdjacentDialogueMention(event) {", main_content)
+        self.assertIn('class="composer-rich-editor"', fragment_content)
+        self.assertIn('class="composer-mention-button"', fragment_content)
+        self.assertIn('id="dialogue-mention-button"', fragment_content)
         self.assertIn('id="dialogue-mention-menu"', fragment_content)
+        self.assertEqual(fragment_content.count('id="dialogue-message"'), 1)
+        self.assertNotIn("composer-vue-island.js", bootstrap_content)
+        self.assertNotIn('id="composer-vue-root"', fragment_content)
         self.assertIn(".composer-mention-menu {", styles)
+        self.assertIn(".composer-mention-token {", styles)
+        self.assertIn("function appendMessageTextWithMentions(target, value) {", dialogue_content)
+        self.assertIn('mention.className = "message-mention";', dialogue_content)
+        self.assertIn(".message-mention {", styles)
 
     def test_dialogue_association_toggle_persists_and_gates_requests(self):
         main_content = read_js("main.js")
-        composer_content = read_js("composer-vue-island.js")
         fragment_content = read_fragment("main-shell.html")
 
         self.assertIn(
@@ -324,9 +336,8 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("associationEnabled: dialogueAssociationsEnabled", main_content)
         self.assertIn("function setDialogueAssociationsEnabled(enabled) {", main_content)
         self.assertIn("if (!dialogueAssociationsEnabled) return;", main_content)
-        self.assertIn("setAssociationEnabled(enabled)", main_content)
-        self.assertIn('class="dialogue-association-toggle-control"', composer_content)
-        self.assertIn('@change="setAssociationEnabled"', composer_content)
+        self.assertIn('el("dialogue-association-toggle")?.addEventListener("change"', main_content)
+        self.assertIn('class="dialogue-association-toggle-control"', fragment_content)
         self.assertIn('id="dialogue-association-toggle"', fragment_content)
 
     def test_main_uses_shared_bridge_sync_for_self_card_state(self):

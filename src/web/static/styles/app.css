@@ -770,11 +770,6 @@ textarea,
   box-shadow: 0 12px 28px rgba(62, 48, 40, 0.07);
 }
 
-.composer-vue-root,
-.composer-vue-shell {
-  gap: var(--space-3);
-}
-
 .composer-main {
   gap: var(--space-2);
   padding: var(--space-2);
@@ -784,8 +779,7 @@ textarea,
 }
 
 #dialogue-message,
-.composer-main-vue textarea,
-.composer-textarea {
+.composer-rich-editor {
   min-height: 2.75rem;
   line-height: 1.62;
   overflow-wrap: anywhere;
@@ -1060,8 +1054,7 @@ textarea,
     padding: 1.35rem 1rem 1.1rem;
   }
 
-  .composer-main,
-  .composer-main-vue {
+  .composer-main {
     border-radius: var(--radius-lg);
   }
 }
@@ -1151,8 +1144,7 @@ textarea,
   }
 
   #dialogue-message,
-  .composer-main-vue textarea,
-  .composer-textarea {
+  .composer-rich-editor {
     min-height: 4.5rem;
   }
 }

@@ -369,14 +369,8 @@
     align-items: stretch;
   }
 
-  .composer-main-vue {
-    border-radius: 22px;
-    align-items: stretch;
-  }
-
   #dialogue-message,
-  .composer-main-vue textarea,
-  .composer-textarea {
+  .composer-rich-editor {
     min-height: 72px;
     max-height: 160px;
   }

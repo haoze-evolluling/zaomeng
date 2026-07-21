@@ -189,7 +189,6 @@
 
   <footer id="turn-stage" class="composer-shell hidden">
     <div class="composer-card">
-      <div id="composer-vue-root" class="composer-vue-root hidden"></div>
       <div id="observe-quick-replies" class="quick-reply-row hidden"></div>
       <div id="observe-auto-row" class="observe-auto-row hidden">
         <button id="observe-auto-toggle" type="button" class="soft-button">开启连续旁观</button>
@@ -209,8 +208,16 @@
           <button type="button" class="kind-chip" data-kind="plot" title="可填写推进方向，也可以留空让系统主动推进">推进剧情</button>
         </div>
         <div id="dialogue-mention-menu" class="composer-mention-menu hidden" role="listbox" aria-label="选择在场人物"></div>
-        <textarea id="dialogue-message" rows="2" placeholder="写一句你想让他们听见的话"></textarea>
+        <div
+          id="dialogue-message"
+          class="composer-rich-editor"
+          contenteditable="true"
+          role="textbox"
+          aria-multiline="true"
+          data-placeholder="写一句你想让他们听见的话"
+        ></div>
         <div class="composer-actions">
+          <button id="dialogue-mention-button" type="button" class="composer-mention-button" aria-label="艾特在场人物" title="没有其他可艾特的在场人物" disabled>@</button>
           <button
             id="suggest-turn-button"
             type="button"

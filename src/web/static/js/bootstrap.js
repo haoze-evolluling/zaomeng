@@ -6,7 +6,7 @@
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }
 
-  const version = "20260721220000";
+  const version = "20260721230000";
   window.__ZAOMENG_WEB_UI_VERSION__ = version;
   const rootFragments = [
     { id: "header-root", url: `/web/fragments/header.html?v=${version}` },
@@ -33,7 +33,6 @@
     ["main-shell", "main-shell-root", { kind: "fragment" }],
     ["character-overview-vue-root", "character-overview-vue-root", { kind: "vue-island", trial: "character-overview" }],
     ["chat-setup-vue-root", "chat-setup-vue-root", { kind: "vue-island", trial: "chat-setup" }],
-    ["composer-vue-root", "composer-vue-root", { kind: "vue-island", trial: "composer" }],
     ["persona-review-vue-root", "persona-review-vue-root", { kind: "vue-island", trial: "persona-review" }],
     ["relation-details-vue-root", "relation-details-vue-root", { kind: "vue-island", trial: "relation-details" }],
     ["scene-card-vue-root", "scene-card-vue-root", { kind: "vue-island", trial: "scene-card" }],
@@ -78,7 +77,6 @@
     `/web/js/work-character-vue-island.js?v=${version}`,
     `/web/js/redistill-vue-island.js?v=${version}`,
     `/web/js/persona-review-vue-island.js?v=${version}`,
-    `/web/js/composer-vue-island.js?v=${version}`,
     `/web/js/relation-details-vue-island.js?v=${version}`,
     `/web/js/model-settings-vue-island.js?v=${version}`,
     `/web/js/chat-setup-vue-island.js?v=${version}`,

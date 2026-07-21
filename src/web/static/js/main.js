@@ -2522,26 +2522,205 @@ function extractDialogueMentionContext(value, caretPosition) {
   return { start, end: caret, query };
 }
 
-let legacyDialogueMentionIndex = 0;
+function collectDialogueMentionNames(value, excludedContext = null, session = currentDialogueSession) {
+  const text = String(value || "");
+  const contextStart = Number(excludedContext?.start);
+  const contextEnd = Number(excludedContext?.end);
+  const masked = Number.isFinite(contextStart) && Number.isFinite(contextEnd)
+    ? `${text.slice(0, contextStart)}${" ".repeat(Math.max(0, contextEnd - contextStart))}${text.slice(contextEnd)}`
+    : text;
+  const mentioned = new Set();
+  buildDialogueMentionCandidates(session).forEach((name) => {
+    const token = `@${name}`;
+    let cursor = 0;
+    while (cursor < masked.length) {
+      const marker = masked.indexOf(token, cursor);
+      if (marker < 0) break;
+      const following = masked[marker + token.length] || "";
+      if (!following || /[\s,，。！？；：、（）().!?;:]/u.test(following)) {
+        mentioned.add(name);
+        break;
+      }
+      cursor = marker + token.length;
+    }
+  });
+  return mentioned;
+}
 
-function closeLegacyDialogueMentionMenu() {
+function availableDialogueMentionCandidates(value = "", excludedContext = null, session = currentDialogueSession) {
+  const mentioned = collectDialogueMentionNames(value, excludedContext, session);
+  return buildDialogueMentionCandidates(session).filter((name) => !mentioned.has(name));
+}
+
+function syncDialogueMentionButton(session = currentDialogueSession) {
+  const button = el("dialogue-mention-button");
+  const area = el("dialogue-message");
+  if (!button) return;
+  const available = availableDialogueMentionCandidates(area?.value || "", null, session);
+  button.disabled = available.length === 0;
+  button.title = available.length ? "艾特在场人物" : "没有其他可艾特的在场人物";
+}
+
+function composerEditorText(editor = el("dialogue-message")) {
+  return String(editor?.textContent || "").replace(/\r\n?/g, "\n");
+}
+
+function composerEditorPoint(editor, offset) {
+  const target = Math.max(0, Number(offset) || 0);
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let traversed = 0;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.textContent?.length || 0;
+    if (traversed + length >= target) {
+      return { node, offset: target - traversed };
+    }
+    traversed += length;
+    node = walker.nextNode();
+  }
+  return { node: editor, offset: editor.childNodes.length };
+}
+
+function setComposerEditorSelection(start, end = start) {
+  const editor = el("dialogue-message");
+  if (!editor) return;
+  const selection = window.getSelection();
+  const range = document.createRange();
+  const startPoint = composerEditorPoint(editor, start);
+  const endPoint = composerEditorPoint(editor, end);
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function composerEditorCaretOffset() {
+  const editor = el("dialogue-message");
+  const selection = window.getSelection();
+  if (!editor || !selection?.rangeCount) return composerEditorText(editor).length;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.startContainer)) return composerEditorText(editor).length;
+  const before = range.cloneRange();
+  before.selectNodeContents(editor);
+  before.setEnd(range.startContainer, range.startOffset);
+  return before.toString().length;
+}
+
+function renderComposerEditor(value, options = {}) {
+  const editor = el("dialogue-message");
+  if (!editor) return;
+  const text = String(value || "");
+  editor.replaceChildren();
+  const explicitName = String(options.mentionName || "").trim();
+  const candidates = [...buildDialogueMentionCandidates(), explicitName]
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  let scanFrom = 0;
+  let emittedThrough = 0;
+  while (scanFrom < text.length) {
+    const marker = text.indexOf("@", scanFrom);
+    if (marker < 0) break;
+    const name = candidates.find((candidate) => {
+      if (!text.startsWith(`@${candidate}`, marker)) return false;
+      const following = text[marker + candidate.length + 1] || "";
+      return !following || /[\s,，。！？；：、（）().!?;:]/u.test(following);
+    });
+    if (!name) {
+      scanFrom = marker + 1;
+      continue;
+    }
+    const prefix = text.slice(emittedThrough, marker);
+    if (prefix) editor.appendChild(document.createTextNode(prefix));
+    const token = document.createElement("span");
+    token.className = "composer-mention-token";
+    token.dataset.mentionName = name;
+    token.contentEditable = "false";
+    token.textContent = `@${name}`;
+    editor.appendChild(token);
+    emittedThrough = marker + name.length + 1;
+    scanFrom = emittedThrough;
+  }
+  const remainder = text.slice(emittedThrough);
+  if (remainder) editor.appendChild(document.createTextNode(remainder));
+}
+
+function insertComposerPlainText(text) {
+  const editor = el("dialogue-message");
+  const selection = window.getSelection();
+  if (!editor || !selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.startContainer)) return;
+  range.deleteContents();
+  const node = document.createTextNode(String(text || ""));
+  range.insertNode(node);
+  range.setStart(node, node.textContent.length);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function initializeDialogueComposerEditor() {
+  const editor = el("dialogue-message");
+  if (!editor || editor.dataset.composerReady === "true") return;
+  editor.dataset.composerReady = "true";
+  let placeholder = String(editor.dataset.placeholder || "");
+  let disabled = false;
+  Object.defineProperties(editor, {
+    value: {
+      configurable: true,
+      get: () => composerEditorText(editor),
+      set: (value) => renderComposerEditor(value),
+    },
+    placeholder: {
+      configurable: true,
+      get: () => placeholder,
+      set: (value) => {
+        placeholder = String(value || "");
+        editor.dataset.placeholder = placeholder;
+      },
+    },
+    disabled: {
+      configurable: true,
+      get: () => disabled,
+      set: (value) => {
+        disabled = Boolean(value);
+        editor.contentEditable = disabled ? "false" : "true";
+        editor.setAttribute("aria-disabled", disabled ? "true" : "false");
+      },
+    },
+    selectionStart: {
+      configurable: true,
+      get: () => composerEditorCaretOffset(),
+    },
+  });
+  editor.setSelectionRange = (start, end = start) => setComposerEditorSelection(start, end);
+  editor.addEventListener("paste", (event) => {
+    event.preventDefault();
+    insertComposerPlainText(event.clipboardData?.getData("text/plain") || "");
+  });
+}
+
+let dialogueMentionIndex = 0;
+
+function closeDialogueMentionMenu() {
   const menu = el("dialogue-mention-menu");
   if (!menu) return;
   menu.innerHTML = "";
   menu.classList.add("hidden");
-  legacyDialogueMentionIndex = 0;
+  dialogueMentionIndex = 0;
 }
 
-function renderLegacyDialogueMentionMenu() {
+function renderDialogueMentionMenu() {
   const area = el("dialogue-message");
   const menu = el("dialogue-mention-menu");
-  if (!area || !menu || area.disabled) return closeLegacyDialogueMentionMenu();
+  if (!area || !menu || area.disabled) return closeDialogueMentionMenu();
   const context = extractDialogueMentionContext(area.value, area.selectionStart);
-  const candidates = buildDialogueMentionCandidates().filter((name) => (
+  const candidates = availableDialogueMentionCandidates(area.value, context).filter((name) => (
     !context?.query || name.toLocaleLowerCase().includes(context.query.toLocaleLowerCase())
   ));
-  if (!context || !candidates.length) return closeLegacyDialogueMentionMenu();
-  legacyDialogueMentionIndex = Math.min(legacyDialogueMentionIndex, candidates.length - 1);
+  if (!context || !candidates.length) return closeDialogueMentionMenu();
+  dialogueMentionIndex = Math.min(dialogueMentionIndex, candidates.length - 1);
   menu.innerHTML = "";
   candidates.forEach((name, index) => {
     const button = document.createElement("button");
@@ -2549,28 +2728,65 @@ function renderLegacyDialogueMentionMenu() {
     button.className = "composer-mention-option";
     button.dataset.mentionName = name;
     button.setAttribute("role", "option");
-    button.setAttribute("aria-selected", index === legacyDialogueMentionIndex ? "true" : "false");
-    button.classList.toggle("active", index === legacyDialogueMentionIndex);
+    button.setAttribute("aria-selected", index === dialogueMentionIndex ? "true" : "false");
+    button.classList.toggle("active", index === dialogueMentionIndex);
     button.textContent = `@${name}`;
     menu.appendChild(button);
   });
   menu.classList.remove("hidden");
 }
 
-function insertLegacyDialogueMention(name) {
+function insertDialogueMention(name) {
   const area = el("dialogue-message");
   if (!area) return;
   const context = extractDialogueMentionContext(area.value, area.selectionStart);
   const target = String(name || "").trim();
   if (!context || !buildDialogueMentionCandidates().includes(target)) return;
+  if (collectDialogueMentionNames(area.value, context).has(target)) {
+    closeDialogueMentionMenu();
+    return;
+  }
   const nextValue = `${area.value.slice(0, context.start)}@${target} ${area.value.slice(context.end)}`;
   const nextCaret = context.start + target.length + 2;
-  setComposerDraft(nextValue, { focus: true });
+  setComposerDraft(nextValue, { focus: true, mentionStart: context.start, mentionName: target });
   area.setSelectionRange(nextCaret, nextCaret);
-  closeLegacyDialogueMentionMenu();
+  closeDialogueMentionMenu();
+  syncDialogueMentionButton();
 }
 
-function handleLegacyDialogueMentionKeydown(event) {
+function openDialogueMentionPicker() {
+  const area = el("dialogue-message");
+  if (!area || area.disabled || !availableDialogueMentionCandidates(area.value).length) return;
+  const caret = Number.isFinite(area.selectionStart) ? area.selectionStart : area.value.length;
+  const value = area.value;
+  const nextValue = `${value.slice(0, caret)}@${value.slice(caret)}`;
+  setComposerDraft(nextValue, { focus: true });
+  area.setSelectionRange(caret + 1, caret + 1);
+  dialogueMentionIndex = 0;
+  renderDialogueMentionMenu();
+}
+
+function removeAdjacentDialogueMention(event) {
+  if (event.key !== "Backspace" && event.key !== "Delete") return false;
+  const editor = el("dialogue-message");
+  const selection = window.getSelection();
+  if (!editor || !selection?.isCollapsed || !selection.rangeCount) return false;
+  const range = selection.getRangeAt(0);
+  let node = range.startContainer;
+  const offset = range.startOffset;
+  if (node.nodeType === Node.TEXT_NODE && event.key === "Backspace" && offset === 0) node = node.previousSibling;
+  else if (node.nodeType === Node.TEXT_NODE && event.key === "Delete" && offset === (node.textContent?.length || 0)) node = node.nextSibling;
+  else if (node === editor) node = editor.childNodes[event.key === "Backspace" ? offset - 1 : offset];
+  if (!(node instanceof HTMLElement) || !node.matches(".composer-mention-token")) return false;
+  event.preventDefault();
+  const caret = composerEditorCaretOffset() - (event.key === "Backspace" ? (node.textContent?.length || 0) : 0);
+  node.remove();
+  setComposerEditorSelection(Math.max(0, caret));
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function handleDialogueMentionKeydown(event) {
   const menu = el("dialogue-mention-menu");
   if (!menu || menu.classList.contains("hidden")) return false;
   const options = Array.from(menu.querySelectorAll("[data-mention-name]"));
@@ -2578,18 +2794,18 @@ function handleLegacyDialogueMentionKeydown(event) {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     const step = event.key === "ArrowDown" ? 1 : -1;
-    legacyDialogueMentionIndex = (legacyDialogueMentionIndex + step + options.length) % options.length;
-    renderLegacyDialogueMentionMenu();
+    dialogueMentionIndex = (dialogueMentionIndex + step + options.length) % options.length;
+    renderDialogueMentionMenu();
     return true;
   }
   if (event.key === "Enter" || event.key === "Tab") {
     event.preventDefault();
-    insertLegacyDialogueMention(options[legacyDialogueMentionIndex]?.dataset.mentionName || "");
+    insertDialogueMention(options[dialogueMentionIndex]?.dataset.mentionName || "");
     return true;
   }
   if (event.key === "Escape") {
     event.preventDefault();
-    closeLegacyDialogueMentionMenu();
+    closeDialogueMentionMenu();
     return true;
   }
   return false;
@@ -2648,6 +2864,7 @@ function syncDialogueMessageKindVisibility(session = currentDialogueSession) {
   const toggle = el("dialogue-message-kind");
   const mode = session?.mode || session?.session_card?.mode || "";
   const hide = mode === "observe";
+  syncDialogueMentionButton(session);
   if (toggle) {
     toggle.classList.toggle("hidden", hide);
   }
@@ -2803,7 +3020,8 @@ async function applyQuickReply(value) {
 function setComposerDraft(value = "", options = {}) {
   const area = el("dialogue-message");
   if (!area) return;
-  area.value = String(value || "");
+  renderComposerEditor(value, options);
+  syncDialogueMentionButton();
   resizeComposer();
   if (options.focus) {
     area.focus();
@@ -3329,6 +3547,7 @@ async function handleSuggestTurn(event) {
 }
 
 function bindEvents() {
+  initializeDialogueComposerEditor();
   if (typeof initAppConfirmModal === "function") {
     initAppConfirmModal();
   }
@@ -3620,22 +3839,36 @@ function bindEvents() {
   bind("redistill-characters", "input", updateRedistillPillState);
   bind("dialogue-message", "input", () => {
     resizeComposer();
-    legacyDialogueMentionIndex = 0;
-    renderLegacyDialogueMentionMenu();
+    dialogueMentionIndex = 0;
+    renderDialogueMentionMenu();
+    syncDialogueMentionButton();
     publishComposerUiState("composer-input");
   });
   el("dialogue-mention-menu")?.addEventListener("click", (event) => {
     const target = event.target instanceof HTMLElement ? event.target.closest("[data-mention-name]") : null;
     if (!(target instanceof HTMLElement)) return;
-    insertLegacyDialogueMention(target.dataset.mentionName || "");
+    insertDialogueMention(target.dataset.mentionName || "");
   });
+  el("dialogue-mention-menu")?.addEventListener("mousedown", (event) => {
+    if (event.target instanceof HTMLElement && event.target.closest("[data-mention-name]")) {
+      event.preventDefault();
+    }
+  });
+  el("dialogue-mention-button")?.addEventListener("mousedown", (event) => event.preventDefault());
+  el("dialogue-mention-button")?.addEventListener("click", openDialogueMentionPicker);
   bind("novel-file", "change", updateNovelFileView);
   bind("characters", "input", refreshSamplingHintEstimate);
   bind("max-sentences", "input", refreshSamplingHintEstimate);
   bind("max-chars", "input", refreshSamplingHintEstimate);
   bind("redistill-novel-file", "change", updateRedistillFileView);
   bind("dialogue-message", "keydown", (event) => {
-    if (handleLegacyDialogueMentionKeydown(event)) return;
+    if (removeAdjacentDialogueMention(event)) return;
+    if (handleDialogueMentionKeydown(event)) return;
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      insertComposerPlainText("\n");
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       el("prepare-turn-button")?.click();
