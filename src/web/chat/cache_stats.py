@@ -20,6 +20,15 @@ def empty_generation_cache_stats() -> dict[str, Any]:
             "hit_rate": None,
             "observed_turns": 0,
             "total_turns": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "elapsed_seconds": 0.0,
+            "cost_usd": 0.0,
+            "attempt_count": 0,
+            "retry_count": 0,
+            "average_elapsed_seconds": 0.0,
+            "models": {},
         },
     }
 
@@ -33,10 +42,33 @@ def summarize_completion_results(results: Iterable[dict[str, Any]]) -> dict[str,
     cache_read_tokens = 0
     cache_write_tokens = 0
     cache_miss_tokens = 0
+    prompt_tokens = 0
+    completion_tokens = 0
+    elapsed_seconds = 0.0
+    cost_usd = 0.0
 
     for completion in completions:
         provider = str(completion.get("provider", provider)).strip() or provider
         model = str(completion.get("model", model)).strip() or model
+        usage_payload = dict(completion.get("usage", {}) or {})
+        prompt_tokens += _non_negative_int(
+            completion.get(
+                "prompt_tokens",
+                usage_payload.get("prompt_tokens", usage_payload.get("input_tokens", 0)),
+            )
+        )
+        completion_tokens += _non_negative_int(
+            completion.get(
+                "completion_tokens",
+                usage_payload.get("completion_tokens", usage_payload.get("output_tokens", 0)),
+            )
+        )
+        elapsed_seconds += _non_negative_float(
+            completion.get("elapsed_time", completion.get("elapsed_seconds", 0.0))
+        )
+        cost_usd += _non_negative_float(
+            completion.get("cost", completion.get("cost_usd", 0.0))
+        )
         usage = dict(completion.get("cache_usage", {}) or {})
         if not bool(usage.get("observable", False)):
             continue
@@ -75,6 +107,12 @@ def summarize_completion_results(results: Iterable[dict[str, Any]]) -> dict[str,
         "cache_miss_tokens": cache_miss_tokens,
         "hit_rate": hit_rate,
         "attempt_count": len(completions),
+        "retry_count": max(0, len(completions) - 1),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "elapsed_seconds": round(elapsed_seconds, 4),
+        "cost_usd": round(cost_usd, 8),
     }
 
 
@@ -108,6 +146,30 @@ def record_generation_cache_observation(
     turns = turns[-MAX_RECORDED_TURNS:]
 
     summary["total_turns"] = _non_negative_int(summary.get("total_turns", 0)) + 1
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        summary[key] = _non_negative_int(summary.get(key, 0)) + item[key]
+    summary["elapsed_seconds"] = round(
+        _non_negative_float(summary.get("elapsed_seconds", 0.0))
+        + item["elapsed_seconds"],
+        4,
+    )
+    summary["cost_usd"] = round(
+        _non_negative_float(summary.get("cost_usd", 0.0)) + item["cost_usd"],
+        8,
+    )
+    summary["attempt_count"] = (
+        _non_negative_int(summary.get("attempt_count", 0)) + item["attempt_count"]
+    )
+    summary["retry_count"] = (
+        _non_negative_int(summary.get("retry_count", 0)) + item["retry_count"]
+    )
+    models = dict(summary.get("models", {}) or {})
+    model_key = str(item.get("model", "")).strip() or "unknown"
+    models[model_key] = _non_negative_int(models.get(model_key, 0)) + item["attempt_count"]
+    summary["models"] = models
+    summary["average_elapsed_seconds"] = round(
+        summary["elapsed_seconds"] / max(1, summary["total_turns"]), 4
+    )
     if item["observed"]:
         summary["observed_turns"] = (
             _non_negative_int(summary.get("observed_turns", 0)) + 1
@@ -166,6 +228,9 @@ def _normalize_observation(
         if observed and input_tokens > 0
         else (0.0 if observed else None)
     )
+    attempt_count = max(
+        1, _non_negative_int(observation.get("attempt_count", 1))
+    )
     return {
         "turn_id": turn_id,
         "provider": str(observation.get("provider", "")).strip(),
@@ -181,8 +246,26 @@ def _normalize_observation(
         "cache_write_tokens": cache_write_tokens,
         "cache_miss_tokens": cache_miss_tokens,
         "hit_rate": hit_rate,
-        "attempt_count": max(
-            1, _non_negative_int(observation.get("attempt_count", 1))
+        "attempt_count": attempt_count,
+        "retry_count": _non_negative_int(
+            observation.get("retry_count", max(0, attempt_count - 1))
+        ),
+        "prompt_tokens": _non_negative_int(observation.get("prompt_tokens", 0)),
+        "completion_tokens": _non_negative_int(
+            observation.get("completion_tokens", 0)
+        ),
+        "total_tokens": _non_negative_int(
+            observation.get(
+                "total_tokens",
+                _non_negative_int(observation.get("prompt_tokens", 0))
+                + _non_negative_int(observation.get("completion_tokens", 0)),
+            )
+        ),
+        "elapsed_seconds": round(
+            _non_negative_float(observation.get("elapsed_seconds", 0.0)), 4
+        ),
+        "cost_usd": round(
+            _non_negative_float(observation.get("cost_usd", 0.0)), 8
         ),
         "updated_at": updated_at,
     }
@@ -205,6 +288,13 @@ def _non_negative_int(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _non_negative_float(value: Any) -> float:
+    try:
+        return max(0.0, float(value or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 __all__ = [

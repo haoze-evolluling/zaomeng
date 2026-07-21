@@ -41,6 +41,33 @@
               <p id="dialogue-live-scene-status" class="card-note"></p>
               <div id="dialogue-scene-chain-suggestions" class="dialogue-scene-chain-suggestions hidden"></div>
             </div>
+            <section id="dialogue-branch-manager" class="dialogue-branch-manager hidden"></section>
+            <section id="dialogue-chapter-outline" class="dialogue-chapter-outline hidden"></section>
+            <div id="dialogue-event-timeline" class="dialogue-event-timeline hidden"></div>
+            <section id="dialogue-director-panel" class="dialogue-director-panel hidden">
+              <div class="dialogue-director-head">
+                <div>
+                  <strong>剧情导演</strong>
+                  <small>设定目标，生成多个可立即演绎的下一拍方案。</small>
+                </div>
+              </div>
+              <textarea id="dialogue-director-goal" rows="2" maxlength="240" placeholder="例如：让两人从误会走向和解，但不要立刻说破。"></textarea>
+              <div id="dialogue-director-actions" class="dialogue-director-actions">
+                <button type="button" class="is-active" data-director-action="advance">推进剧情</button>
+                <button type="button" data-director-action="slow_emotion">放慢情绪</button>
+                <button type="button" data-director-action="conflict">引入冲突</button>
+                <button type="button" data-director-action="viewpoint">切换视角</button>
+              </div>
+              <div class="dialogue-director-submit-row">
+                <button id="dialogue-director-generate" type="button" class="soft-button">生成候选方案</button>
+                <span id="dialogue-director-status"></span>
+              </div>
+              <div id="dialogue-director-options" class="dialogue-director-options"></div>
+            </section>
+            <section id="dialogue-generation-metrics" class="dialogue-generation-metrics hidden"></section>
+            <div id="dialogue-relation-evolution" class="dialogue-relation-evolution hidden"></div>
+            <section id="dialogue-character-growth" class="dialogue-character-growth hidden"></section>
+            <div id="dialogue-speaker-balance" class="dialogue-speaker-balance hidden"></div>
             <div id="dialogue-scene-timeline" class="dialogue-scene-timeline hidden"></div>
             <section id="dialogue-state-overview" class="dialogue-state-overview hidden">
               <div class="dialogue-state-overview-head">
@@ -113,6 +140,33 @@
                 <p id="dialogue-memory-world">当前局势里的动作与情绪线会在这里提醒你。</p>
               </article>
             </div>
+            <section id="dialogue-memory-control" class="dialogue-memory-control">
+              <div class="dialogue-memory-control-head">
+                <div>
+                  <strong>可控记忆</strong>
+                  <small>你可以明确指定哪些设定要持续记住，也可以暂时停用。</small>
+                </div>
+              </div>
+              <div class="dialogue-memory-editor">
+                <textarea id="dialogue-memory-input" rows="2" maxlength="500" placeholder="例如：甲答应过乙，天亮前绝不离开花厅。"></textarea>
+                <div class="dialogue-memory-editor-row">
+                  <select id="dialogue-memory-category" aria-label="记忆类型">
+                    <option value="story">剧情记忆</option>
+                    <option value="relationship">关系记忆</option>
+                    <option value="long_term">长期记忆</option>
+                    <option value="short_term">短期记忆</option>
+                  </select>
+                  <label><input id="dialogue-memory-pinned" type="checkbox"> 以后必须记住</label>
+                  <button id="dialogue-memory-save" type="button" class="soft-button">添加记忆</button>
+                  <button id="dialogue-memory-cancel-edit" type="button" class="soft-button hidden">取消编辑</button>
+                </div>
+              </div>
+              <div id="dialogue-memory-ledger" class="dialogue-memory-ledger"></div>
+              <details class="dialogue-context-usage">
+                <summary>本轮回复实际使用了哪些上下文</summary>
+                <div id="dialogue-context-usage-list" class="dialogue-context-usage-list"></div>
+              </details>
+            </section>
             <div class="dialogue-memory-meta">
               <span id="dialogue-memory-mode" class="dialogue-memory-mode">模式：未入场</span>
               <span id="dialogue-memory-branch" class="dialogue-memory-branch hidden"></span>

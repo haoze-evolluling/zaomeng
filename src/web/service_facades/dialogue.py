@@ -3,10 +3,13 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any
 
+from src.core.exceptions import LLMRequestError
 import src.web.chat.scene_signals as _scene_signals
 from src.web.chat import (
     associate_dialogue_turn_payload,
     build_dialogue_association_llm_messages,
+    build_dialogue_consistency_review_messages,
+    build_dialogue_director_llm_messages,
     build_dialogue_llm_messages,
     build_dialogue_opening_message,
     build_dialogue_relation_state_messages,
@@ -23,6 +26,8 @@ from src.web.chat import (
     generate_dialogue_suggestion,
     generate_dialogue_suggestion_for_run,
     parse_dialogue_associations,
+    parse_dialogue_consistency_review,
+    parse_dialogue_director_options,
     parse_dialogue_responses,
     parse_dialogue_relation_state,
     parse_dialogue_scene_progress,
@@ -113,6 +118,68 @@ class DialogueServiceMixin:
         self._ensure_run_exists(run_id)
         return self.dialogue.get_session(run_id, session_id)
 
+    def correct_latest_dialogue_turn(
+        self, run_id: str, *, session_id: str
+    ) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        branch, correction_context = self.dialogue.create_correction_branch(
+            manifest, session_id
+        )
+        branch_id = str(branch.get("session_id", "")).strip()
+        self.dialogue.prepare_turn(
+            manifest,
+            session_id=branch_id,
+            message=str(correction_context.get("message", "")).strip(),
+            message_kind=str(
+                correction_context.get("message_kind", "dialogue")
+            ).strip()
+            or "dialogue",
+        )
+        pending_payload = self._load_pending_turn_payload(run_id, branch_id)
+        pending_payload["correction_context"] = correction_context
+        try:
+            generated = self._generate_dialogue_responses(run_id, pending_payload)
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        if isinstance(generated, dict):
+            responses = list(generated.get("responses", []) or [])
+            generation_cache = generated.get("generation_cache")
+        else:
+            responses = list(generated or [])
+            generation_cache = None
+        self._evolve_relations_from_turn(
+            run_id, pending_payload, responses, refine_with_llm=False
+        )
+        corrected = self.dialogue.ingest_turn_responses(
+            run_id,
+            session_id=branch_id,
+            responses=responses,
+            remember_turn_memory=True,
+            generation_cache=(
+                dict(generation_cache)
+                if isinstance(generation_cache, dict)
+                else None
+            ),
+        )
+        return self._refresh_dialogue_scene_progress(
+            run_id, corrected, use_llm=False
+        )
+
+    def deep_review_latest_dialogue_turn(
+        self, run_id: str, *, session_id: str
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        payload = self.dialogue.build_consistency_review_payload(run_id, session_id)
+        try:
+            review = self._generate_dialogue_consistency_review(run_id, payload)
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        return self.dialogue.apply_semantic_consistency_review(
+            run_id,
+            session_id=session_id,
+            review=review,
+        )
+
     def branch_dialogue_session_from_scene(
         self, run_id: str, *, session_id: str, scene_index: int
     ) -> dict[str, Any]:
@@ -121,6 +188,80 @@ class DialogueServiceMixin:
             manifest,
             session_id,
             scene_index=scene_index,
+        )
+
+    def branch_dialogue_session_from_turn(
+        self, run_id: str, *, session_id: str, turn_id: str
+    ) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        return self.dialogue.branch_session_from_turn(
+            manifest,
+            session_id,
+            turn_id=turn_id,
+        )
+
+    def update_dialogue_branch_metadata(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        label: str | None = None,
+        is_mainline: bool | None = None,
+        locked_event_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.update_branch_metadata(
+            run_id,
+            session_id,
+            label=label,
+            is_mainline=is_mainline,
+            locked_event_ids=locked_event_ids,
+        )
+
+    def set_dialogue_relation_lock(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        pair_key: str,
+        locked: bool,
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.set_relation_lock(
+            run_id,
+            session_id,
+            pair_key=pair_key,
+            locked=locked,
+        )
+
+    def save_dialogue_memory(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        text: str,
+        category: str,
+        pinned: bool,
+        enabled: bool,
+        memory_id: str = "",
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.upsert_controlled_memory(
+            run_id,
+            session_id,
+            text=text,
+            category=category,
+            pinned=pinned,
+            enabled=enabled,
+            memory_id=memory_id,
+        )
+
+    def delete_dialogue_memory(
+        self, run_id: str, *, session_id: str, memory_id: str
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.delete_controlled_memory(
+            run_id, session_id, memory_id=memory_id
         )
 
     def switch_dialogue_scene_card(
@@ -282,6 +423,33 @@ class DialogueServiceMixin:
             friendly_dialogue_llm_error=friendly_dialogue_llm_error,
         )
 
+    def direct_dialogue_turn(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        goal: str,
+        action: str = "advance",
+        option_count: int = 3,
+    ) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        payload = self.dialogue.build_director_payload(
+            manifest,
+            session_id=session_id,
+            goal=goal,
+            action=action,
+            option_count=option_count,
+        )
+        try:
+            options = self._generate_dialogue_director_options(run_id, payload)
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        return {
+            "goal": str(payload.get("director_goal", "")).strip(),
+            "action": str(payload.get("director_action", "")).strip(),
+            "options": options,
+        }
+
     def ingest_dialogue_turn(
         self,
         run_id: str,
@@ -379,6 +547,60 @@ class DialogueServiceMixin:
                 ),
                 parse_dialogue_associations=self._parse_dialogue_associations,
             )
+
+    def _generate_dialogue_consistency_review(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        config = self._build_runtime_config_for_run(run_dir=self.runs_root / run_id)
+        parts = build_runtime_parts(config)
+        if not hasattr(parts.llm, "chat_completion"):
+            raise ValueError("Configured model does not support deep review.")
+        messages = build_dialogue_consistency_review_messages(payload)
+        result = parts.llm.chat_completion(
+            messages,
+            temperature=0.1,
+            max_tokens=min(int(config.get("llm.max_tokens", 700) or 700), 700),
+        )
+        content = str((result or {}).get("content", "")).strip()
+        if not content:
+            raise ValueError("Model returned an empty consistency review.")
+        return parse_dialogue_consistency_review(
+            content,
+            responses=list(payload.get("responses", []) or []),
+            allowed_speakers=list(payload.get("participants", []) or []),
+        )
+
+    def _generate_dialogue_director_options(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        config = self._build_runtime_config_for_run(run_dir=self.runs_root / run_id)
+        parts = build_runtime_parts(config)
+        if not hasattr(parts.llm, "chat_completion"):
+            raise ValueError("Configured model does not support director options.")
+        expected_count = max(2, min(int(payload.get("option_count", 3) or 3), 4))
+        last_error: Exception | None = None
+        for retry_on_empty in (False, True):
+            try:
+                result = parts.llm.chat_completion(
+                    build_dialogue_director_llm_messages(
+                        payload, retry_on_empty=retry_on_empty
+                    ),
+                    temperature=0.65,
+                    max_tokens=min(
+                        int(config.get("llm.max_tokens", 900) or 900), 900
+                    ),
+                )
+                content = str((result or {}).get("content", "")).strip()
+                if not content:
+                    raise ValueError("Model returned empty director options.")
+                return parse_dialogue_director_options(
+                    content, expected_count=expected_count
+                )
+            except LLMRequestError:
+                raise
+            except Exception as exc:
+                last_error = exc
+        raise ValueError(str(last_error or "Director options could not be generated."))
 
     @staticmethod
     def _build_dialogue_llm_messages(
@@ -526,6 +748,16 @@ class DialogueServiceMixin:
             session_path = self.dialogue._session_file(run_id, session_id)
             session = self.dialogue._read_json(session_path)
             relation_delta = self.dialogue._session_relation_delta(session)
+            locked_pairs = {
+                str(key).strip()
+                for key, value in dict(session.get("relation_locks", {}) or {}).items()
+                if str(key).strip() and bool(value)
+            }
+            locked_relation_values = {
+                key: dict(relation_delta.get(key, {}) or {})
+                for key in locked_pairs
+                if key in relation_delta
+            }
             character_snapshots = self.dialogue._session_character_snapshots(session)
             event_signals = self.dialogue._session_event_signals(session)
             input_block = dict(pending_payload.get("input", {}) or {})
@@ -655,6 +887,11 @@ class DialogueServiceMixin:
                 relation_delta,
                 dict(refined_state.get("relation_delta", {}) or {}),
             )
+            for key in locked_pairs:
+                if key in locked_relation_values:
+                    relation_delta[key] = locked_relation_values[key]
+                else:
+                    relation_delta.pop(key, None)
             character_snapshots = self._merge_character_snapshots(
                 character_snapshots,
                 dict(refined_state.get("character_snapshots", {}) or {}),

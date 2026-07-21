@@ -8,12 +8,17 @@ from src.web.api.compat import model_to_dict
 from src.web.api.deps import get_run_service
 from src.web.api.schemas import (
     BranchDialogueSessionRequest,
+    BranchDialogueTurnRequest,
     CreateDialogueSessionRequest,
     DialogueAssociationsRequest,
+    DialogueDirectorRequest,
     IngestDialogueTurnRequest,
     PrepareDialogueTurnRequest,
     SuggestDialogueTurnRequest,
     SwitchDialogueSceneCardRequest,
+    UpdateDialogueBranchMetaRequest,
+    UpdateDialogueRelationLockRequest,
+    UpsertDialogueMemoryRequest,
 )
 from src.web.workflow import WebRunService
 
@@ -77,6 +82,139 @@ def branch_dialogue_session(
             run_id,
             session_id=session_id,
             scene_index=payload.scene_index,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/branch-turn"
+)
+def branch_dialogue_session_from_turn(
+    run_id: str,
+    session_id: str,
+    payload: BranchDialogueTurnRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.branch_dialogue_session_from_turn(
+            run_id,
+            session_id=session_id,
+            turn_id=payload.turn_id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/branch-meta"
+)
+def update_dialogue_branch_metadata(
+    run_id: str,
+    session_id: str,
+    payload: UpdateDialogueBranchMetaRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.update_dialogue_branch_metadata(
+            run_id,
+            session_id=session_id,
+            label=payload.label,
+            is_mainline=payload.is_mainline,
+            locked_event_ids=payload.locked_event_ids,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/relation-lock"
+)
+def update_dialogue_relation_lock(
+    run_id: str,
+    session_id: str,
+    payload: UpdateDialogueRelationLockRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.set_dialogue_relation_lock(
+            run_id,
+            session_id=session_id,
+            pair_key=payload.pair_key,
+            locked=payload.locked,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/memories")
+def create_dialogue_memory(
+    run_id: str,
+    session_id: str,
+    payload: UpsertDialogueMemoryRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.save_dialogue_memory(
+            run_id,
+            session_id=session_id,
+            text=payload.text,
+            category=payload.category,
+            pinned=payload.pinned,
+            enabled=payload.enabled,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/memories/{memory_id}"
+)
+def update_dialogue_memory(
+    run_id: str,
+    session_id: str,
+    memory_id: str,
+    payload: UpsertDialogueMemoryRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.save_dialogue_memory(
+            run_id,
+            session_id=session_id,
+            memory_id=memory_id,
+            text=payload.text,
+            category=payload.category,
+            pinned=payload.pinned,
+            enabled=payload.enabled,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/memories/{memory_id}"
+)
+def delete_dialogue_memory(
+    run_id: str,
+    session_id: str,
+    memory_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.delete_dialogue_memory(
+            run_id, session_id=session_id, memory_id=memory_id
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
@@ -160,6 +298,42 @@ def suggest_dialogue_turn(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/correct-latest"
+)
+def correct_latest_dialogue_turn(
+    run_id: str,
+    session_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.correct_latest_dialogue_turn(
+            run_id, session_id=session_id
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}/deep-review"
+)
+def deep_review_latest_dialogue_turn(
+    run_id: str,
+    session_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.deep_review_latest_dialogue_turn(
+            run_id, session_id=session_id
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/associations")
 def associate_dialogue_turn(
     run_id: str,
@@ -171,6 +345,27 @@ def associate_dialogue_turn(
         return run_service.associate_dialogue_turn(
             run_id,
             session_id=session_id,
+            option_count=payload.option_count,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/director-options")
+def direct_dialogue_turn(
+    run_id: str,
+    session_id: str,
+    payload: DialogueDirectorRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.direct_dialogue_turn(
+            run_id,
+            session_id=session_id,
+            goal=payload.goal,
+            action=payload.action,
             option_count=payload.option_count,
         )
     except FileNotFoundError as exc:

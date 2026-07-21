@@ -216,6 +216,98 @@
     );
   }
 
+  async function branchDialogueSessionFromTurn(runId, sessionId, turnId) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/branch-turn`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turn_id: turnId }),
+      },
+      "剧情节点回溯失败。"
+    );
+  }
+
+  async function updateDialogueBranchMeta(runId, sessionId, payload) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/branch-meta`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      },
+      "剧情分支信息更新失败。"
+    );
+  }
+
+  async function updateDialogueRelationLock(runId, sessionId, pairKey, locked) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/relation-lock`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pair_key: pairKey, locked: Boolean(locked) }),
+      },
+      "关系锁定状态更新失败。"
+    );
+  }
+
+  async function createDialogueMemory(runId, sessionId, payload) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/memories`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      },
+      "记忆保存失败。"
+    );
+  }
+
+  async function updateDialogueMemory(runId, sessionId, memoryId, payload) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/memories/${encodeURIComponent(memoryId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      },
+      "记忆更新失败。"
+    );
+  }
+
+  async function deleteDialogueMemory(runId, sessionId, memoryId) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/memories/${encodeURIComponent(memoryId)}`,
+      { method: "DELETE" },
+      "记忆删除失败。"
+    );
+  }
+
+  async function generateDialogueDirectorOptions(runId, sessionId, payload) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/director-options`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      },
+      "导演方案生成失败。"
+    );
+  }
+
+  async function suggestDialogueTurn(runId, sessionId, direction) {
+    return requireApiJson()(
+      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/suggest`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seed_text: "", direction: String(direction || "") }),
+      },
+      "导演方案落地失败。"
+    );
+  }
+
   async function getSelfCard(cardId) {
     return requireApiJson()(`/api/web/self-cards/${encodeURIComponent(cardId)}`, {}, "角色卡载入失败。");
   }
@@ -269,6 +361,14 @@
     switchDialogueSceneCard,
     recommendDialogueSceneCard,
     branchDialogueSession,
+    branchDialogueSessionFromTurn,
+    updateDialogueBranchMeta,
+    updateDialogueRelationLock,
+    createDialogueMemory,
+    updateDialogueMemory,
+    deleteDialogueMemory,
+    generateDialogueDirectorOptions,
+    suggestDialogueTurn,
     listSelfCards,
     getSelfCard,
     generateSelfCard,

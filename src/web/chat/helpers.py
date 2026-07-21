@@ -355,6 +355,7 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
     relation_delta = dict(memory_context.get("relation_delta", {}) or {})
     character_snapshots = dict(memory_context.get("character_snapshots", {}) or {})
     event_signals = list(memory_context.get("event_signals", []) or [])
+    controlled_memories = list(memory_context.get("controlled_memories", []) or [])
     compact_archived = {
         key: value
         for key, value in {
@@ -433,6 +434,17 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
                 }
                 for item in event_signals[-6:]
                 if dict(item or {}).get("kind")
+            ],
+            "controlled_memories": [
+                {
+                    "memory_id": str(item.get("memory_id", "")).strip(),
+                    "text": _trim_text(str(item.get("text", "")).strip(), 500),
+                    "category": str(item.get("category", "story")).strip()
+                    or "story",
+                    "pinned": bool(item.get("pinned", False)),
+                }
+                for item in controlled_memories[:20]
+                if isinstance(item, dict) and str(item.get("text", "")).strip()
             ],
         }.items()
         if _has_meaningful_value(value)
@@ -520,6 +532,19 @@ def build_dialogue_llm_messages(
     memory_context["event_signals"] = list(
         memory_context.get("event_signals", []) or []
     )[-3:]
+    knowledge_context = [
+        {
+            "fact": _trim_text(str(item.get("fact", "")).strip(), 120),
+            "holders": [
+                str(name).strip()
+                for name in list(item.get("holders", []) or [])
+                if str(name).strip()
+            ][:8],
+        }
+        for item in list(payload.get("knowledge_context", []) or [])[-12:]
+        if isinstance(item, dict) and str(item.get("fact", "")).strip()
+    ]
+    correction_context = dict(payload.get("correction_context", {}) or {})
     instructions = dict(payload.get("instructions", {}) or {})
     host_action = dict(payload.get("host_action", {}) or {})
     scene_card = dict(payload.get("scene_card", {}) or {})
@@ -550,7 +575,33 @@ def build_dialogue_llm_messages(
     turn_system_parts = [
         str(instructions.get("progression_rule", "")).strip(),
         str(instructions.get("response_count_rule", "")).strip(),
+        str(instructions.get("group_chat_rule", "")).strip(),
     ]
+    speaker_plan = dict(payload.get("speaker_plan", {}) or {})
+    responder_hints = list(payload.get("responder_hints", []) or [])
+    speaker_activity = list(payload.get("speaker_activity", []) or [])
+    if speaker_plan:
+        turn_system_parts.append(
+            "SPEAKER_PLAN 给出本轮自然的介入优先级。优先参考 recommended_speakers，"
+            "但若角色与当前动作无关，可以少说或不说；不得让离场角色或用户控制的角色越权发言。"
+        )
+    if knowledge_context:
+        turn_system_parts.append(
+            "KNOWLEDGE_BOUNDARY 中每条 fact 只允许 holders 中的角色知晓。"
+            "未列入 holders 的角色不得提及、暗示或据此行动。"
+        )
+    if list(memory_context.get("controlled_memories", []) or []):
+        turn_system_parts.append(
+            "CONTROLLED_MEMORIES 是用户明确管理的有效记忆。"
+            "其中 pinned=true 的内容属于必须持续遵守的硬设定；其他内容也应作为当前有效上下文，"
+            "除非本轮输入明确修改了该设定。不要在回复中解释记忆系统。"
+        )
+    if correction_context:
+        turn_system_parts.append(
+            "CORRECTION_CONTEXT 表示上一版回复存在一致性问题。"
+            "请重写同一轮角色回复，逐项消除 issues；保留已经成立的场景事实，"
+            "不要解释修正过程，也不要凭空新增事件。"
+        )
     if retry_on_empty:
         turn_system_parts.append(
             "这次至少返回 1 条可用回复；只有在确实需要场景切换、人物进退场或环境变化时，才返回 speaker 为“旁白”或“场景提示”的一条提示。"
@@ -568,8 +619,13 @@ def build_dialogue_llm_messages(
         "participants": participants,
         "active_participants": active_participants,
         "memory_context": memory_context,
+        "knowledge_boundary": knowledge_context,
+        "correction_context": correction_context,
         "response_limit": response_limit,
         "active_persona_state": active_persona_states,
+        "speaker_plan": speaker_plan,
+        "responder_hints": responder_hints,
+        "speaker_activity": speaker_activity,
         "history": history,
         "relation_excerpt": relation_excerpt,
         "expected_output": host_action.get(
@@ -769,6 +825,46 @@ def build_dialogue_association_llm_messages(
             "role": "user",
             "content": json.dumps(user_payload, ensure_ascii=False, indent=2),
         },
+    ]
+
+
+def build_dialogue_director_llm_messages(
+    payload: dict[str, Any], *, retry_on_empty: bool = False
+) -> list[dict[str, str]]:
+    option_count = max(2, min(int(payload.get("option_count", 3) or 3), 4))
+    system_parts = [
+        "你是互动小说的场景导演，负责把用户的导演目标拆成多个可立即演绎的下一拍方案。",
+        "每个方案必须从当前场景、人物状态、关系和已发生事件自然推出，不得把导演目标直接宣称为已经实现。",
+        "方案之间要有明显差异，但都必须服务于 director_goal 和 director_action。",
+        "beat 描述下一拍具体发生的动作、打断、信息或情绪变化；direction 是供后续代写模型落实该方案的明确写作指令。",
+        "expected_effect 说明该拍会怎样推动目标；risk 简短指出可能带来的关系或节奏风险。",
+        "切换视角只能切到当前在场人物，或使用旁白观察；不得让离场人物凭空知道现场信息。",
+        f"返回恰好 {option_count} 个方案。title 用 4-10 个中文字符，其他字段各用一句话。",
+        '只返回合法 JSON：{"options":[{"title":"误会松动","focus":"情绪","beat":"甲注意到乙一直攥着旧信却没有质问","direction":"用一个克制动作让甲意识到乙仍在等待解释","expected_effect":"为和解制造可信入口","risk":"推进过快会削弱此前冲突"}]}。',
+    ]
+    if retry_on_empty:
+        system_parts.append("上一次输出不可解析。请重新只返回完整 JSON，并给足指定数量。")
+    input_payload = dict(payload.get("input", {}) or {})
+    user_payload = {
+        "director_goal": str(payload.get("director_goal", "")).strip(),
+        "director_action": str(payload.get("director_action", "advance")).strip(),
+        "mode": str(payload.get("mode", "observe")).strip() or "observe",
+        "participants": list(input_payload.get("participants", []) or []),
+        "active_participants": list(input_payload.get("active_participants", []) or []),
+        "scene_card": dict(payload.get("scene_card", {}) or {}),
+        "scene_progress": dict(payload.get("scene_progress", {}) or {}),
+        "latest_exchange": dict(payload.get("latest_exchange", {}) or {}),
+        "memory_context": _compact_memory_context(dict(payload.get("memory_context", {}) or {})),
+        "relation_excerpt": _trim_text(
+            str(dict(payload.get("relation_context", {}) or {}).get("relations_excerpt", "")).strip(),
+            1200,
+        ),
+        "speaker_activity": list(payload.get("speaker_activity", []) or []),
+        "option_count": option_count,
+    }
+    return [
+        {"role": "system", "content": "\n".join(system_parts)},
+        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False, indent=2)},
     ]
 
 
@@ -1100,6 +1196,103 @@ def parse_dialogue_responses(
     return clean_responses
 
 
+def build_dialogue_consistency_review_messages(
+    payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    review_payload = {
+        "mode": str(payload.get("mode", "")).strip(),
+        "participants": list(payload.get("participants", []) or []),
+        "scene_progress": dict(payload.get("scene_progress", {}) or {}),
+        "persona_contexts": list(payload.get("persona_contexts", []) or []),
+        "relation_context": dict(payload.get("relation_context", {}) or {}),
+        "knowledge_context": list(payload.get("knowledge_context", []) or []),
+        "history": list(payload.get("history", []) or [])[-8:],
+        "input": dict(payload.get("input", {}) or {}),
+        "responses": list(payload.get("responses", []) or []),
+        "deterministic_report": dict(payload.get("deterministic_report", {}) or {}),
+    }
+    system_prompt = "\n".join(
+        [
+            "你是人物对话一致性审校器，不续写剧情，只审查本轮 responses。",
+            "重点检查四类语义偏离：说话口吻明显不像人物、动机或决策逻辑突变、关系态度与当前关系冲突、角色使用了其不可能知道的信息。",
+            "只有证据明确时才报告；合理的情绪波动、讽刺、撒谎、伪装和情境性反常不应误判。",
+            "evidence 必须逐字摘自对应角色本轮 response，且长度为 2-40 字。",
+            "code 只允许 semantic_voice_drift / semantic_motivation_drift / semantic_relationship_drift / semantic_knowledge_drift。",
+            "severity 只允许 warning 或 error。没有明确问题时返回空 issues。",
+            "只返回 JSON，不要 markdown，不要解释。",
+            '格式：{"issues":[{"code":"semantic_voice_drift","severity":"warning","speaker":"角色名","title":"短标题","detail":"为什么与人物资料冲突","evidence":"回复原文摘录"}],"summary":"一句话结论"}',
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": json.dumps(review_payload, ensure_ascii=False, indent=2),
+        },
+    ]
+
+
+def parse_dialogue_consistency_review(
+    content: str,
+    *,
+    responses: list[dict[str, Any]],
+    allowed_speakers: list[str],
+) -> dict[str, Any]:
+    parsed = _loads_llm_json(str(content or "").strip())
+    if not isinstance(parsed, dict):
+        raise ValueError("Consistency review is not an object.")
+    allowed_codes = {
+        "semantic_voice_drift",
+        "semantic_motivation_drift",
+        "semantic_relationship_drift",
+        "semantic_knowledge_drift",
+    }
+    allowed = {str(item).strip() for item in allowed_speakers if str(item).strip()}
+    response_map = {
+        str(item.get("speaker", "")).strip(): str(item.get("message", "")).strip()
+        for item in responses
+        if str(item.get("speaker", "")).strip()
+    }
+    issues: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in list(parsed.get("issues", []) or [])[:8]:
+        if not isinstance(raw, dict):
+            continue
+        code = str(raw.get("code", "")).strip()
+        speaker = str(raw.get("speaker", "")).strip()
+        severity = str(raw.get("severity", "warning")).strip()
+        evidence = str(raw.get("evidence", "")).strip()
+        response_text = response_map.get(speaker, "")
+        if (
+            code not in allowed_codes
+            or speaker not in allowed
+            or severity not in {"warning", "error"}
+            or len(evidence) < 2
+            or evidence not in response_text
+        ):
+            continue
+        key = (code, speaker, evidence)
+        if key in seen:
+            continue
+        seen.add(key)
+        issues.append(
+            {
+                "code": code,
+                "severity": severity,
+                "speaker": speaker,
+                "title": _trim_text(str(raw.get("title", "")).strip(), 40)
+                or "语义一致性异常",
+                "detail": _trim_text(str(raw.get("detail", "")).strip(), 180),
+                "evidence": evidence[:40],
+                "source": "semantic_review",
+            }
+        )
+    return {
+        "issues": issues,
+        "summary": _trim_text(str(parsed.get("summary", "")).strip(), 180),
+    }
+
+
 def _looks_like_meta_suggestion(text: str) -> bool:
     normalized = " ".join(str(text or "").split()).strip()
     if not normalized:
@@ -1240,6 +1433,46 @@ def parse_dialogue_associations(content: str) -> list[dict[str, str]]:
         raise ValueError(
             "Model reply did not contain enough distinct dialogue associations."
         )
+    return options
+
+
+def parse_dialogue_director_options(
+    content: str, *, expected_count: int = 3
+) -> list[dict[str, str]]:
+    parsed = _loads_llm_json(content)
+    if not isinstance(parsed, dict):
+        raise ValueError("Director reply must be a JSON object.")
+    raw_options = parsed.get("options", [])
+    if not isinstance(raw_options, list):
+        raise ValueError("Director options must be a list.")
+    required = max(2, min(int(expected_count or 3), 4))
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in raw_options:
+        if not isinstance(raw, dict):
+            continue
+        option = {
+            key: _trim_text(str(raw.get(key, "")).strip(), limit)
+            for key, limit in (
+                ("title", 20),
+                ("focus", 20),
+                ("beat", 180),
+                ("direction", 220),
+                ("expected_effect", 140),
+                ("risk", 120),
+            )
+        }
+        identity = option["title"].casefold()
+        if not option["title"] or not option["beat"] or not option["direction"]:
+            continue
+        if identity in seen:
+            continue
+        seen.add(identity)
+        options.append(option)
+        if len(options) >= required:
+            break
+    if len(options) < required:
+        raise ValueError("Model returned too few valid director options.")
     return options
 
 

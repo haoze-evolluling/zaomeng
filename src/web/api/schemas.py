@@ -222,6 +222,12 @@ class DialogueAssociationsRequest(BaseModel):
     option_count: int = Field(default=3, ge=2, le=4)
 
 
+class DialogueDirectorRequest(BaseModel):
+    goal: str = Field(..., min_length=1, max_length=240)
+    action: str = Field(default="advance")
+    option_count: int = Field(default=3, ge=2, le=4)
+
+
 class SwitchDialogueSceneCardRequest(BaseModel):
     scene_card_id: str = Field(default="")
     scene_profile: dict[str, str] = Field(default_factory=dict)
@@ -231,6 +237,28 @@ class SwitchDialogueSceneCardRequest(BaseModel):
 
 class BranchDialogueSessionRequest(BaseModel):
     scene_index: int = Field(default=0, ge=0)
+
+
+class BranchDialogueTurnRequest(BaseModel):
+    turn_id: str = Field(..., min_length=1)
+
+
+class UpdateDialogueBranchMetaRequest(BaseModel):
+    label: str | None = Field(default=None, max_length=80)
+    is_mainline: bool | None = Field(default=None)
+    locked_event_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class UpdateDialogueRelationLockRequest(BaseModel):
+    pair_key: str = Field(..., min_length=1)
+    locked: bool = Field(default=True)
+
+
+class UpsertDialogueMemoryRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500)
+    category: str = Field(default="story")
+    pinned: bool = Field(default=False)
+    enabled: bool = Field(default=True)
 
 
 class DialogueResponseItem(BaseModel):

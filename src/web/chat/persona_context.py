@@ -98,6 +98,9 @@ def persona_profile_payload(normalized_profile: dict[str, Any], *, detailed: boo
                 "preference_like": normalized_profile.get("preference_like", []),
                 "dislike_hate": normalized_profile.get("dislike_hate", []),
                 "reward_logic": normalized_profile.get("reward_logic", ""),
+                "decision_rules": normalized_profile.get("decision_rules", []),
+                "forbidden_behaviors": normalized_profile.get("forbidden_behaviors", []),
+                "moral_bottom_line": normalized_profile.get("moral_bottom_line", ""),
             }
         )
     return base

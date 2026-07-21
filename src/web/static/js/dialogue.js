@@ -7,6 +7,21 @@ const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
 let lastAutoSceneRecommendationKey = "";
 let sessionSelectionMode = false;
 const selectedSessionKeys = new Set();
+const dialogueEventTimelineFilters = {
+  participant: "",
+  location: "",
+  eventType: "",
+};
+let selectedDialogueRelationPair = "";
+let selectedDialogueCharacterArc = "";
+let editingDialogueMemoryId = "";
+let editingDialogueMemoryEnabled = true;
+const dialogueDirectorState = {
+  action: "advance",
+  options: [],
+  sessionId: "",
+  loading: false,
+};
 
 function scrollTranscriptToBottom() {
   const root = el("dialogue-transcript");
@@ -93,7 +108,219 @@ function renderDialogueTranscript(session) {
     selfInsert: card.self_insert || {},
   });
   const items = metaMessage ? [metaMessage, ...(session?.transcript || [])] : session?.transcript || [];
-  renderTranscript(items);
+  renderTranscript(items, session?.consistency_monitor || null);
+}
+
+function appendConsistencyMonitor(root, monitor) {
+  const latest = monitor?.latest || {};
+  const checkedTurns = Number(monitor?.checked_turns || 0) || 0;
+  if (!checkedTurns || !latest?.status) return;
+
+  const issues = Array.isArray(latest.issues) ? latest.issues : [];
+  const card = document.createElement("aside");
+  card.className = `consistency-monitor ${issues.length ? "warning" : "pass"}`;
+
+  const header = document.createElement("div");
+  header.className = "consistency-monitor-header";
+  const title = document.createElement("strong");
+  title.textContent = issues.length ? `人物一致性提醒 · ${issues.length}` : "人物一致性检查通过";
+  const score = document.createElement("span");
+  score.textContent = `${Math.max(0, Math.min(100, Number(latest.score || 0)))} / 100`;
+  header.appendChild(title);
+  header.appendChild(score);
+  card.appendChild(header);
+
+  const summary = document.createElement("p");
+  summary.textContent = String(latest.summary || "").trim();
+  card.appendChild(summary);
+
+  appendConsistencyQualityPanel(card, monitor);
+
+  if (issues.length) {
+    const list = document.createElement("div");
+    list.className = "consistency-monitor-issues";
+    issues.slice(0, 4).forEach((issue) => {
+      const item = document.createElement("div");
+      item.className = `consistency-monitor-issue ${String(issue?.severity || "warning").trim()}`;
+      const issueTitle = document.createElement("strong");
+      const speaker = String(issue?.speaker || "").trim();
+      const category = consistencyIssueCategory(issue?.code);
+      issueTitle.textContent = `${category} · ${speaker ? `${speaker} · ` : ""}${String(issue?.title || "潜在异常").trim()}`;
+      const detail = document.createElement("p");
+      detail.textContent = String(issue?.detail || "").trim();
+      item.appendChild(issueTitle);
+      item.appendChild(detail);
+      list.appendChild(item);
+    });
+    card.appendChild(list);
+    const actions = document.createElement("div");
+    actions.className = "consistency-monitor-actions";
+    const correctButton = document.createElement("button");
+    correctButton.type = "button";
+    correctButton.className = "consistency-correct-button";
+    correctButton.dataset.consistencyCorrect = "true";
+    correctButton.textContent = "生成修正版";
+    actions.appendChild(correctButton);
+    card.appendChild(actions);
+  }
+  let actions = card.querySelector(".consistency-monitor-actions");
+  if (!(actions instanceof HTMLElement)) {
+    actions = document.createElement("div");
+    actions.className = "consistency-monitor-actions";
+    card.appendChild(actions);
+  }
+  const reviewButton = document.createElement("button");
+  reviewButton.type = "button";
+  reviewButton.className = "consistency-review-button";
+  reviewButton.dataset.consistencyReview = "true";
+  reviewButton.textContent = latest?.coverage?.semantic_review ? "重新深度复核" : "深度复核";
+  actions.appendChild(reviewButton);
+  root.appendChild(card);
+}
+
+function appendConsistencyQualityPanel(card, monitor) {
+  const metrics = monitor?.metrics || {};
+  const history = Array.isArray(monitor?.history) ? monitor.history : [];
+  const checkedTurns = Number(metrics.checked_turns ?? monitor?.checked_turns ?? history.length) || 0;
+  if (!checkedTurns) return;
+
+  const strip = document.createElement("div");
+  strip.className = "consistency-quality-strip";
+  [
+    ["平均分", `${Number(metrics.average_score ?? 0) || 0}`],
+    ["通过率", `${Number(metrics.pass_rate ?? 0) || 0}%`],
+    ["连续通过", `${Number(metrics.current_pass_streak ?? 0) || 0} 轮`],
+  ].forEach(([label, value]) => {
+    const item = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = value;
+    const span = document.createElement("span");
+    span.textContent = label;
+    item.appendChild(strong);
+    item.appendChild(span);
+    strip.appendChild(item);
+  });
+  card.appendChild(strip);
+
+  if (history.length <= 1) return;
+  const details = document.createElement("details");
+  details.className = "consistency-quality-details";
+  const summary = document.createElement("summary");
+  summary.textContent = `查看本会话 ${checkedTurns} 轮质量记录`;
+  details.appendChild(summary);
+
+  const categoryCounts = metrics.category_counts || {};
+  const categories = Object.entries(categoryCounts).filter(([, count]) => Number(count || 0) > 0);
+  if (categories.length) {
+    const categoryRoot = document.createElement("div");
+    categoryRoot.className = "consistency-category-counts";
+    categories.forEach(([category, count]) => {
+      const chip = document.createElement("span");
+      chip.textContent = `${consistencyMetricCategoryLabel(category)} ${Number(count || 0)}`;
+      categoryRoot.appendChild(chip);
+    });
+    details.appendChild(categoryRoot);
+  }
+
+  const trend = Array.isArray(metrics.score_trend) ? metrics.score_trend : [];
+  if (trend.length) {
+    const trendRoot = document.createElement("div");
+    trendRoot.className = "consistency-score-trend";
+    trend.slice(-8).forEach((entry, index) => {
+      const row = document.createElement("div");
+      row.className = "consistency-score-row";
+      const label = document.createElement("span");
+      label.textContent = `近 ${trend.length - index} 轮`;
+      const track = document.createElement("div");
+      const bar = document.createElement("i");
+      const score = Math.max(0, Math.min(100, Number(entry?.score || 0)));
+      bar.style.width = `${score}%`;
+      if (String(entry?.status || "").trim() !== "pass") bar.classList.add("warning");
+      track.appendChild(bar);
+      const value = document.createElement("strong");
+      value.textContent = String(score);
+      row.appendChild(label);
+      row.appendChild(track);
+      row.appendChild(value);
+      trendRoot.appendChild(row);
+    });
+    details.appendChild(trendRoot);
+  }
+  card.appendChild(details);
+}
+
+function consistencyMetricCategoryLabel(category) {
+  const labels = {
+    role_boundary: "角色边界",
+    scene_continuity: "场景连续",
+    persona_taboo: "人设禁忌",
+    knowledge_boundary: "知识边界",
+    relationship_attitude: "关系态度",
+    other: "其他",
+  };
+  return labels[String(category || "").trim()] || "其他";
+}
+
+function consistencyIssueCategory(code) {
+  const normalized = String(code || "").trim();
+  if (["knowledge_boundary_violation", "semantic_knowledge_drift"].includes(normalized)) return "知识边界";
+  if (["forbidden_behavior_overlap", "semantic_voice_drift", "semantic_motivation_drift"].includes(normalized)) return "人设语义";
+  if (normalized === "semantic_relationship_drift") return "关系态度";
+  if (["offstage_character_spoke", "snapshot_marks_character_offstage", "character_spoke_after_exit_event", "character_location_mismatch", "time_regression_claim"].includes(normalized)) {
+    return "场景连续";
+  }
+  if (["speaker_out_of_scope", "controlled_character_overwritten"].includes(normalized)) {
+    return "角色边界";
+  }
+  return "一致性";
+}
+
+async function correctLatestConsistencyTurn(button) {
+  if (!currentRunId || !currentDialogueSessionId || button?.disabled) return;
+  const originalText = String(button.textContent || "生成修正版");
+  button.disabled = true;
+  button.textContent = "正在修正...";
+  if (typeof setComposerWaiting === "function") {
+    setComposerWaiting(true, "正在按人物与场景约束重写这一轮...");
+  }
+  try {
+    const session = await apiJson(
+      `/api/web/runs/${encodeURIComponent(currentRunId)}/dialogue/sessions/${encodeURIComponent(currentDialogueSessionId)}/correct-latest`,
+      { method: "POST" },
+      "生成修正版失败。"
+    );
+    await renderDialogueSession(session);
+    if (typeof setComposerWaiting === "function") setComposerWaiting(false, "");
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = originalText;
+    if (typeof setComposerWaiting === "function") setComposerWaiting(false, "");
+    showDialogueSendErrorModal(error?.message || "生成修正版失败。");
+  }
+}
+
+async function deepReviewLatestConsistencyTurn(button) {
+  if (!currentRunId || !currentDialogueSessionId || button?.disabled) return;
+  const originalText = String(button.textContent || "深度复核");
+  button.disabled = true;
+  button.textContent = "正在复核...";
+  if (typeof setComposerWaiting === "function") {
+    setComposerWaiting(true, "正在检查语气、动机、关系态度和知识边界...");
+  }
+  try {
+    const session = await apiJson(
+      `/api/web/runs/${encodeURIComponent(currentRunId)}/dialogue/sessions/${encodeURIComponent(currentDialogueSessionId)}/deep-review`,
+      { method: "POST" },
+      "深度复核失败。"
+    );
+    await renderDialogueSession(session);
+    if (typeof setComposerWaiting === "function") setComposerWaiting(false, "");
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = originalText;
+    if (typeof setComposerWaiting === "function") setComposerWaiting(false, "");
+    showDialogueSendErrorModal(error?.message || "深度复核失败。");
+  }
 }
 
 function trimInlineMessage(value) {
@@ -593,6 +820,99 @@ function renderDialogueGenerationCacheStats(session) {
   root.setAttribute("aria-label", `${root.textContent}。${root.title}`);
 }
 
+function formatDialogueGenerationDuration(value) {
+  const seconds = Number(value || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "-";
+  return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(2)} s`;
+}
+
+function formatDialogueGenerationCost(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "未提供";
+  return `$${amount.toFixed(amount < 0.01 ? 5 : 3)}`;
+}
+
+function renderDialogueGenerationMetrics(session) {
+  const root = el("dialogue-generation-metrics");
+  if (!root) return;
+  const stats = session?.generation_cache_stats || {};
+  const turns = Array.isArray(stats?.turns) ? stats.turns : [];
+  const latest = stats?.latest || turns[turns.length - 1] || {};
+  const aggregate = stats?.session || {};
+  if (!turns.length && !Number(aggregate?.total_turns || 0)) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "dialogue-generation-metrics-head";
+  const heading = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "模型与成本";
+  const note = document.createElement("small");
+  note.textContent = "统计主回复生成的 token、耗时、模型与失败重试。";
+  heading.append(title, note);
+  const provider = document.createElement("span");
+  provider.textContent = [String(latest?.provider || "").trim(), String(latest?.model || "").trim()]
+    .filter(Boolean)
+    .join(" · ") || "模型信息未提供";
+  head.append(heading, provider);
+  root.appendChild(head);
+
+  const cards = document.createElement("div");
+  cards.className = "dialogue-generation-metric-cards";
+  [
+    ["本轮 Token", formatGenerationCacheTokenCount(Number(latest?.total_tokens || 0)), `输入 ${formatGenerationCacheTokenCount(Number(latest?.prompt_tokens || 0))} / 输出 ${formatGenerationCacheTokenCount(Number(latest?.completion_tokens || 0))}`],
+    ["本轮耗时", formatDialogueGenerationDuration(latest?.elapsed_seconds), `${Number(latest?.attempt_count || 1)} 次模型调用`],
+    ["累计 Token", formatGenerationCacheTokenCount(Number(aggregate?.total_tokens || 0)), `${Number(aggregate?.total_turns || 0)} 轮主回复`],
+    ["平均耗时", formatDialogueGenerationDuration(aggregate?.average_elapsed_seconds), `共重试 ${Number(aggregate?.retry_count || 0)} 次`],
+    ["累计费用", formatDialogueGenerationCost(aggregate?.cost_usd), "由模型服务 usage 返回"],
+  ].forEach(([label, value, detail]) => {
+    const card = document.createElement("article");
+    const cardLabel = document.createElement("span");
+    cardLabel.textContent = label;
+    const cardValue = document.createElement("strong");
+    cardValue.textContent = value || "0";
+    const cardDetail = document.createElement("small");
+    cardDetail.textContent = detail;
+    card.append(cardLabel, cardValue, cardDetail);
+    cards.appendChild(card);
+  });
+  root.appendChild(cards);
+
+  const models = Object.entries(aggregate?.models || {});
+  const recent = turns.slice(-8).reverse();
+  const details = document.createElement("details");
+  details.className = "dialogue-generation-history";
+  const summary = document.createElement("summary");
+  summary.textContent = `查看最近 ${recent.length} 轮明细`;
+  details.appendChild(summary);
+  if (models.length) {
+    const modelLine = document.createElement("p");
+    modelLine.className = "dialogue-generation-models";
+    modelLine.textContent = `模型调用：${models.map(([model, count]) => `${model} × ${Number(count || 0)}`).join("；")}`;
+    details.appendChild(modelLine);
+  }
+  recent.forEach((item, index) => {
+    const row = document.createElement("article");
+    const rowTitle = document.createElement("strong");
+    rowTitle.textContent = `最近第 ${index + 1} 轮 · ${String(item?.model || "未知模型")}`;
+    const rowCopy = document.createElement("p");
+    rowCopy.textContent = [
+      `${formatGenerationCacheTokenCount(Number(item?.total_tokens || 0))} tokens`,
+      formatDialogueGenerationDuration(item?.elapsed_seconds),
+      Number(item?.retry_count || 0) ? `重试 ${Number(item.retry_count)} 次` : "未重试",
+      `缓存 ${formatGenerationCacheRate(normalizeGenerationCacheMetric(item))}`,
+    ].join(" · ");
+    row.append(rowTitle, rowCopy);
+    details.appendChild(row);
+  });
+  root.appendChild(details);
+}
+
 function renderDialogueMemory(session) {
   const root = el("dialogue-memory");
   if (!root) return;
@@ -606,6 +926,8 @@ function renderDialogueMemory(session) {
   const modalOpen = isDialogueMemoryModalOpen();
   root.classList.remove("hidden");
   renderDialogueGenerationCacheStats(session);
+  renderDialogueGenerationMetrics(session);
+  renderDialogueControlledMemories(session);
   setText("dialogue-memory-recap", snapshot.recap, "");
   setText("dialogue-memory-cast", snapshot.cast, "");
   setText("dialogue-memory-relation", snapshot.relation, "");
@@ -634,9 +956,1149 @@ function renderDialogueMemory(session) {
     body.classList.toggle("hidden", body.parentElement === root);
   }
   renderDialogueStateOverview(session);
+  renderDialogueBranchManager(session);
+  renderDialogueChapterOutline(session);
+  renderDialogueEventTimeline(session);
+  renderDialogueDirectorPanel(session);
+  renderDialogueRelationEvolution(session);
+  renderDialogueCharacterGrowth(session);
+  renderDialogueSpeakerBalance(session);
   renderDialogueSceneTimeline(session);
   if (typeof window.renderDialogueSceneSwitcher === "function") {
     window.renderDialogueSceneSwitcher(session);
+  }
+}
+
+function directorActionLabel(action) {
+  const labels = {
+    advance: "推进剧情",
+    slow_emotion: "放慢情绪",
+    conflict: "引入冲突",
+    viewpoint: "切换视角",
+  };
+  return labels[String(action || "").trim()] || "推进剧情";
+}
+
+function renderDialogueDirectorPanel(session) {
+  const root = el("dialogue-director-panel");
+  if (!root) return;
+  if (!session) {
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  const sessionId = String(session?.session_id || "").trim();
+  if (dialogueDirectorState.sessionId !== sessionId) {
+    dialogueDirectorState.sessionId = sessionId;
+    dialogueDirectorState.options = [];
+    dialogueDirectorState.loading = false;
+  }
+  root.querySelectorAll("[data-director-action]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.directorAction === dialogueDirectorState.action);
+    if (!button.dataset.bound) {
+      button.dataset.bound = "true";
+      button.addEventListener("click", () => {
+        dialogueDirectorState.action = String(button.dataset.directorAction || "advance");
+        renderDialogueDirectorPanel(session);
+      });
+    }
+  });
+  const generate = el("dialogue-director-generate");
+  if (generate) {
+    generate.disabled = dialogueDirectorState.loading;
+    generate.textContent = dialogueDirectorState.loading ? "正在构思..." : "生成候选方案";
+    if (!generate.dataset.bound) {
+      generate.dataset.bound = "true";
+      generate.addEventListener("click", () => generateDialogueDirectorOptions(generate));
+    }
+  }
+  const optionsRoot = el("dialogue-director-options");
+  if (!optionsRoot) return;
+  optionsRoot.innerHTML = "";
+  dialogueDirectorState.options.forEach((option, index) => {
+    const card = document.createElement("article");
+    card.className = "dialogue-director-option";
+    const head = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = String(option?.title || `方案 ${index + 1}`);
+    const focus = document.createElement("span");
+    focus.textContent = String(option?.focus || directorActionLabel(dialogueDirectorState.action));
+    head.append(title, focus);
+    const beat = document.createElement("p");
+    beat.textContent = String(option?.beat || "");
+    card.append(head, beat);
+    if (String(option?.expected_effect || "").trim()) {
+      const effect = document.createElement("small");
+      effect.textContent = `效果：${String(option.expected_effect)}`;
+      card.appendChild(effect);
+    }
+    if (String(option?.risk || "").trim()) {
+      const risk = document.createElement("small");
+      risk.className = "is-risk";
+      risk.textContent = `风险：${String(option.risk)}`;
+      card.appendChild(risk);
+    }
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "soft-button";
+    apply.textContent = "选择并开始演绎";
+    apply.addEventListener("click", () => applyDialogueDirectorOption(option, apply));
+    card.appendChild(apply);
+    optionsRoot.appendChild(card);
+  });
+}
+
+async function generateDialogueDirectorOptions(button) {
+  const goal = valueOf("dialogue-director-goal", "").trim();
+  if (!currentRunId || !currentDialogueSessionId || !goal || dialogueDirectorState.loading) {
+    if (!goal) setText("dialogue-director-status", "请先填写导演目标。", "");
+    return;
+  }
+  dialogueDirectorState.loading = true;
+  dialogueDirectorState.options = [];
+  setText("dialogue-director-status", `正在按“${directorActionLabel(dialogueDirectorState.action)}”构思...`, "");
+  renderDialogueDirectorPanel(currentDialogueSession);
+  try {
+    const api = await requireWebUiApi();
+    const payload = await api.generateDialogueDirectorOptions(currentRunId, currentDialogueSessionId, {
+      goal,
+      action: dialogueDirectorState.action,
+      option_count: 3,
+    });
+    dialogueDirectorState.options = Array.isArray(payload?.options) ? payload.options : [];
+    setText("dialogue-director-status", `已生成 ${dialogueDirectorState.options.length} 个方案。`, "");
+  } catch (error) {
+    setText("dialogue-director-status", error.message || "导演方案生成失败。", "");
+  } finally {
+    dialogueDirectorState.loading = false;
+    renderDialogueDirectorPanel(currentDialogueSession);
+    if (button) button.disabled = false;
+  }
+}
+
+async function applyDialogueDirectorOption(option, button) {
+  const direction = String(option?.direction || "").trim();
+  if (!direction || !currentRunId || !currentDialogueSessionId) return;
+  const originalText = button?.textContent || "选择并开始演绎";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在落地...";
+  }
+  try {
+    const api = await requireWebUiApi();
+    const payload = await api.suggestDialogueTurn(currentRunId, currentDialogueSessionId, direction);
+    const suggestion = String(payload?.suggestion || "").trim();
+    if (!suggestion) throw new Error("模型没有返回可演绎的文本。 ");
+    dialogueDirectorState.options = [];
+    const mode = currentDialogueSession?.mode || currentDialogueSession?.session_card?.mode || "observe";
+    const kind = mode === "observe" ? "narration" : "dialogue";
+    const sent = typeof window.handleSendTurn === "function"
+      ? await window.handleSendTurn(suggestion, kind)
+      : false;
+    if (!sent) {
+      if (typeof window.setComposerDraft === "function") {
+        window.setComposerDraft(suggestion, { focus: true });
+      }
+      if (typeof window.setDialogueMessageKind === "function") {
+        window.setDialogueMessageKind(kind);
+      }
+      setDialogueSessionFailure("方案已经写成文案，但这次没有发送成功。", "内容已放回输入框，可以直接重试。", true);
+    }
+  } catch (error) {
+    setDialogueSessionFailure(error.message || "导演方案落地失败。", "可以选择其他方案，或稍后重试。", false);
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
+function dialogueSpeakerStatusLabel(status) {
+  const labels = {
+    new: "等待首次发言",
+    active: "近期活跃",
+    due: "可以介入",
+    silent: "沉默较久",
+  };
+  return labels[String(status || "").trim()] || "状态未知";
+}
+
+function renderDialogueSpeakerBalance(session) {
+  const root = el("dialogue-speaker-balance");
+  if (!root) return;
+  const activity = Array.isArray(session?.speaker_activity) ? session.speaker_activity : [];
+  if (activity.length < 2) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "dialogue-speaker-balance-head";
+  const titleWrap = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "群聊发言平衡";
+  const note = document.createElement("small");
+  note.textContent = "沉默角色会被优先考虑，但不会为了平均而强行插话。";
+  titleWrap.append(title, note);
+  head.appendChild(titleWrap);
+  root.appendChild(head);
+
+  const plan = session?.speaker_balance || {};
+  const recommended = Array.isArray(plan?.recommended_speakers) ? plan.recommended_speakers : [];
+  if (recommended.length) {
+    const next = document.createElement("p");
+    next.className = "dialogue-speaker-next";
+    next.textContent = `下一轮优先考虑：${recommended.join(" → ")}`;
+    root.appendChild(next);
+  }
+  const grid = document.createElement("div");
+  grid.className = "dialogue-speaker-grid";
+  activity.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = `dialogue-speaker-item is-${String(item?.status || "new")}`;
+    const cardHead = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = String(item?.name || "角色");
+    const status = document.createElement("span");
+    status.textContent = dialogueSpeakerStatusLabel(item?.status);
+    cardHead.append(name, status);
+    const rate = Math.round(Number(item?.participation_rate || 0) * 100);
+    const copy = document.createElement("p");
+    const silence = Number(item?.turns_since_spoke || 0);
+    copy.textContent = `${Number(item?.spoken_turns || 0)} / ${Number(item?.total_turns || 0)} 轮参与 · ${rate}%${silence ? ` · ${silence} 轮未发言` : ""}`;
+    const bar = document.createElement("div");
+    bar.className = "dialogue-speaker-rate";
+    const fill = document.createElement("i");
+    fill.style.width = `${Math.max(0, Math.min(100, rate))}%`;
+    bar.appendChild(fill);
+    card.append(cardHead, copy, bar);
+    grid.appendChild(card);
+  });
+  root.appendChild(grid);
+}
+
+function dialogueMemoryCategoryLabel(category) {
+  const labels = {
+    short_term: "短期",
+    long_term: "长期",
+    story: "剧情",
+    relationship: "关系",
+  };
+  return labels[String(category || "").trim()] || "剧情";
+}
+
+function resetDialogueMemoryEditor() {
+  editingDialogueMemoryId = "";
+  editingDialogueMemoryEnabled = true;
+  setValue("dialogue-memory-input", "");
+  setValue("dialogue-memory-category", "story");
+  const pinned = el("dialogue-memory-pinned");
+  if (pinned) pinned.checked = false;
+  const save = el("dialogue-memory-save");
+  if (save) save.textContent = "添加记忆";
+  el("dialogue-memory-cancel-edit")?.classList.add("hidden");
+}
+
+function renderDialogueContextUsage(session) {
+  const root = el("dialogue-context-usage-list");
+  if (!root) return;
+  root.innerHTML = "";
+  const sources = Array.isArray(session?.latest_context_usage?.sources)
+    ? session.latest_context_usage.sources
+    : [];
+  if (!sources.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "完成一轮对话后，这里会列出实际送入模型的上下文。";
+    root.appendChild(empty);
+    return;
+  }
+  sources.forEach((source) => {
+    const item = document.createElement("article");
+    const title = document.createElement("strong");
+    title.textContent = `${String(source?.label || "上下文")} · ${Number(source?.count || 0)} 项`;
+    item.appendChild(title);
+    const values = Array.isArray(source?.items) ? source.items.filter(Boolean) : [];
+    if (values.length) {
+      const copy = document.createElement("p");
+      copy.textContent = values.join("；");
+      item.appendChild(copy);
+    }
+    root.appendChild(item);
+  });
+}
+
+function renderDialogueControlledMemories(session) {
+  const root = el("dialogue-memory-ledger");
+  if (!root) return;
+  root.innerHTML = "";
+  const memories = Array.isArray(session?.memory_ledger) ? [...session.memory_ledger] : [];
+  memories.sort((left, right) => Number(Boolean(right?.pinned)) - Number(Boolean(left?.pinned)));
+  if (!memories.length) {
+    const empty = document.createElement("p");
+    empty.className = "dialogue-memory-ledger-empty";
+    empty.textContent = "还没有手动管理的记忆。";
+    root.appendChild(empty);
+  }
+  memories.forEach((memory) => {
+    const card = document.createElement("article");
+    card.className = "dialogue-memory-ledger-item";
+    if (!memory?.enabled) card.classList.add("is-disabled");
+    const body = document.createElement("div");
+    const meta = document.createElement("span");
+    meta.textContent = `${dialogueMemoryCategoryLabel(memory?.category)}记忆${memory?.pinned ? " · 必须记住" : ""}${memory?.enabled ? "" : " · 已停用"}`;
+    const copy = document.createElement("p");
+    copy.textContent = String(memory?.text || "");
+    body.append(meta, copy);
+    const actions = document.createElement("div");
+    actions.className = "dialogue-memory-ledger-actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "soft-button";
+    edit.textContent = "编辑";
+    edit.addEventListener("click", () => {
+      editingDialogueMemoryId = String(memory?.memory_id || "");
+      editingDialogueMemoryEnabled = Boolean(memory?.enabled);
+      setValue("dialogue-memory-input", String(memory?.text || ""));
+      setValue("dialogue-memory-category", String(memory?.category || "story"));
+      const pinned = el("dialogue-memory-pinned");
+      if (pinned) pinned.checked = Boolean(memory?.pinned);
+      const save = el("dialogue-memory-save");
+      if (save) save.textContent = "保存修改";
+      el("dialogue-memory-cancel-edit")?.classList.remove("hidden");
+      el("dialogue-memory-input")?.focus();
+    });
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "soft-button";
+    toggle.textContent = memory?.enabled ? "停用" : "启用";
+    toggle.addEventListener("click", () => saveDialogueMemoryEntry(memory, { enabled: !memory?.enabled }, toggle));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "soft-button is-danger";
+    remove.textContent = "删除";
+    remove.addEventListener("click", () => deleteDialogueMemoryEntry(memory, remove));
+    actions.append(edit, toggle, remove);
+    card.append(body, actions);
+    root.appendChild(card);
+  });
+  const saveButton = el("dialogue-memory-save");
+  if (saveButton && !saveButton.dataset.bound) {
+    saveButton.dataset.bound = "true";
+    saveButton.addEventListener("click", () => submitDialogueMemoryEditor(saveButton));
+  }
+  const cancelButton = el("dialogue-memory-cancel-edit");
+  if (cancelButton && !cancelButton.dataset.bound) {
+    cancelButton.dataset.bound = "true";
+    cancelButton.addEventListener("click", resetDialogueMemoryEditor);
+  }
+  renderDialogueContextUsage(session);
+}
+
+async function submitDialogueMemoryEditor(button) {
+  const text = valueOf("dialogue-memory-input", "").trim();
+  if (!text || !currentRunId || !currentDialogueSessionId) return;
+  const payload = {
+    text,
+    category: valueOf("dialogue-memory-category", "story"),
+    pinned: Boolean(el("dialogue-memory-pinned")?.checked),
+    enabled: editingDialogueMemoryEnabled,
+  };
+  if (button) button.disabled = true;
+  try {
+    const api = await requireWebUiApi();
+    const session = editingDialogueMemoryId
+      ? await api.updateDialogueMemory(currentRunId, currentDialogueSessionId, editingDialogueMemoryId, payload)
+      : await api.createDialogueMemory(currentRunId, currentDialogueSessionId, payload);
+    resetDialogueMemoryEditor();
+    await renderDialogueSession(session);
+    setDialogueSessionSuccess("记忆已保存。", payload.pinned ? "这条设定会在后续每轮作为必须遵守的上下文。" : "这条设定已加入当前会话记忆。 ");
+  } catch (error) {
+    setDialogueSessionFailure(error.message || "记忆保存失败。", "当前记忆没有变化。", false);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function saveDialogueMemoryEntry(memory, overrides, button) {
+  if (!currentRunId || !currentDialogueSessionId) return;
+  if (button) button.disabled = true;
+  try {
+    const api = await requireWebUiApi();
+    const session = await api.updateDialogueMemory(
+      currentRunId,
+      currentDialogueSessionId,
+      String(memory?.memory_id || ""),
+      {
+        text: String(memory?.text || ""),
+        category: String(memory?.category || "story"),
+        pinned: Boolean(memory?.pinned),
+        enabled: Object.prototype.hasOwnProperty.call(overrides || {}, "enabled") ? Boolean(overrides.enabled) : Boolean(memory?.enabled),
+      }
+    );
+    await renderDialogueSession(session);
+  } catch (error) {
+    setDialogueSessionFailure(error.message || "记忆状态更新失败。", "当前记忆没有变化。", false);
+    if (button) button.disabled = false;
+  }
+}
+
+async function deleteDialogueMemoryEntry(memory, button) {
+  const memoryId = String(memory?.memory_id || "").trim();
+  if (!currentRunId || !currentDialogueSessionId || !memoryId) return;
+  if (!window.confirm("确定删除这条记忆吗？删除后无法从当前会话恢复。")) return;
+  if (button) button.disabled = true;
+  try {
+    const api = await requireWebUiApi();
+    const session = await api.deleteDialogueMemory(currentRunId, currentDialogueSessionId, memoryId);
+    if (editingDialogueMemoryId === memoryId) resetDialogueMemoryEditor();
+    await renderDialogueSession(session);
+  } catch (error) {
+    setDialogueSessionFailure(error.message || "记忆删除失败。", "当前记忆没有变化。", false);
+    if (button) button.disabled = false;
+  }
+}
+
+function dialogueEventTypeLabel(kind) {
+  const labels = {
+    dialogue: "对话推进",
+    cast_enter: "角色入场",
+    cast_exit: "角色离场",
+    scene_transition: "场景转换",
+    time_change: "时间变化",
+    environment_change: "环境变化",
+    atmosphere_shift: "气氛变化",
+    promise: "承诺",
+    secret: "秘密",
+    conflict: "冲突",
+    relation_shift: "关系变化",
+    micro_action: "角色动作",
+    beat_complete: "段落完成",
+    focus_shift: "关系聚焦",
+  };
+  return labels[String(kind || "").trim()] || String(kind || "剧情事件").trim();
+}
+
+function buildDialogueTimelineSelect(labelText, values, selectedValue, onChange) {
+  const label = document.createElement("label");
+  label.className = "dialogue-event-filter";
+  const span = document.createElement("span");
+  span.textContent = labelText;
+  const select = document.createElement("select");
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "全部";
+  select.appendChild(all);
+  values.forEach(({ value, label: optionLabel }) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = optionLabel;
+    select.appendChild(option);
+  });
+  select.value = selectedValue;
+  select.addEventListener("change", () => onChange(select.value));
+  label.append(span, select);
+  return label;
+}
+
+function dialogueBranchMetricLabel(metric) {
+  const labels = {
+    trust: "信任",
+    affection: "好感",
+    hostility: "敌意",
+    ambiguity: "暧昧",
+  };
+  return labels[String(metric || "").trim()] || String(metric || "关系");
+}
+
+async function updateDialogueBranchMetadata(payload, button) {
+  if (!currentRunId || !currentDialogueSessionId) return;
+  if (button) button.disabled = true;
+  try {
+    const api = await requireWebUiApi();
+    const session = await api.updateDialogueBranchMeta(
+      currentRunId,
+      currentDialogueSessionId,
+      payload
+    );
+    await renderDialogueSession(session);
+    if (typeof loadRecentSessions === "function") await loadRecentSessions();
+  } catch (error) {
+    setDialogueSessionFailure(
+      error.message || "剧情分支信息更新失败。",
+      "当前剧情内容没有变化，可以稍后重试。",
+      false
+    );
+    if (button) button.disabled = false;
+  }
+}
+
+async function openDialogueBranchSession(sessionId, button) {
+  const normalizedId = String(sessionId || "").trim();
+  if (!currentRunId || !normalizedId || normalizedId === currentDialogueSessionId) return;
+  if (button) button.disabled = true;
+  try {
+    const session = await apiJson(
+      `/api/web/runs/${encodeURIComponent(currentRunId)}/dialogue/sessions/${encodeURIComponent(normalizedId)}`
+    );
+    await renderDialogueSession(session);
+  } catch (error) {
+    setDialogueSessionFailure(
+      error.message || "剧情分支载入失败。",
+      "仍停留在当前分支。",
+      false
+    );
+    if (button) button.disabled = false;
+  }
+}
+
+function renderDialogueBranchManager(session) {
+  const root = el("dialogue-branch-manager");
+  if (!root) return;
+  const graph = session?.branch_graph || {};
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  if (!nodes.length) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "dialogue-branch-head";
+  const heading = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "多分支剧情";
+  const note = document.createElement("small");
+  note.textContent = "命名分支、指定主线，并比较不同选择造成的关系变化。";
+  heading.append(title, note);
+  const count = document.createElement("span");
+  count.textContent = `${nodes.length} 条分支`;
+  head.append(heading, count);
+  root.appendChild(head);
+
+  const meta = session?.branch_meta || {};
+  const currentNode = nodes.find((item) => item?.is_current) || {};
+  const editor = document.createElement("div");
+  editor.className = "dialogue-branch-editor";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 80;
+  input.value = String(meta?.label || "").trim();
+  input.placeholder = String(currentNode?.label || "给当前分支命名");
+  input.setAttribute("aria-label", "当前剧情分支名称");
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "soft-button";
+  save.textContent = "保存名称";
+  save.addEventListener("click", () => updateDialogueBranchMetadata({ label: input.value }, save));
+  const mainlineLabel = document.createElement("label");
+  mainlineLabel.className = "dialogue-branch-mainline-toggle";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = Boolean(meta?.is_mainline);
+  checkbox.addEventListener("change", () => updateDialogueBranchMetadata({ is_mainline: checkbox.checked }, checkbox));
+  const mainlineText = document.createElement("span");
+  mainlineText.textContent = "设为主线分支";
+  mainlineLabel.append(checkbox, mainlineText);
+  editor.append(input, save, mainlineLabel);
+  root.appendChild(editor);
+
+  const list = document.createElement("div");
+  list.className = "dialogue-branch-list";
+  nodes.forEach((node) => {
+    const card = document.createElement("article");
+    card.className = "dialogue-branch-item";
+    if (node?.is_current) card.classList.add("is-current");
+    if (node?.is_mainline) card.classList.add("is-mainline");
+    const top = document.createElement("div");
+    top.className = "dialogue-branch-item-top";
+    const label = document.createElement("strong");
+    label.textContent = String(node?.label || "未命名分支");
+    const badges = document.createElement("span");
+    badges.textContent = [node?.is_current ? "当前" : "", node?.is_mainline ? "主线" : ""]
+      .filter(Boolean)
+      .join(" · ");
+    top.append(label, badges);
+    card.appendChild(top);
+    const origin = document.createElement("small");
+    const originTitle = String(node?.origin_title || "").trim();
+    origin.textContent = originTitle
+      ? `从“${originTitle}”产生 · ${Number(node?.event_count || 0)} 个事件`
+      : `${Number(node?.event_count || 0)} 个剧情事件`;
+    card.appendChild(origin);
+
+    const changes = Array.isArray(node?.relation_changes) ? node.relation_changes : [];
+    if (!node?.is_current) {
+      const comparison = document.createElement("p");
+      comparison.className = "dialogue-branch-comparison";
+      comparison.textContent = changes.length
+        ? changes.slice(0, 4).map((item) => {
+            const delta = Number(item?.delta || 0);
+            return `${String(item?.pair_key || "人物关系")} ${dialogueBranchMetricLabel(item?.metric)} ${delta > 0 ? "+" : ""}${delta}`;
+          }).join("；")
+        : "与当前分支相比，人物关系数值暂无差异。";
+      card.appendChild(comparison);
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "soft-button";
+      open.textContent = "切换到此分支";
+      open.addEventListener("click", () => openDialogueBranchSession(String(node?.session_id || ""), open));
+      card.appendChild(open);
+    }
+    list.appendChild(card);
+  });
+  root.appendChild(list);
+}
+
+async function toggleDialogueMainlineEvent(turnId, locked, button) {
+  const normalizedId = String(turnId || "").trim();
+  if (!normalizedId || !currentDialogueSession) return;
+  const currentIds = Array.isArray(currentDialogueSession?.branch_meta?.locked_event_ids)
+    ? currentDialogueSession.branch_meta.locked_event_ids.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const nextIds = locked
+    ? currentIds.filter((item) => item !== normalizedId)
+    : [...new Set([...currentIds, normalizedId])];
+  await updateDialogueBranchMetadata({ locked_event_ids: nextIds }, button);
+}
+
+function focusDialogueChapterEvent(turnId) {
+  const normalizedId = String(turnId || "").trim();
+  if (!normalizedId) return;
+  const target = Array.from(document.querySelectorAll(".dialogue-event-item")).find(
+    (item) => String(item.getAttribute("data-turn-id") || "").trim() === normalizedId
+  );
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("is-focused");
+  window.setTimeout(() => target.classList.remove("is-focused"), 1800);
+}
+
+function renderDialogueChapterOutline(session) {
+  const root = el("dialogue-chapter-outline");
+  if (!root) return;
+  const outline = session?.chapter_outline || {};
+  const chapters = Array.isArray(outline?.chapters) ? outline.chapters : [];
+  if (!chapters.length) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "dialogue-chapter-head";
+  const heading = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "章节与场景目录";
+  const note = document.createElement("small");
+  note.textContent = "聊天后自动归档本幕摘要、出场人物与待续伏笔。";
+  heading.append(title, note);
+  const stats = document.createElement("span");
+  stats.textContent = `${Number(outline?.chapter_count || chapters.length)} 幕 · ${Number(outline?.unresolved_hook_count || 0)} 条伏笔`;
+  head.append(heading, stats);
+  root.appendChild(head);
+
+  const list = document.createElement("div");
+  list.className = "dialogue-chapter-list";
+  chapters.forEach((chapter) => {
+    const details = document.createElement("details");
+    details.className = "dialogue-chapter-item";
+    details.open = Boolean(chapter?.is_current);
+    const summary = document.createElement("summary");
+    const summaryTitle = document.createElement("strong");
+    summaryTitle.textContent = `第 ${Number(chapter?.chapter_number || 0)} 幕 · ${String(chapter?.title || "未命名场景")}`;
+    const count = document.createElement("span");
+    count.textContent = `${Number(chapter?.event_count || 0)} 个事件${chapter?.is_current ? " · 当前" : ""}`;
+    summary.append(summaryTitle, count);
+    details.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "dialogue-chapter-body";
+    const meta = document.createElement("p");
+    meta.className = "dialogue-chapter-meta";
+    meta.textContent = [
+      String(chapter?.time_hint || "").trim(),
+      String(chapter?.location || "").trim(),
+      (chapter?.participants || []).join("、"),
+    ].filter(Boolean).join(" · ") || "场景信息待补充";
+    const recap = document.createElement("p");
+    recap.className = "dialogue-chapter-recap";
+    recap.textContent = String(chapter?.summary || "本幕尚未发生明确事件。");
+    body.append(meta, recap);
+
+    const hooks = Array.isArray(chapter?.hooks) ? chapter.hooks : [];
+    if (hooks.length) {
+      const hookBox = document.createElement("div");
+      hookBox.className = "dialogue-chapter-hooks";
+      const hookTitle = document.createElement("strong");
+      hookTitle.textContent = "待续伏笔";
+      hookBox.appendChild(hookTitle);
+      hooks.forEach((hook) => {
+        const item = document.createElement("p");
+        item.textContent = String(hook || "");
+        hookBox.appendChild(item);
+      });
+      body.appendChild(hookBox);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "dialogue-chapter-actions";
+    const endTurnId = String(chapter?.end_turn_id || "").trim();
+    if (endTurnId) {
+      const locate = document.createElement("button");
+      locate.type = "button";
+      locate.className = "soft-button";
+      locate.textContent = "定位到本幕末尾";
+      locate.addEventListener("click", () => focusDialogueChapterEvent(endTurnId));
+      actions.appendChild(locate);
+    }
+    const reopen = document.createElement("button");
+    reopen.type = "button";
+    reopen.className = "soft-button";
+    reopen.textContent = "从本幕重新演绎";
+    reopen.addEventListener("click", () => {
+      if (typeof window.branchDialogueSessionFromScene === "function") {
+        window.branchDialogueSessionFromScene(Number(chapter?.scene_index || 0));
+      }
+    });
+    actions.appendChild(reopen);
+    body.appendChild(actions);
+    details.appendChild(body);
+    list.appendChild(details);
+  });
+  root.appendChild(list);
+}
+
+function renderDialogueEventTimeline(session) {
+  const root = el("dialogue-event-timeline");
+  if (!root) return;
+  const items = Array.isArray(session?.event_timeline) ? session.event_timeline : [];
+  if (!items.length) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "dialogue-event-timeline-head";
+  const heading = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "剧情事件时间线";
+  const note = document.createElement("small");
+  note.textContent = "按人物、地点或事件类型筛选；回溯会保留原会话并创建新分支。";
+  heading.append(title, note);
+  const count = document.createElement("span");
+  count.className = "dialogue-event-count";
+  head.append(heading, count);
+  root.appendChild(head);
+
+  const participants = [...new Set(items.flatMap((item) => item?.participants || []).map((item) => String(item || "").trim()).filter(Boolean))];
+  const locations = [...new Set(items.map((item) => String(item?.location || "").trim()).filter(Boolean))];
+  const eventTypes = [...new Set(items.flatMap((item) => item?.event_types || []).map((item) => String(item || "").trim()).filter(Boolean))];
+  const filters = document.createElement("div");
+  filters.className = "dialogue-event-filters";
+  filters.append(
+    buildDialogueTimelineSelect("人物", participants.map((value) => ({ value, label: value })), dialogueEventTimelineFilters.participant, (value) => {
+      dialogueEventTimelineFilters.participant = value;
+      renderDialogueEventTimeline(session);
+    }),
+    buildDialogueTimelineSelect("地点", locations.map((value) => ({ value, label: value })), dialogueEventTimelineFilters.location, (value) => {
+      dialogueEventTimelineFilters.location = value;
+      renderDialogueEventTimeline(session);
+    }),
+    buildDialogueTimelineSelect("类型", eventTypes.map((value) => ({ value, label: dialogueEventTypeLabel(value) })), dialogueEventTimelineFilters.eventType, (value) => {
+      dialogueEventTimelineFilters.eventType = value;
+      renderDialogueEventTimeline(session);
+    })
+  );
+  root.appendChild(filters);
+
+  const visible = items.filter((item) => {
+    const itemParticipants = Array.isArray(item?.participants) ? item.participants : [];
+    const itemTypes = Array.isArray(item?.event_types) ? item.event_types : [];
+    return (!dialogueEventTimelineFilters.participant || itemParticipants.includes(dialogueEventTimelineFilters.participant))
+      && (!dialogueEventTimelineFilters.location || String(item?.location || "").trim() === dialogueEventTimelineFilters.location)
+      && (!dialogueEventTimelineFilters.eventType || itemTypes.includes(dialogueEventTimelineFilters.eventType));
+  });
+  count.textContent = `${visible.length} / ${items.length}`;
+
+  const list = document.createElement("div");
+  list.className = "dialogue-event-list";
+  if (!visible.length) {
+    const empty = document.createElement("p");
+    empty.className = "dialogue-event-empty";
+    empty.textContent = "当前筛选条件下没有事件。";
+    list.appendChild(empty);
+  }
+  visible.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "dialogue-event-item";
+    card.setAttribute("data-turn-id", String(item?.turn_id || ""));
+    if (String(item?.consistency_status || "") === "issue") card.classList.add("has-issue");
+    const marker = document.createElement("span");
+    marker.className = "dialogue-event-marker";
+    marker.textContent = String(item?.turn_number || "•");
+    const body = document.createElement("div");
+    body.className = "dialogue-event-body";
+    const itemTitle = document.createElement("strong");
+    itemTitle.textContent = String(item?.title || "剧情推进");
+    const meta = document.createElement("small");
+    const metaParts = [String(item?.time_hint || "").trim(), String(item?.location || "").trim()].filter(Boolean);
+    const typeLabels = (item?.event_types || []).map(dialogueEventTypeLabel).join(" · ");
+    meta.textContent = [...metaParts, typeLabels].filter(Boolean).join(" · ");
+    body.append(itemTitle);
+    if (meta.textContent) body.appendChild(meta);
+    const replies = Array.isArray(item?.responses) ? item.responses : [];
+    if (replies.length) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = `查看这一轮的 ${replies.length} 条角色回复`;
+      details.appendChild(summary);
+      replies.forEach((reply) => {
+        const line = document.createElement("p");
+        line.textContent = `${String(reply?.speaker || "角色")}：${String(reply?.message || "")}`;
+        details.appendChild(line);
+      });
+      body.appendChild(details);
+    }
+    const actions = document.createElement("div");
+    actions.className = "dialogue-event-actions";
+    const branchButton = document.createElement("button");
+    branchButton.type = "button";
+    branchButton.className = "soft-button";
+    branchButton.textContent = "回到这里重新演绎";
+    branchButton.disabled = !item?.can_branch;
+    branchButton.addEventListener("click", () => branchDialogueSessionFromTurn(String(item?.turn_id || ""), branchButton));
+    actions.appendChild(branchButton);
+    const lockButton = document.createElement("button");
+    lockButton.type = "button";
+    lockButton.className = "soft-button dialogue-event-mainline-button";
+    lockButton.textContent = item?.is_mainline_anchor ? "解除主线锁定" : "锁定为主线事件";
+    lockButton.addEventListener("click", () => toggleDialogueMainlineEvent(
+      String(item?.turn_id || ""),
+      Boolean(item?.is_mainline_anchor),
+      lockButton
+    ));
+    actions.appendChild(lockButton);
+    body.appendChild(actions);
+    card.append(marker, body);
+    list.appendChild(card);
+  });
+  root.appendChild(list);
+}
+
+async function branchDialogueSessionFromTurn(turnId, button) {
+  const normalizedTurnId = String(turnId || "").trim();
+  if (!currentRunId || !currentDialogueSessionId || !normalizedTurnId) return;
+  const originalText = button?.textContent || "回到这里重新演绎";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在创建分支...";
+  }
+  try {
+    const api = await requireWebUiApi();
+    const payload = await api.branchDialogueSessionFromTurn(currentRunId, currentDialogueSessionId, normalizedTurnId);
+    await renderDialogueSession(payload);
+    setDialogueSessionSuccess("已从所选剧情节点创建新分支。", "原会话保持不变，可以继续重新演绎。 ");
+  } catch (error) {
+    setDialogueSessionFailure(error.message || "剧情节点回溯失败。", "原会话没有变化，可以稍后重试。", false);
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
+function createRelationChartNode(name, attributes = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+  return node;
+}
+
+function renderDialogueRelationEvolution(session) {
+  const root = el("dialogue-relation-evolution");
+  if (!root) return;
+  const timelines = Array.isArray(session?.relation_timeline) ? session.relation_timeline : [];
+  if (!timelines.length) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+  if (!timelines.some((item) => String(item?.pair_key || "") === selectedDialogueRelationPair)) {
+    selectedDialogueRelationPair = String(timelines[0]?.pair_key || "");
+  }
+  const timeline = timelines.find((item) => String(item?.pair_key || "") === selectedDialogueRelationPair) || timelines[0];
+
+  const head = document.createElement("div");
+  head.className = "dialogue-relation-evolution-head";
+  const heading = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "关系演化";
+  const note = document.createElement("small");
+  note.textContent = "查看关系如何变化，以及每个转折由哪句互动触发。";
+  heading.append(title, note);
+  const controls = document.createElement("div");
+  controls.className = "dialogue-relation-controls";
+  const select = document.createElement("select");
+  timelines.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = String(item?.pair_key || "");
+    option.textContent = String(item?.label || item?.pair_key || "人物关系");
+    select.appendChild(option);
+  });
+  select.value = String(timeline?.pair_key || "");
+  select.addEventListener("change", () => {
+    selectedDialogueRelationPair = select.value;
+    renderDialogueRelationEvolution(session);
+  });
+  const lockButton = document.createElement("button");
+  lockButton.type = "button";
+  lockButton.className = "soft-button dialogue-relation-lock";
+  lockButton.textContent = timeline?.locked ? "解除锁定" : "锁定关系";
+  lockButton.title = timeline?.locked ? "允许后续剧情继续改变这组关系" : "后续剧情仍会记录，但不再自动修改关系数值";
+  lockButton.addEventListener("click", () => updateDialogueRelationLock(timeline, lockButton));
+  controls.append(select, lockButton);
+  head.append(heading, controls);
+  root.appendChild(head);
+
+  const metricConfig = [
+    ["trust", "信任", "#6688a6"],
+    ["affection", "好感", "#bb7e79"],
+    ["hostility", "敌意", "#9b625c"],
+    ["ambiguity", "摇摆", "#9a83a7"],
+  ];
+  const current = timeline?.current || {};
+  const metrics = document.createElement("div");
+  metrics.className = "dialogue-relation-metrics";
+  metricConfig.forEach(([field, label, color]) => {
+    const item = document.createElement("span");
+    item.style.setProperty("--relation-color", color);
+    item.textContent = `${label} ${Number(current?.[field] || 0)}`;
+    metrics.appendChild(item);
+  });
+  if (timeline?.locked) {
+    const locked = document.createElement("span");
+    locked.className = "is-locked";
+    locked.textContent = "已锁定";
+    metrics.appendChild(locked);
+  }
+  root.appendChild(metrics);
+
+  const points = Array.isArray(timeline?.points) ? timeline.points : [];
+  const width = 640;
+  const height = 190;
+  const padding = { left: 30, right: 16, top: 14, bottom: 26 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const svg = createRelationChartNode("svg", {
+    class: "dialogue-relation-chart",
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    "aria-label": `${timeline?.label || "人物关系"}变化曲线`,
+  });
+  [0, 5, 10].forEach((value) => {
+    const y = padding.top + plotHeight - (value / 10) * plotHeight;
+    svg.appendChild(createRelationChartNode("line", { x1: padding.left, y1: y, x2: width - padding.right, y2: y, class: "relation-grid-line" }));
+    const label = createRelationChartNode("text", { x: padding.left - 7, y: y + 3, class: "relation-axis-label", "text-anchor": "end" });
+    label.textContent = String(value);
+    svg.appendChild(label);
+  });
+  metricConfig.forEach(([field, , color]) => {
+    const coordinates = points.map((point, index) => {
+      const x = padding.left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * plotWidth);
+      const value = Math.max(0, Math.min(10, Number(point?.values?.[field] || 0)));
+      const y = padding.top + plotHeight - (value / 10) * plotHeight;
+      return { x, y };
+    });
+    if (coordinates.length) {
+      svg.appendChild(createRelationChartNode("polyline", {
+        points: coordinates.map((point) => `${point.x},${point.y}`).join(" "),
+        fill: "none",
+        stroke: color,
+        "stroke-width": 2.4,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      }));
+      coordinates.forEach((point) => svg.appendChild(createRelationChartNode("circle", { cx: point.x, cy: point.y, r: 2.5, fill: color })));
+    }
+  });
+  points.forEach((point, index) => {
+    const x = padding.left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * plotWidth);
+    const label = createRelationChartNode("text", { x, y: height - 8, class: "relation-axis-label", "text-anchor": "middle" });
+    label.textContent = index === 0 ? "初始" : String(point?.turn_number || index);
+    svg.appendChild(label);
+  });
+  root.appendChild(svg);
+
+  const changePoints = points.filter((point, index) => index > 0 && Object.values(point?.changes || {}).some((value) => Number(value || 0) !== 0));
+  const reasons = document.createElement("div");
+  reasons.className = "dialogue-relation-reasons";
+  const reasonTitle = document.createElement("strong");
+  reasonTitle.textContent = "关键转折";
+  reasons.appendChild(reasonTitle);
+  if (!changePoints.length) {
+    const stable = document.createElement("p");
+    stable.textContent = "目前关系数值保持稳定，还没有形成明显转折。";
+    reasons.appendChild(stable);
+  }
+  changePoints.slice(-6).reverse().forEach((point) => {
+    const row = document.createElement("article");
+    const changes = metricConfig.map(([field, label]) => {
+      const value = Number(point?.changes?.[field] || 0);
+      return value ? `${label}${value > 0 ? "+" : ""}${value}` : "";
+    }).filter(Boolean);
+    const rowTitle = document.createElement("b");
+    rowTitle.textContent = `第 ${point?.turn_number || "?"} 轮 · ${changes.join(" / ")}`;
+    const reason = document.createElement("p");
+    reason.textContent = String(point?.reason || "本轮互动推动了关系变化");
+    row.append(rowTitle, reason);
+    if (String(point?.evidence || "").trim()) {
+      const evidence = document.createElement("small");
+      evidence.textContent = `依据：${String(point.evidence)}`;
+      row.appendChild(evidence);
+    }
+    reasons.appendChild(row);
+  });
+  root.appendChild(reasons);
+}
+
+function renderDialogueCharacterGrowth(session) {
+  const root = el("dialogue-character-growth");
+  if (!root) return;
+  const arcs = Array.isArray(session?.character_arcs)
+    ? session.character_arcs.filter((item) => Array.isArray(item?.points) && item.points.length)
+    : [];
+  if (!arcs.length) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+  if (!arcs.some((item) => String(item?.name || "") === selectedDialogueCharacterArc)) {
+    selectedDialogueCharacterArc = String(arcs[0]?.name || "");
+  }
+  const arc = arcs.find((item) => String(item?.name || "") === selectedDialogueCharacterArc) || arcs[0];
+
+  const head = document.createElement("div");
+  head.className = "dialogue-character-growth-head";
+  const heading = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = "人物成长轨迹";
+  const note = document.createElement("small");
+  note.textContent = "追踪目标、立场和情绪为何发生变化。";
+  heading.append(title, note);
+  const select = document.createElement("select");
+  arcs.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = String(item?.name || "");
+    option.textContent = String(item?.name || "人物");
+    select.appendChild(option);
+  });
+  select.value = String(arc?.name || "");
+  select.addEventListener("change", () => {
+    selectedDialogueCharacterArc = select.value;
+    renderDialogueCharacterGrowth(session);
+  });
+  head.append(heading, select);
+  root.appendChild(head);
+
+  const current = arc?.current || {};
+  const state = document.createElement("div");
+  state.className = "dialogue-character-current-state";
+  [
+    ["情绪", current?.mood],
+    ["立场", current?.interaction_state],
+    ["当前目标", current?.focus],
+    ["关注", current?.last_target],
+  ].forEach(([label, value]) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) return;
+    const chip = document.createElement("span");
+    chip.textContent = `${label} · ${normalized}`;
+    state.appendChild(chip);
+  });
+  if (!state.childElementCount) {
+    const empty = document.createElement("span");
+    empty.textContent = "人物状态仍在形成中";
+    state.appendChild(empty);
+  }
+  root.appendChild(state);
+
+  const summary = document.createElement("p");
+  summary.className = "dialogue-character-growth-summary";
+  summary.textContent = String(arc?.growth_summary || "尚未记录到明显变化。");
+  root.appendChild(summary);
+
+  const timeline = document.createElement("div");
+  timeline.className = "dialogue-character-growth-timeline";
+  const points = Array.isArray(arc?.points) ? arc.points : [];
+  points.slice(-8).forEach((point, index) => {
+    const row = document.createElement("article");
+    row.className = "dialogue-character-growth-point";
+    const marker = document.createElement("span");
+    marker.className = "dialogue-character-growth-marker";
+    marker.textContent = String(Math.max(1, points.length - Math.min(8, points.length) + index + 1));
+    const body = document.createElement("div");
+    const rowHead = document.createElement("div");
+    const rowTitle = document.createElement("strong");
+    const changes = Array.isArray(point?.changes) ? point.changes : [];
+    rowTitle.textContent = changes.length
+      ? changes.map((item) => String(item?.label || "状态")).join("、")
+      : "初始状态";
+    const inherited = document.createElement("small");
+    inherited.textContent = point?.inherited ? "继承自上游分支" : `第 ${point?.turn_number || "?"} 个状态节点`;
+    rowHead.append(rowTitle, inherited);
+    body.appendChild(rowHead);
+    if (changes.length) {
+      const changeList = document.createElement("p");
+      changeList.className = "dialogue-character-growth-changes";
+      changeList.textContent = changes.map((item) => {
+        const before = String(item?.before || "未记录");
+        const after = String(item?.after || "未记录");
+        return `${String(item?.label || "状态")}：${before} → ${after}`;
+      }).join("；");
+      body.appendChild(changeList);
+    }
+    const reason = document.createElement("p");
+    reason.textContent = `变化原因：${String(point?.reason || "这一轮互动推动了人物状态。")}`;
+    body.appendChild(reason);
+    const turnId = String(point?.turn_id || "").trim();
+    if (turnId) {
+      const locate = document.createElement("button");
+      locate.type = "button";
+      locate.className = "soft-button";
+      locate.textContent = "定位剧情事件";
+      locate.addEventListener("click", () => focusDialogueChapterEvent(turnId));
+      body.appendChild(locate);
+    }
+    row.append(marker, body);
+    timeline.appendChild(row);
+  });
+  root.appendChild(timeline);
+}
+
+async function updateDialogueRelationLock(timeline, button) {
+  const pairKey = String(timeline?.pair_key || "").trim();
+  if (!currentRunId || !currentDialogueSessionId || !pairKey) return;
+  if (button) button.disabled = true;
+  try {
+    const api = await requireWebUiApi();
+    const payload = await api.updateDialogueRelationLock(currentRunId, currentDialogueSessionId, pairKey, !timeline?.locked);
+    await renderDialogueSession(payload);
+    setDialogueSessionSuccess(timeline?.locked ? "关系已解除锁定。" : "关系已锁定。", timeline?.locked ? "后续剧情可以继续改变关系数值。" : "后续剧情仍会记录，但不会自动改变这组关系数值。");
+  } catch (error) {
+    setDialogueSessionFailure(error.message || "关系锁定状态更新失败。", "当前关系状态没有变化。", false);
+    if (button) button.disabled = false;
   }
 }
 
@@ -919,6 +2381,18 @@ function bindTranscriptSendActions(root) {
   root.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    const reviewButton = target.closest("[data-consistency-review]");
+    if (reviewButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      deepReviewLatestConsistencyTurn(reviewButton);
+      return;
+    }
+    const correctionButton = target.closest("[data-consistency-correct]");
+    if (correctionButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      correctLatestConsistencyTurn(correctionButton);
+      return;
+    }
     const retryButton = target.closest("[data-transcript-retry]");
     if (retryButton instanceof HTMLElement) {
       event.preventDefault();
@@ -938,7 +2412,7 @@ function bindTranscriptSendActions(root) {
   });
 }
 
-function renderTranscript(items) {
+function renderTranscript(items, consistencyMonitor = null) {
   const root = el("dialogue-transcript");
   if (!root) return;
   bindTranscriptSendActions(root);
@@ -1023,6 +2497,8 @@ function renderTranscript(items) {
 
     root.appendChild(row);
   });
+
+  appendConsistencyMonitor(root, consistencyMonitor);
 
   if (typeof window.renderDialogueAssociations === "function") {
     window.renderDialogueAssociations();
@@ -1676,6 +3152,13 @@ window.buildGenerationCacheSnapshot = buildGenerationCacheSnapshot;
 window.formatGenerationCacheRate = formatGenerationCacheRate;
 window.renderDialogueGenerationCacheStats = renderDialogueGenerationCacheStats;
 window.renderDialogueMemory = renderDialogueMemory;
+window.renderDialogueEventTimeline = renderDialogueEventTimeline;
+window.branchDialogueSessionFromTurn = branchDialogueSessionFromTurn;
+window.renderDialogueRelationEvolution = renderDialogueRelationEvolution;
+window.updateDialogueRelationLock = updateDialogueRelationLock;
+window.renderDialogueControlledMemories = renderDialogueControlledMemories;
+window.renderDialogueSpeakerBalance = renderDialogueSpeakerBalance;
+window.renderDialogueDirectorPanel = renderDialogueDirectorPanel;
 window.buildDialogueMemoryClipboardText = buildDialogueMemoryClipboardText;
 window.copyDialogueMemorySummary = copyDialogueMemorySummary;
 window.openDialogueMemoryModal = openDialogueMemoryModal;

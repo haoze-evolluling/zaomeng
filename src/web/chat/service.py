@@ -14,6 +14,9 @@ from src.web.manifest.compat import (
     relative_candidates,
     relative_to_run_dir,
 )
+import src.web.chat.consistency as _consistency
+import src.web.chat.chapter_outline as _chapter_outline
+import src.web.chat.character_arc as _character_arc
 import src.web.chat.event_signals as _event_signals
 from src.web.chat.cache_stats import (
     empty_generation_cache_stats,
@@ -28,6 +31,7 @@ import src.web.chat.relation_state as _relation_state
 import src.web.chat.runtime_overview as _runtime_overview
 import src.web.chat.scene_progress as _scene_progress
 import src.web.chat.scene_signals as _scene_signals
+import src.web.chat.speaker_balance as _speaker_balance
 from src.web.chat.session_storage import SessionFileStore, with_session_lock
 import src.web.chat.session_views as _session_views
 import src.web.chat.state_utils as _state_utils
@@ -167,6 +171,181 @@ class DialogueService:
         items.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return items
 
+    def _branch_family_payloads(
+        self, run_id: str, session_id: str
+    ) -> list[dict[str, Any]]:
+        """Return the raw sessions connected to ``session_id`` as one branch tree."""
+
+        root = self._sessions_root(run_id)
+        payloads: dict[str, dict[str, Any]] = {}
+        if not root.exists():
+            return []
+        for path in root.glob("*/session.json"):
+            item = self._read_json(path)
+            item_id = str(item.get("session_id", "")).strip()
+            if item_id:
+                payloads[item_id] = item
+        if session_id not in payloads:
+            return []
+
+        parents = {
+            item_id: str(dict(item.get("branch_origin", {}) or {}).get("session_id", "")).strip()
+            for item_id, item in payloads.items()
+        }
+        family_ids = {session_id}
+        cursor = session_id
+        while parents.get(cursor) and parents[cursor] in payloads:
+            cursor = parents[cursor]
+            if cursor in family_ids:
+                break
+            family_ids.add(cursor)
+        changed = True
+        while changed:
+            changed = False
+            for item_id, parent_id in parents.items():
+                if parent_id in family_ids and item_id not in family_ids:
+                    family_ids.add(item_id)
+                    changed = True
+        return [payloads[item_id] for item_id in family_ids]
+
+    @staticmethod
+    def _branch_display_label(session: dict[str, Any]) -> str:
+        meta = dict(session.get("branch_meta", {}) or {})
+        explicit = str(meta.get("label", "")).strip()
+        if explicit:
+            return explicit
+        origin = dict(session.get("branch_origin", {}) or {})
+        origin_label = str(
+            origin.get("event_title", "") or origin.get("scene_title", "")
+        ).strip()
+        if origin_label:
+            return f"分支：{origin_label}"
+        scene_title = str(dict(session.get("scene_card", {}) or {}).get("title", "")).strip()
+        return scene_title or "主剧情"
+
+    def _branch_relation_changes(
+        self, baseline: dict[str, Any], candidate: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        baseline_matrix = self._merged_relation_matrix(
+            baseline, list(baseline.get("participants", []) or [])
+        )
+        candidate_matrix = self._merged_relation_matrix(
+            candidate, list(candidate.get("participants", []) or [])
+        )
+        changes: list[dict[str, Any]] = []
+        for pair_key in sorted(set(baseline_matrix) | set(candidate_matrix)):
+            before = dict(baseline_matrix.get(pair_key, {}) or {})
+            after = dict(candidate_matrix.get(pair_key, {}) or {})
+            for metric in ("trust", "affection", "hostility", "ambiguity"):
+                old_value = int(before.get(metric, 0) or 0)
+                new_value = int(after.get(metric, 0) or 0)
+                if old_value == new_value:
+                    continue
+                changes.append(
+                    {
+                        "pair_key": pair_key,
+                        "metric": metric,
+                        "before": old_value,
+                        "after": new_value,
+                        "delta": new_value - old_value,
+                    }
+                )
+        return changes
+
+    def _build_branch_graph(
+        self, run_id: str, current: dict[str, Any]
+    ) -> dict[str, Any]:
+        current_id = str(current.get("session_id", "")).strip()
+        family = self._branch_family_payloads(run_id, current_id)
+        nodes: list[dict[str, Any]] = []
+        for item in family:
+            item_id = str(item.get("session_id", "")).strip()
+            origin = dict(item.get("branch_origin", {}) or {})
+            meta = dict(item.get("branch_meta", {}) or {})
+            nodes.append(
+                {
+                    "session_id": item_id,
+                    "parent_session_id": str(origin.get("session_id", "")).strip(),
+                    "label": self._branch_display_label(item),
+                    "is_current": item_id == current_id,
+                    "is_mainline": bool(meta.get("is_mainline", False)),
+                    "origin_kind": str(origin.get("kind", "") or "root").strip(),
+                    "origin_title": str(
+                        origin.get("event_title", "") or origin.get("scene_title", "")
+                    ).strip(),
+                    "updated_at": str(item.get("updated_at", "")).strip(),
+                    "event_count": len(self._serialize_event_timeline(run_id, item)),
+                    "relation_changes": self._branch_relation_changes(current, item),
+                }
+            )
+        nodes.sort(
+            key=lambda item: (
+                0 if bool(item.get("is_mainline")) else 1,
+                str(item.get("updated_at", "")),
+                str(item.get("session_id", "")),
+            )
+        )
+        return {"current_session_id": current_id, "nodes": nodes}
+
+    def _serialize_character_arcs(
+        self, run_id: str, session: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return _character_arc.build_character_arcs(
+            list(session.get("participants", []) or []),
+            self._completed_turn_records(
+                run_id, str(session.get("session_id", "")).strip()
+            ),
+            inherited_arcs=list(session.get("inherited_character_arcs", []) or []),
+        )
+
+    @with_session_lock
+    def update_branch_metadata(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        label: str | None = None,
+        is_mainline: bool | None = None,
+        locked_event_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        meta = dict(session.get("branch_meta", {}) or {})
+        if label is not None:
+            meta["label"] = _text_utils.trim_summary_text(str(label).strip(), 80)
+        if locked_event_ids is not None:
+            available_ids = {
+                str(item.get("turn_id", "")).strip()
+                for item in self._serialize_event_timeline(run_id, session)
+                if str(item.get("turn_id", "")).strip()
+            }
+            normalized_ids = list(
+                dict.fromkeys(
+                    str(item).strip() for item in locked_event_ids if str(item).strip()
+                )
+            )
+            if len(normalized_ids) > 100:
+                raise ValueError("最多锁定 100 个主线事件。")
+            if any(item not in available_ids for item in normalized_ids):
+                raise ValueError("要锁定的剧情事件不在当前分支中。")
+            meta["locked_event_ids"] = normalized_ids
+        if is_mainline is not None:
+            meta["is_mainline"] = bool(is_mainline)
+            if is_mainline:
+                for relative in self._branch_family_payloads(run_id, session_id):
+                    relative_id = str(relative.get("session_id", "")).strip()
+                    if not relative_id or relative_id == session_id:
+                        continue
+                    relative_meta = dict(relative.get("branch_meta", {}) or {})
+                    if not relative_meta.get("is_mainline"):
+                        continue
+                    relative_meta["is_mainline"] = False
+                    relative["branch_meta"] = relative_meta
+                    self._write_json(self._session_file(run_id, relative_id), relative)
+        session["branch_meta"] = meta
+        session["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
     def create_session(
         self,
         run_manifest: dict[str, Any],
@@ -219,6 +398,14 @@ class DialogueService:
             ),
             "carried_memory_summary": dict(carried_memory_summary or {}),
             "branch_origin": dict(branch_origin or {}),
+            "branch_meta": {
+                "label": "",
+                "is_mainline": not bool(branch_origin),
+                "locked_event_ids": [],
+            },
+            "relation_locks": {},
+            "memory_ledger": [],
+            "latest_context_usage": {},
             "history": [],
             "pending_turn": {},
             "generation_cache_stats": empty_generation_cache_stats(),
@@ -336,6 +523,7 @@ class DialogueService:
             ),
         )
         session["updated_at"] = _utc_now()
+        self._refresh_latest_turn_checkpoint(run_id, session_id, session)
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 
@@ -362,7 +550,7 @@ class DialogueService:
                 "atmosphere": str(target.get("atmosphere", "")).strip(),
             }
         memory_summary = dict(target.get("memory_summary", {}) or {})
-        return self.create_session(
+        branch = self.create_session(
             run_manifest,
             mode=str(session.get("mode", "observe")).strip() or "observe",
             participants=list(session.get("participants", []) or []),
@@ -374,8 +562,614 @@ class DialogueService:
                 "session_id": str(session.get("session_id", "")).strip(),
                 "scene_index": scene_index,
                 "scene_title": str(target.get("title", "")).strip(),
+                "kind": "scene_timeline",
             },
         )
+        branch_id = str(branch.get("session_id", "")).strip()
+        branch_payload = self._read_json(self._session_file(run_id, branch_id))
+        branch_payload["relation_locks"] = dict(
+            session.get("relation_locks", {}) or {}
+        )
+        branch_payload["memory_ledger"] = [
+            dict(item or {})
+            for item in list(session.get("memory_ledger", []) or [])
+            if isinstance(item, dict)
+        ]
+        target_ts = str(target.get("ts", "")).strip()
+        inherited_arcs: list[dict[str, Any]] = []
+        for arc in self._serialize_character_arcs(run_id, session):
+            copied = dict(arc or {})
+            copied["points"] = [
+                {**dict(point or {}), "inherited": True}
+                for point in list(arc.get("points", []) or [])
+                if not target_ts
+                or not str(point.get("updated_at", "")).strip()
+                or str(point.get("updated_at", "")).strip() <= target_ts
+            ]
+            if copied["points"]:
+                copied["current"] = dict(copied["points"][-1].get("state", {}) or {})
+            inherited_arcs.append(copied)
+        branch_payload["inherited_character_arcs"] = inherited_arcs
+        branch_payload["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, branch_id), branch_payload)
+        return self._serialize_session(run_id, branch_payload)
+
+    @with_session_lock
+    def branch_session_from_turn(
+        self,
+        run_manifest: dict[str, Any],
+        session_id: str,
+        *,
+        turn_id: str,
+    ) -> dict[str, Any]:
+        """Create a non-destructive branch immediately after a completed turn."""
+
+        run_id = str(run_manifest.get("run_id", "")).strip()
+        source = self._read_json(self._session_file(run_id, session_id))
+        records = self._completed_turn_records(run_id, session_id)
+        target_index = next(
+            (
+                index
+                for index, record in enumerate(records)
+                if str(record.get("turn_id", "")).strip() == str(turn_id).strip()
+            ),
+            -1,
+        )
+        if target_index < 0:
+            inherited_target = next(
+                (
+                    dict(item or {})
+                    for item in list(source.get("inherited_event_timeline", []) or [])
+                    if str(dict(item or {}).get("turn_id", "")).strip()
+                    == str(turn_id).strip()
+                ),
+                {},
+            )
+            origin_session_id = str(
+                inherited_target.get("source_session_id", "")
+            ).strip()
+            if origin_session_id and origin_session_id != session_id:
+                return self.branch_session_from_turn(
+                    run_manifest,
+                    origin_session_id,
+                    turn_id=turn_id,
+                )
+            raise ValueError("指定的剧情事件节点不存在。")
+        target = records[target_index]
+        checkpoint = dict(target.get("checkpoint", {}) or {})
+        if not checkpoint:
+            checkpoint = self._build_legacy_turn_checkpoint(
+                source,
+                records,
+                target_index,
+            )
+        history = [
+            dict(item or {})
+            for item in list(checkpoint.get("history", []) or [])
+            if isinstance(item, dict)
+        ]
+        if not history:
+            raise ValueError("该旧剧情节点缺少可恢复的对话记录。")
+
+        scene_card = dict(
+            checkpoint.get("scene_card", {}) or source.get("scene_card", {}) or {}
+        )
+        carried_summary = dict(
+            checkpoint.get("memory_summary", {})
+            or target.get("memory_summary", {})
+            or {}
+        )
+        branch = self.create_session(
+            run_manifest,
+            mode=str(source.get("mode", "observe")).strip() or "observe",
+            participants=list(source.get("participants", []) or []),
+            controlled_character=str(source.get("controlled_character", "")).strip(),
+            scene_profile=scene_card,
+            self_profile=dict(source.get("self_insert", {}) or {}),
+            carried_memory_summary=carried_summary,
+            branch_origin={
+                "session_id": session_id,
+                "turn_id": str(target.get("turn_id", "")).strip(),
+                "kind": "event_timeline",
+                "event_title": str(target.get("title", "")).strip(),
+            },
+        )
+        branch_id = str(branch.get("session_id", "")).strip()
+        payload = self._read_json(self._session_file(run_id, branch_id))
+        payload["history"] = history
+        payload["scene_card"] = scene_card
+        payload["scene_card_id"] = str(
+            checkpoint.get("scene_card_id", scene_card.get("scene_card_id", ""))
+        ).strip()
+        if list(checkpoint.get("scene_history", []) or []):
+            payload["scene_history"] = list(checkpoint.get("scene_history", []) or [])
+        if dict(checkpoint.get("scene_progress", {}) or {}):
+            self._set_session_scene_progress(
+                payload, dict(checkpoint.get("scene_progress", {}) or {})
+            )
+        if dict(checkpoint.get("character_snapshots", {}) or {}):
+            self._set_session_character_snapshots(
+                payload, dict(checkpoint.get("character_snapshots", {}) or {})
+            )
+        self._set_session_relation_delta(
+            payload, dict(checkpoint.get("relation_delta", {}) or {})
+        )
+        if dict(checkpoint.get("relation_matrix", {}) or {}):
+            self._set_session_relation_matrix(
+                payload, dict(checkpoint.get("relation_matrix", {}) or {})
+            )
+        self._set_session_event_signals(
+            payload, dict(checkpoint.get("event_signals", {}) or {})
+        )
+        self._set_session_memory_summary_state(
+            payload, dict(checkpoint.get("memory_summary_state", {}) or {})
+        )
+        payload["consistency_monitor"] = dict(
+            checkpoint.get("consistency_monitor", {}) or {}
+        )
+        payload["relation_locks"] = dict(
+            checkpoint.get("relation_locks", {})
+            or source.get("relation_locks", {})
+            or {}
+        )
+        payload["memory_ledger"] = [
+            dict(item or {})
+            for item in list(
+                checkpoint.get("memory_ledger", source.get("memory_ledger", []))
+                or []
+            )
+            if isinstance(item, dict)
+        ]
+        source_event_timeline = self._serialize_event_timeline(run_id, source)
+        inherited_events: list[dict[str, Any]] = []
+        for item in source_event_timeline:
+            inherited_events.append(dict(item or {}))
+            if (
+                str(item.get("turn_id", "")).strip()
+                == str(target.get("turn_id", "")).strip()
+                and str(item.get("source_session_id", session_id)).strip()
+                == session_id
+            ):
+                break
+        payload["inherited_event_timeline"] = inherited_events
+        inherited_event_ids = {
+            str(item.get("turn_id", "")).strip()
+            for item in inherited_events
+            if str(item.get("turn_id", "")).strip()
+        }
+        source_locked_ids = list(
+            dict(source.get("branch_meta", {}) or {}).get("locked_event_ids", []) or []
+        )
+        payload["branch_meta"] = {
+            **dict(payload.get("branch_meta", {}) or {}),
+            "locked_event_ids": [
+                str(item).strip()
+                for item in source_locked_ids
+                if str(item).strip() in inherited_event_ids
+            ],
+        }
+        source_relation_timeline = self._serialize_relation_timeline(run_id, source)
+        inherited_relations: list[dict[str, Any]] = []
+        for relation in source_relation_timeline:
+            copied = dict(relation or {})
+            copied_points: list[dict[str, Any]] = []
+            found_target = False
+            for point in list(relation.get("points", []) or []):
+                copied_points.append(dict(point or {}))
+                if str(point.get("turn_id", "")).strip() == str(
+                    target.get("turn_id", "")
+                ).strip():
+                    found_target = True
+                    break
+            if not found_target:
+                continue
+            copied["points"] = copied_points
+            if copied_points:
+                copied["current"] = dict(copied_points[-1].get("values", {}) or {})
+            inherited_relations.append(copied)
+        payload["inherited_relation_timeline"] = inherited_relations
+        target_updated_at = str(target.get("updated_at", "")).strip()
+        inherited_arcs: list[dict[str, Any]] = []
+        for arc in self._serialize_character_arcs(run_id, source):
+            copied = dict(arc or {})
+            copied_points = [
+                {**dict(point or {}), "inherited": True}
+                for point in list(arc.get("points", []) or [])
+                if not target_updated_at
+                or not str(point.get("updated_at", "")).strip()
+                or str(point.get("updated_at", "")).strip() <= target_updated_at
+            ]
+            copied["points"] = copied_points
+            if copied_points:
+                copied["current"] = dict(copied_points[-1].get("state", {}) or {})
+            inherited_arcs.append(copied)
+        payload["inherited_character_arcs"] = inherited_arcs
+        payload["pending_turn"] = {}
+        payload["status"] = "ready"
+        payload["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, branch_id), payload)
+        return self._serialize_session(run_id, payload)
+
+    @with_session_lock
+    def create_correction_branch(
+        self,
+        run_manifest: dict[str, Any],
+        session_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fork immediately before the latest inconsistent turn."""
+
+        run_id = str(run_manifest.get("run_id", "")).strip()
+        source = self._read_json(self._session_file(run_id, session_id))
+        monitor = dict(source.get("consistency_monitor", {}) or {})
+        latest = dict(monitor.get("latest", {}) or {})
+        issues = [
+            dict(item or {})
+            for item in list(latest.get("issues", []) or [])
+            if isinstance(item, dict)
+        ]
+        turn_id = str(latest.get("turn_id", "")).strip()
+        if not turn_id or not issues:
+            raise ValueError("Latest turn has no consistency issue to correct.")
+
+        turn_dir = self._session_dir(run_id, session_id) / "turns"
+        turn_payload = self._read_json(turn_dir / f"{turn_id}.payload.json")
+        turn_result = self._read_json(turn_dir / f"{turn_id}.result.json")
+        original_responses = [
+            dict(item or {})
+            for item in list(turn_result.get("responses", []) or [])
+            if isinstance(item, dict)
+        ]
+        input_payload = dict(turn_payload.get("input", {}) or {})
+        original_message = str(input_payload.get("message", "")).strip()
+        if not original_message or not original_responses:
+            raise ValueError("Latest turn does not contain enough data to correct.")
+
+        branch = self.create_session(
+            run_manifest,
+            mode=str(source.get("mode", "observe")).strip() or "observe",
+            participants=list(source.get("participants", []) or []),
+            controlled_character=str(source.get("controlled_character", "")).strip(),
+            scene_profile=dict(source.get("scene_card", {}) or {}),
+            self_profile=dict(source.get("self_insert", {}) or {}),
+            carried_memory_summary=dict(
+                dict(turn_payload.get("memory_context", {}) or {}).get(
+                    "session_summary", {}
+                )
+                or {}
+            ),
+            branch_origin={
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "kind": "consistency_correction",
+            },
+        )
+        branch_id = str(branch.get("session_id", "")).strip()
+        branch_payload = self._read_json(self._session_file(run_id, branch_id))
+        branch_payload["relation_locks"] = dict(
+            source.get("relation_locks", {}) or {}
+        )
+        checkpoint_before = dict(turn_payload.get("checkpoint_before", {}) or {})
+        branch_payload["memory_ledger"] = [
+            dict(item or {})
+            for item in list(
+                checkpoint_before.get("memory_ledger", source.get("memory_ledger", []))
+                or []
+            )
+            if isinstance(item, dict)
+        ]
+        branch_payload["inherited_event_timeline"] = [
+            dict(item or {})
+            for item in self._serialize_event_timeline(run_id, source)
+            if str(item.get("turn_id", "")).strip() != turn_id
+        ]
+        inherited_event_ids = {
+            str(item.get("turn_id", "")).strip()
+            for item in branch_payload["inherited_event_timeline"]
+            if str(item.get("turn_id", "")).strip()
+        }
+        source_locked_ids = list(
+            dict(source.get("branch_meta", {}) or {}).get("locked_event_ids", []) or []
+        )
+        branch_payload["branch_meta"] = {
+            **dict(branch_payload.get("branch_meta", {}) or {}),
+            "locked_event_ids": [
+                str(item).strip()
+                for item in source_locked_ids
+                if str(item).strip() in inherited_event_ids
+            ],
+        }
+        inherited_relations: list[dict[str, Any]] = []
+        for relation in self._serialize_relation_timeline(run_id, source):
+            copied = dict(relation or {})
+            copied["points"] = [
+                dict(point or {})
+                for point in list(relation.get("points", []) or [])
+                if str(point.get("turn_id", "")).strip() != turn_id
+            ]
+            if copied["points"]:
+                copied["current"] = dict(
+                    copied["points"][-1].get("values", {}) or {}
+                )
+            inherited_relations.append(copied)
+        branch_payload["inherited_relation_timeline"] = inherited_relations
+        inherited_arcs: list[dict[str, Any]] = []
+        for arc in self._serialize_character_arcs(run_id, source):
+            copied = dict(arc or {})
+            copied["points"] = [
+                {**dict(point or {}), "inherited": True}
+                for point in list(arc.get("points", []) or [])
+                if str(point.get("turn_id", "")).strip() != turn_id
+            ]
+            if copied["points"]:
+                copied["current"] = dict(copied["points"][-1].get("state", {}) or {})
+            inherited_arcs.append(copied)
+        branch_payload["inherited_character_arcs"] = inherited_arcs
+
+        history = [dict(item or {}) for item in list(source.get("history", []) or [])]
+        for response in reversed(original_responses):
+            if not history:
+                break
+            tail = history[-1]
+            if (
+                str(tail.get("speaker", "")).strip()
+                == str(response.get("speaker", "")).strip()
+                and str(tail.get("message", "")).strip()
+                == str(response.get("message", "")).strip()
+            ):
+                history.pop()
+        original_speaker = str(input_payload.get("speaker", "")).strip()
+        if history and (
+            str(history[-1].get("speaker", "")).strip() == original_speaker
+            and str(history[-1].get("message", "")).strip() == original_message
+        ):
+            history.pop()
+        branch_payload["history"] = history
+
+        restored_progress = dict(turn_payload.get("scene_progress", {}) or {})
+        if restored_progress:
+            self._set_session_scene_progress(branch_payload, restored_progress)
+        restored_snapshots = dict(input_payload.get("character_snapshots", {}) or {})
+        if restored_snapshots:
+            self._set_session_character_snapshots(branch_payload, restored_snapshots)
+        memory_context = dict(turn_payload.get("memory_context", {}) or {})
+        restored_relation_delta = dict(memory_context.get("relation_delta", {}) or {})
+        if restored_relation_delta:
+            self._set_session_relation_delta(branch_payload, restored_relation_delta)
+        restored_events = [
+            dict(item or {})
+            for item in list(memory_context.get("event_signals", []) or [])
+            if isinstance(item, dict)
+        ]
+        if restored_events:
+            self._set_session_event_signals(
+                branch_payload,
+                self._merge_event_signals_state(branch_payload, restored_events),
+            )
+        restored_memory_state = dict(memory_context.get("archived_summary", {}) or {})
+        if restored_memory_state:
+            self._set_session_memory_summary_state(
+                branch_payload, restored_memory_state
+            )
+        branch_payload["consistency_monitor"] = {
+            "latest": {},
+            "history": [],
+            "checked_turns": 0,
+            "issue_count": 0,
+            "knowledge_ledger": list(turn_payload.get("knowledge_context", []) or []),
+        }
+        branch_payload["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, branch_id), branch_payload)
+
+        correction_context = {
+            "source_session_id": session_id,
+            "source_turn_id": turn_id,
+            "issues": issues,
+            "original_responses": original_responses,
+            "message": original_message,
+            "message_kind": str(input_payload.get("message_kind", "dialogue")).strip()
+            or "dialogue",
+        }
+        return self._serialize_session(run_id, branch_payload), correction_context
+
+    def build_consistency_review_payload(
+        self,
+        run_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        monitor = dict(session.get("consistency_monitor", {}) or {})
+        latest = dict(monitor.get("latest", {}) or {})
+        turn_id = str(latest.get("turn_id", "")).strip()
+        if not turn_id:
+            raise ValueError("No completed turn is available for deep review.")
+        turn_dir = self._session_dir(run_id, session_id) / "turns"
+        turn_payload = self._read_json(turn_dir / f"{turn_id}.payload.json")
+        turn_result = self._read_json(turn_dir / f"{turn_id}.result.json")
+        responses = [
+            dict(item or {})
+            for item in list(turn_result.get("responses", []) or [])
+            if isinstance(item, dict)
+        ]
+        if not responses:
+            raise ValueError("Latest turn has no responses to review.")
+        return {
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "mode": str(session.get("mode", "observe")).strip() or "observe",
+            "participants": list(session.get("participants", []) or []),
+            "scene_progress": dict(turn_payload.get("scene_progress", {}) or {}),
+            "persona_contexts": list(turn_payload.get("persona_contexts", []) or []),
+            "relation_context": dict(turn_payload.get("relation_context", {}) or {}),
+            "knowledge_context": list(turn_payload.get("knowledge_context", []) or []),
+            "history": list(turn_payload.get("history", []) or []),
+            "input": dict(turn_payload.get("input", {}) or {}),
+            "responses": responses,
+            "deterministic_report": latest,
+        }
+
+    @with_session_lock
+    def apply_semantic_consistency_review(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        review: dict[str, Any],
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        monitor = dict(session.get("consistency_monitor", {}) or {})
+        latest = dict(monitor.get("latest", {}) or {})
+        if not latest:
+            raise ValueError("No consistency report is available to update.")
+        old_issue_count = len(list(latest.get("issues", []) or []))
+        merged = _consistency.merge_semantic_review(
+            latest,
+            review,
+            reviewed_at=_utc_now(),
+        )
+        history = [dict(item or {}) for item in list(monitor.get("history", []) or [])]
+        turn_id = str(merged.get("turn_id", "")).strip()
+        replaced = False
+        for index, item in enumerate(history):
+            if str(item.get("turn_id", "")).strip() == turn_id:
+                history[index] = merged
+                replaced = True
+        if not replaced:
+            history.append(merged)
+        history = history[-20:]
+        new_issue_count = len(list(merged.get("issues", []) or []))
+        monitor.update(
+            {
+                "latest": merged,
+                "history": history,
+                "issue_count": max(
+                    0,
+                    int(monitor.get("issue_count", 0) or 0)
+                    + new_issue_count
+                    - old_issue_count,
+                ),
+                "semantic_review_count": int(
+                    monitor.get("semantic_review_count", 0) or 0
+                )
+                + 1,
+                "metrics": _consistency.build_monitor_metrics(history),
+            }
+        )
+        session["consistency_monitor"] = monitor
+        session["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
+    @with_session_lock
+    def set_relation_lock(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        pair_key: str,
+        locked: bool,
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        normalized_key = str(pair_key or "").strip()
+        valid_keys = set(
+            self._merged_relation_matrix(
+                session, list(session.get("participants", []) or [])
+            )
+        )
+        if normalized_key not in valid_keys:
+            raise ValueError("指定的人物关系不存在。")
+        locks = dict(session.get("relation_locks", {}) or {})
+        if locked:
+            locks[normalized_key] = True
+        else:
+            locks.pop(normalized_key, None)
+        session["relation_locks"] = locks
+        session["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
+    @with_session_lock
+    def upsert_controlled_memory(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        text: str,
+        category: str = "story",
+        pinned: bool = False,
+        enabled: bool = True,
+        memory_id: str = "",
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        normalized_text = _text_utils.trim_summary_text(str(text or "").strip(), 500)
+        if not normalized_text:
+            raise ValueError("记忆内容不能为空。")
+        normalized_category = str(category or "story").strip().lower()
+        if normalized_category not in {"short_term", "long_term", "story", "relationship"}:
+            raise ValueError("不支持的记忆类型。")
+        normalized_id = str(memory_id or "").strip()
+        ledger = [
+            dict(item or {})
+            for item in list(session.get("memory_ledger", []) or [])
+            if isinstance(item, dict)
+        ]
+        now = _utc_now()
+        existing_index = next(
+            (
+                index
+                for index, item in enumerate(ledger)
+                if str(item.get("memory_id", "")).strip() == normalized_id
+            ),
+            -1,
+        )
+        entry = {
+            "memory_id": normalized_id or f"mem-{uuid4().hex[:10]}",
+            "text": normalized_text,
+            "category": normalized_category,
+            "pinned": bool(pinned),
+            "enabled": bool(enabled),
+            "created_at": (
+                str(ledger[existing_index].get("created_at", "")).strip()
+                if existing_index >= 0
+                else now
+            )
+            or now,
+            "updated_at": now,
+        }
+        if normalized_id and existing_index < 0:
+            raise ValueError("指定的记忆不存在。")
+        if existing_index >= 0:
+            ledger[existing_index] = entry
+        else:
+            ledger.append(entry)
+        if sum(1 for item in ledger if bool(item.get("enabled", True))) > 20:
+            raise ValueError("同时启用的可控记忆最多为 20 条，请先停用一条。")
+        session["memory_ledger"] = ledger[-100:]
+        session["updated_at"] = now
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
+    @with_session_lock
+    def delete_controlled_memory(
+        self, run_id: str, session_id: str, *, memory_id: str
+    ) -> dict[str, Any]:
+        session = self._read_json(self._session_file(run_id, session_id))
+        normalized_id = str(memory_id or "").strip()
+        ledger = [
+            dict(item or {})
+            for item in list(session.get("memory_ledger", []) or [])
+            if isinstance(item, dict)
+        ]
+        filtered = [
+            item
+            for item in ledger
+            if str(item.get("memory_id", "")).strip() != normalized_id
+        ]
+        if len(filtered) == len(ledger):
+            raise ValueError("指定的记忆不存在。")
+        session["memory_ledger"] = filtered
+        session["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
 
     @with_session_lock
     def prepare_turn(
@@ -534,6 +1328,36 @@ class DialogueService:
         payload["updated_at"] = _utc_now()
         return payload
 
+    def build_director_payload(
+        self,
+        run_manifest: dict[str, Any],
+        *,
+        session_id: str,
+        goal: str,
+        action: str = "advance",
+        option_count: int = 3,
+    ) -> dict[str, Any]:
+        normalized_goal = _text_utils.trim_summary_text(str(goal or "").strip(), 240)
+        if not normalized_goal:
+            raise ValueError("请先填写导演目标。")
+        normalized_action = str(action or "advance").strip().lower()
+        if normalized_action not in {"advance", "slow_emotion", "conflict", "viewpoint"}:
+            raise ValueError("不支持的导演操作。")
+        payload = self.build_suggestion_payload(
+            run_manifest,
+            session_id=session_id,
+        )
+        session = self._read_json(
+            self._session_file(str(run_manifest.get("run_id", "")).strip(), session_id)
+        )
+        payload["kind"] = "zaomeng_dialogue_director_options"
+        payload["director_goal"] = normalized_goal
+        payload["director_action"] = normalized_action
+        payload["option_count"] = max(2, min(int(option_count or 3), 4))
+        payload["latest_exchange"] = self._build_latest_exchange(session)
+        payload["updated_at"] = _utc_now()
+        return payload
+
     def _build_latest_exchange(self, session: dict[str, Any]) -> dict[str, Any]:
         transcript = [
             item
@@ -616,6 +1440,48 @@ class DialogueService:
             )
         if not clean_responses:
             raise ValueError("No valid responses provided.")
+        pending_payload_path = Path(str(pending.get("payload_path", "")).strip())
+        pending_payload = (
+            self._read_json(pending_payload_path)
+            if pending_payload_path.exists() and pending_payload_path.is_file()
+            else {
+                "turn_id": str(pending.get("turn_id", "")).strip(),
+                "mode": str(pending.get("mode", "")).strip(),
+                "input": {
+                    "participants": list(pending.get("participants", []) or []),
+                    "active_participants": list(
+                        pending.get("active_participants", []) or []
+                    ),
+                    "controlled_character": str(
+                        session.get("controlled_character", "")
+                    ).strip(),
+                },
+            }
+        )
+        context_usage = self._build_context_usage(pending_payload)
+        consistency_report = _consistency.evaluate_turn_consistency(
+            pending_payload,
+            clean_responses,
+            checked_at=_utc_now(),
+        )
+        current_consistency_monitor = dict(
+            session.get("consistency_monitor", {}) or {}
+        )
+        session["consistency_monitor"] = _consistency.update_monitor_state(
+            current_consistency_monitor,
+            consistency_report,
+        )
+        session["consistency_monitor"]["knowledge_ledger"] = (
+            _consistency.update_knowledge_ledger(
+                list(
+                    current_consistency_monitor.get("knowledge_ledger", [])
+                    or []
+                ),
+                pending_payload,
+                clean_responses,
+                recorded_at=_utc_now(),
+            )
+        )
         transcript_message = str(
             pending.get("transcript_message", pending.get("user_message", ""))
         ).strip()
@@ -682,6 +1548,7 @@ class DialogueService:
         if remembered_responses:
             session["history"][-len(remembered_responses) :] = remembered_responses
         session["pending_turn"] = {}
+        session["latest_context_usage"] = context_usage
         completed_at = _utc_now()
         session["updated_at"] = completed_at
         session["status"] = "ready"
@@ -704,6 +1571,9 @@ class DialogueService:
             "session_id": session_id,
             "turn_id": pending.get("turn_id", ""),
             "responses": clean_responses,
+            "consistency_report": consistency_report,
+            "context_usage": context_usage,
+            "checkpoint": self._build_turn_checkpoint(session),
             "updated_at": completed_at,
         }
         if generation_cache is not None:
@@ -713,6 +1583,55 @@ class DialogueService:
         self._write_json(result_path, result_payload)
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
+
+    def _build_turn_checkpoint(self, session: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "history": [dict(item or {}) for item in list(session.get("history", []) or [])],
+            "scene_card": dict(session.get("scene_card", {}) or {}),
+            "scene_card_id": str(session.get("scene_card_id", "")).strip(),
+            "scene_history": [
+                dict(item or {}) for item in list(session.get("scene_history", []) or [])
+            ],
+            "scene_progress": self._session_scene_progress(session),
+            "character_snapshots": self._session_character_snapshots(session),
+            "relation_delta": self._session_relation_delta(session),
+            "relation_matrix": self._session_relation_matrix(session),
+            "event_signals": self._session_event_signals(session),
+            "memory_summary_state": self._session_memory_summary_state(session),
+            "consistency_monitor": dict(session.get("consistency_monitor", {}) or {}),
+            "relation_locks": dict(session.get("relation_locks", {}) or {}),
+            "memory_ledger": [
+                dict(item or {})
+                for item in list(session.get("memory_ledger", []) or [])
+                if isinstance(item, dict)
+            ],
+            "inherited_event_timeline": [
+                dict(item or {})
+                for item in list(session.get("inherited_event_timeline", []) or [])
+            ],
+            "inherited_relation_timeline": [
+                dict(item or {})
+                for item in list(session.get("inherited_relation_timeline", []) or [])
+            ],
+        }
+
+    def _refresh_latest_turn_checkpoint(
+        self, run_id: str, session_id: str, session: dict[str, Any]
+    ) -> None:
+        records = self._completed_turn_records(run_id, session_id)
+        if not records:
+            return
+        latest = records[-1]
+        turn_id = str(latest.get("turn_id", "")).strip()
+        if not turn_id:
+            return
+        result_path = self._session_dir(run_id, session_id) / "turns" / f"{turn_id}.result.json"
+        if not result_path.exists():
+            return
+        result = dict(latest.get("result", {}) or {})
+        result["checkpoint"] = self._build_turn_checkpoint(session)
+        result["checkpoint_refreshed_at"] = _utc_now()
+        self._write_json(result_path, result)
 
     def _build_turn_payload(
         self,
@@ -821,12 +1740,33 @@ class DialogueService:
             "progression_rule": self._scene_progress_rule(scene_progress),
             "response_count_rule": response_count_rule,
         }
+        speaker_activity = _speaker_balance.build_speaker_activity(
+            participants,
+            self._completed_turn_records(
+                str(run_manifest.get("run_id", "")).strip(),
+                str(session.get("session_id", "")).strip(),
+            ),
+        )
+        speaker_plan = _speaker_balance.build_speaker_plan(
+            activity=speaker_activity,
+            active_participants=active_participants,
+            message=message,
+            mode=mode,
+            input_speaker=speaker,
+            controlled_character=controlled_character_name,
+            message_kind=normalized_message_kind,
+            response_limit=response_limit_hint,
+        )
+        instructions["group_chat_rule"] = str(speaker_plan.get("rule", "")).strip()
         responder_hints = self._responder_hints(
             mode,
             active_participants,
             speaker,
             normalized_message_kind,
             controlled_character_name,
+        )
+        responder_hints = _speaker_balance.apply_plan_to_hints(
+            responder_hints, speaker_plan
         )
 
         return {
@@ -851,6 +1791,13 @@ class DialogueService:
             "history": latest_history,
             "scene_card": scene_card,
             "memory_context": memory_context,
+            "knowledge_context": list(
+                dict(session.get("consistency_monitor", {}) or {}).get(
+                    "knowledge_ledger", []
+                )
+                or []
+            ),
+            "checkpoint_before": self._build_turn_checkpoint(session),
             "scene_progress": scene_progress,
             "persona_contexts": persona_contexts,
             "relation_context": {
@@ -859,6 +1806,8 @@ class DialogueService:
             },
             "instructions": instructions,
             "responder_hints": responder_hints,
+            "speaker_activity": speaker_activity,
+            "speaker_plan": speaker_plan,
             "host_action": {
                 "expected_output": [{"speaker": "CharacterName", "message": "..."}],
                 "response_limit_hint": response_limit_hint,
@@ -1242,7 +2191,94 @@ class DialogueService:
             session_summary=session_summary,
             scene_progress=dict(context.get("scene_progress", {}) or {}),
         )
+        controlled_memories = [
+            dict(item or {})
+            for item in list(session.get("memory_ledger", []) or [])
+            if isinstance(item, dict)
+            and bool(item.get("enabled", True))
+            and str(item.get("text", "")).strip()
+        ]
+        controlled_memories.sort(
+            key=lambda item: (
+                0 if bool(item.get("pinned", False)) else 1,
+                str(item.get("updated_at", "")),
+            )
+        )
+        context["controlled_memories"] = [
+            {
+                "memory_id": str(item.get("memory_id", "")).strip(),
+                "text": _text_utils.trim_summary_text(
+                    str(item.get("text", "")).strip(), 500
+                ),
+                "category": str(item.get("category", "story")).strip() or "story",
+                "pinned": bool(item.get("pinned", False)),
+            }
+            for item in controlled_memories[:20]
+        ]
         return context
+
+    @staticmethod
+    def _build_context_usage(payload: dict[str, Any]) -> dict[str, Any]:
+        memory_context = dict(payload.get("memory_context", {}) or {})
+        input_payload = dict(payload.get("input", {}) or {})
+        controlled = list(memory_context.get("controlled_memories", []) or [])
+        retrieved = list(memory_context.get("retrieved_memories", []) or [])
+        knowledge = list(payload.get("knowledge_context", []) or [])
+        relation_delta = dict(memory_context.get("relation_delta", {}) or {})
+        character_snapshots = dict(
+            memory_context.get("character_snapshots", {}) or {}
+        )
+        event_signals = list(memory_context.get("event_signals", []) or [])
+        archived = dict(memory_context.get("archived_summary", {}) or {})
+        session_summary = dict(memory_context.get("session_summary", {}) or {})
+        sources = [
+            {
+                "kind": "short_term",
+                "label": "近期对话",
+                "count": min(len(list(payload.get("history", []) or [])), 6),
+            },
+            {
+                "kind": "long_term",
+                "label": "长期记忆检索",
+                "count": min(len(retrieved), 2),
+                "items": [str(item.get("text", "")).strip() for item in retrieved[:2]],
+            },
+            {
+                "kind": "controlled",
+                "label": "用户管理的记忆",
+                "count": min(len(controlled), 20),
+                "items": [str(item.get("text", "")).strip() for item in controlled[:20]],
+            },
+            {
+                "kind": "story",
+                "label": "剧情与场景状态",
+                "count": min(len(event_signals), 3)
+                + int(bool(dict(memory_context.get("scene_progress", {}) or {}))),
+            },
+            {
+                "kind": "relationship",
+                "label": "人物与关系状态",
+                "count": len(relation_delta) + len(character_snapshots),
+            },
+            {
+                "kind": "knowledge",
+                "label": "知识边界",
+                "count": len(knowledge),
+            },
+            {
+                "kind": "summary",
+                "label": "会话摘要",
+                "count": int(bool(session_summary)) + int(bool(archived)),
+            },
+        ]
+        return {
+            "turn_id": str(payload.get("turn_id", "")).strip(),
+            "speaker": str(input_payload.get("speaker", "")).strip(),
+            "sources": [
+                item for item in sources if int(item.get("count", 0) or 0) > 0
+            ],
+            "used_at": _utc_now(),
+        }
 
     def _search_turn_memory_hits(
         self,
@@ -1294,13 +2330,467 @@ class DialogueService:
         session["last_entry_preview"] = self._build_last_entry_preview(session)
         session["session_card"] = self._build_session_card(session)
         session["scene_history"] = self._serialize_scene_history(session)
+        session["event_timeline"] = self._serialize_event_timeline(run_id, session)
+        session["branch_meta"] = dict(session.get("branch_meta", {}) or {})
+        locked_event_ids = {
+            str(item).strip()
+            for item in list(session["branch_meta"].get("locked_event_ids", []) or [])
+            if str(item).strip()
+        }
+        for event in session["event_timeline"]:
+            event["is_mainline_anchor"] = (
+                str(event.get("turn_id", "")).strip() in locked_event_ids
+            )
+        session["branch_graph"] = self._build_branch_graph(run_id, session)
+        session["relation_timeline"] = self._serialize_relation_timeline(run_id, session)
+        session["relation_locks"] = dict(session.get("relation_locks", {}) or {})
+        session["memory_ledger"] = [
+            dict(item or {})
+            for item in list(session.get("memory_ledger", []) or [])
+            if isinstance(item, dict)
+        ]
+        session["latest_context_usage"] = dict(
+            session.get("latest_context_usage", {}) or {}
+        )
+        session["speaker_activity"] = _speaker_balance.build_speaker_activity(
+            list(session.get("participants", []) or []),
+            self._completed_turn_records(
+                run_id, str(session.get("session_id", "")).strip()
+            ),
+        )
+        current_progress = self._session_scene_progress(session)
+        active_for_plan = [
+            str(item).strip()
+            for item in list(current_progress.get("present_participants", []) or [])
+            if str(item).strip()
+        ] or list(session.get("participants", []) or [])
+        mode = str(session.get("mode", "observe")).strip() or "observe"
+        input_speaker = (
+            str(session.get("controlled_character", "")).strip()
+            if mode == "act"
+            else str(dict(session.get("self_insert", {}) or {}).get("display_name", "")).strip()
+            if mode == "insert"
+            else "User"
+        )
+        session["speaker_balance"] = _speaker_balance.build_speaker_plan(
+            activity=session["speaker_activity"],
+            active_participants=active_for_plan,
+            message="",
+            mode=mode,
+            input_speaker=input_speaker,
+            controlled_character=str(session.get("controlled_character", "")).strip(),
+            message_kind="dialogue",
+            response_limit=min(3, max(1, len(active_for_plan))),
+        )
         session["branch_origin"] = dict(session.get("branch_origin", {}) or {})
         session["pending_turn_summary"] = self._build_pending_turn_summary(session)
         session["session_memory_summary"] = self._build_session_memory_summary(
             run_id, session, transcript
         )
+        session["chapter_outline"] = _chapter_outline.build_chapter_outline(
+            session["scene_history"],
+            session["event_timeline"],
+            session_summary=session["session_memory_summary"],
+        )
+        session["character_arcs"] = self._serialize_character_arcs(run_id, session)
         session["runtime_state_overview"] = self._build_runtime_state_overview(session)
+        monitor = dict(session.get("consistency_monitor", {}) or {})
+        monitor_history = list(monitor.get("history", []) or [])
+        if monitor_history:
+            monitor["metrics"] = _consistency.build_monitor_metrics(monitor_history)
+            session["consistency_monitor"] = monitor
         return session
+
+    def _completed_turn_records(
+        self, run_id: str, session_id: str
+    ) -> list[dict[str, Any]]:
+        turn_dir = self._session_dir(run_id, session_id) / "turns"
+        records: list[dict[str, Any]] = []
+        if not turn_dir.exists():
+            return records
+        for result_path in turn_dir.glob("*.result.json"):
+            result = self._read_json(result_path)
+            turn_id = str(result.get("turn_id", "")).strip()
+            if not turn_id:
+                continue
+            payload_path = turn_dir / f"{turn_id}.payload.json"
+            payload = self._read_json(payload_path) if payload_path.exists() else {}
+            records.append(
+                {
+                    "turn_id": turn_id,
+                    "payload": payload,
+                    "result": result,
+                    "checkpoint": dict(result.get("checkpoint", {}) or {}),
+                    "updated_at": str(result.get("updated_at", "")).strip(),
+                }
+            )
+        records.sort(key=lambda item: (item.get("updated_at", ""), item.get("turn_id", "")))
+        return records
+
+    @staticmethod
+    def _event_identity(item: dict[str, Any]) -> tuple[str, str, str, str]:
+        return tuple(
+            str(item.get(key, "")).strip()
+            for key in ("kind", "actor", "target", "cue")
+        )
+
+    def _turn_events(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        payload = dict(record.get("payload", {}) or {})
+        result = dict(record.get("result", {}) or {})
+        checkpoint_before = dict(payload.get("checkpoint_before", {}) or {})
+        before_items = list(
+            dict(checkpoint_before.get("event_signals", {}) or {}).get("recent", [])
+            or []
+        ) or list(
+            dict(payload.get("memory_context", {}) or {}).get("event_signals", [])
+            or []
+        )
+        before = {
+            self._event_identity(dict(item or {}))
+            for item in before_items
+            if isinstance(item, dict)
+        }
+        checkpoint = dict(result.get("checkpoint", {}) or {})
+        recent = list(
+            dict(checkpoint.get("event_signals", {}) or {}).get("recent", []) or []
+        )
+        return [
+            dict(item or {})
+            for item in recent
+            if isinstance(item, dict) and self._event_identity(dict(item or {})) not in before
+        ][-6:]
+
+    def _serialize_event_timeline(
+        self, run_id: str, session: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        session_id = str(session.get("session_id", "")).strip()
+        items: list[dict[str, Any]] = []
+        for raw_item in list(session.get("inherited_event_timeline", []) or []):
+            if not isinstance(raw_item, dict):
+                continue
+            inherited = dict(raw_item)
+            inherited["inherited"] = True
+            inherited["can_branch"] = bool(
+                str(inherited.get("source_session_id", "")).strip()
+                and str(inherited.get("turn_id", "")).strip()
+            )
+            items.append(inherited)
+        turn_offset = len(items)
+        for index, record in enumerate(self._completed_turn_records(run_id, session_id)):
+            payload = dict(record.get("payload", {}) or {})
+            result = dict(record.get("result", {}) or {})
+            input_payload = dict(payload.get("input", {}) or {})
+            responses = [
+                dict(item or {})
+                for item in list(result.get("responses", []) or [])
+                if isinstance(item, dict)
+            ]
+            events = self._turn_events(record)
+            cue = next(
+                (str(item.get("cue", "")).strip() for item in events if str(item.get("cue", "")).strip()),
+                "",
+            )
+            user_message = str(input_payload.get("message", "")).strip()
+            title = cue or user_message or f"第 {turn_offset + index + 1} 轮剧情推进"
+            speakers = [str(input_payload.get("speaker", "")).strip()]
+            speakers.extend(str(item.get("speaker", "")).strip() for item in responses)
+            speakers.extend(str(item.get("actor", "")).strip() for item in events)
+            speakers.extend(str(item.get("target", "")).strip() for item in events)
+            scene_progress = dict(
+                dict(result.get("checkpoint", {}) or {}).get("scene_progress", {})
+                or payload.get("scene_progress", {})
+                or {}
+            )
+            report = dict(result.get("consistency_report", {}) or {})
+            items.append(
+                {
+                    "turn_id": str(record.get("turn_id", "")).strip(),
+                    "turn_number": turn_offset + index + 1,
+                    "source_session_id": session_id,
+                    "inherited": False,
+                    "title": _text_utils.trim_summary_text(title, 100),
+                    "user_message": _text_utils.trim_summary_text(user_message, 120),
+                    "responses": [
+                        {
+                            "speaker": str(item.get("speaker", "")).strip(),
+                            "message": _text_utils.trim_summary_text(
+                                str(item.get("message", "")).strip(), 140
+                            ),
+                        }
+                        for item in responses
+                    ],
+                    "events": events,
+                    "participants": list(dict.fromkeys(name for name in speakers if name)),
+                    "event_types": list(
+                        dict.fromkeys(
+                            str(item.get("kind", "")).strip()
+                            for item in events
+                            if str(item.get("kind", "")).strip()
+                        )
+                    ) or ["dialogue"],
+                    "location": next(
+                        (
+                            str(item.get("location_hint", "")).strip()
+                            for item in events
+                            if str(item.get("location_hint", "")).strip()
+                        ),
+                        str(scene_progress.get("location", "")).strip(),
+                    ),
+                    "time_hint": next(
+                        (
+                            str(item.get("time_hint", "")).strip()
+                            for item in events
+                            if str(item.get("time_hint", "")).strip()
+                        ),
+                        str(scene_progress.get("time_hint", "")).strip(),
+                    ),
+                    "consistency_status": str(report.get("status", "pass")).strip() or "pass",
+                    "updated_at": str(record.get("updated_at", "")).strip(),
+                    "can_branch": True,
+                }
+            )
+        return items
+
+    def _serialize_relation_timeline(
+        self, run_id: str, session: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        participants = [
+            str(item).strip()
+            for item in list(session.get("participants", []) or [])
+            if str(item).strip()
+        ]
+        base_matrix = self._session_relation_matrix(session)
+        current_delta = self._session_relation_delta(session)
+        locks = dict(session.get("relation_locks", {}) or {})
+        inherited_map = {
+            str(item.get("pair_key", "")).strip(): dict(item or {})
+            for item in list(session.get("inherited_relation_timeline", []) or [])
+            if isinstance(item, dict) and str(item.get("pair_key", "")).strip()
+        }
+        pair_keys = set(base_matrix) | set(current_delta) | set(inherited_map)
+        for index, left in enumerate(participants):
+            for right in participants[index + 1 :]:
+                key = self._pair_key(left, right)
+                if key:
+                    pair_keys.add(key)
+        records = self._completed_turn_records(
+            run_id, str(session.get("session_id", "")).strip()
+        )
+        metric_fields = ("trust", "affection", "hostility", "ambiguity")
+        timelines: list[dict[str, Any]] = []
+        baseline_matrix = _relation_state.merged_relation_matrix(
+            base_matrix, {}, participants
+        )
+        for key in sorted(pair_keys):
+            baseline = dict(
+                baseline_matrix.get(
+                    key, _relation_state.default_relation_entry()
+                )
+                or {}
+            )
+            inherited = dict(inherited_map.get(key, {}) or {})
+            points = [
+                dict(item or {})
+                for item in list(inherited.get("points", []) or [])
+                if isinstance(item, dict)
+            ]
+            if points:
+                previous = {
+                    field: int(
+                        dict(points[-1].get("values", {}) or {}).get(
+                            field, baseline.get(field, 0)
+                        )
+                        or 0
+                    )
+                    for field in metric_fields
+                }
+            else:
+                previous = {
+                    field: int(baseline.get(field, 0) or 0)
+                    for field in metric_fields
+                }
+                points = [
+                    {
+                        "turn_number": 0,
+                        "turn_id": "",
+                        "values": dict(previous),
+                        "changes": {field: 0 for field in metric_fields},
+                        "reason": "人物包中的初始关系",
+                        "evidence": "",
+                        "updated_at": str(session.get("created_at", "")).strip(),
+                    }
+                ]
+            next_turn_number = max(
+                [int(item.get("turn_number", 0) or 0) for item in points]
+                or [0]
+            ) + 1
+            for turn_number, record in enumerate(records, start=next_turn_number):
+                checkpoint = dict(record.get("checkpoint", {}) or {})
+                if not checkpoint:
+                    continue
+                matrix = dict(checkpoint.get("relation_matrix", {}) or base_matrix)
+                delta = dict(checkpoint.get("relation_delta", {}) or {})
+                merged = _relation_state.merged_relation_matrix(
+                    matrix, delta, participants
+                )
+                relation = dict(merged.get(key, baseline) or {})
+                values = {
+                    field: int(relation.get(field, previous[field]) or 0)
+                    for field in metric_fields
+                }
+                changes = {
+                    field: values[field] - previous[field]
+                    for field in metric_fields
+                }
+                delta_entry = dict(delta.get(key, {}) or {})
+                evidence_lines = list(delta_entry.get("evidence_lines", []) or [])
+                reason = str(
+                    delta_entry.get("relation_change", "")
+                    or delta_entry.get("last_event", "")
+                ).strip()
+                points.append(
+                    {
+                        "turn_number": turn_number,
+                        "turn_id": str(record.get("turn_id", "")).strip(),
+                        "values": values,
+                        "changes": changes,
+                        "reason": _text_utils.trim_summary_text(
+                            reason
+                            or (
+                                "关系保持稳定"
+                                if not any(changes.values())
+                                else "本轮互动推动了关系变化"
+                            ),
+                            140,
+                        ),
+                        "evidence": _text_utils.trim_summary_text(
+                            str(evidence_lines[-1]).strip()
+                            if evidence_lines
+                            else "",
+                            160,
+                        ),
+                        "updated_at": str(record.get("updated_at", "")).strip(),
+                    }
+                )
+                previous = values
+            if len(points) == 1 and not inherited and key in current_delta:
+                merged = _relation_state.merged_relation_matrix(
+                    base_matrix, current_delta, participants
+                )
+                relation = dict(merged.get(key, baseline) or {})
+                values = {
+                    field: int(relation.get(field, previous[field]) or 0)
+                    for field in metric_fields
+                }
+                delta_entry = dict(current_delta.get(key, {}) or {})
+                points.append(
+                    {
+                        "turn_number": 1,
+                        "turn_id": "",
+                        "values": values,
+                        "changes": {
+                            field: values[field] - previous[field]
+                            for field in metric_fields
+                        },
+                        "reason": _text_utils.trim_summary_text(
+                            str(delta_entry.get("last_event", "")).strip()
+                            or "当前会话中的累计变化",
+                            140,
+                        ),
+                        "evidence": "",
+                        "updated_at": str(session.get("updated_at", "")).strip(),
+                    }
+                )
+            names = key.split("_", 1)
+            timelines.append(
+                {
+                    "pair_key": key,
+                    "characters": names,
+                    "label": " · ".join(names),
+                    "locked": bool(locks.get(key, False)),
+                    "current": dict(points[-1].get("values", {}) or {}),
+                    "points": points,
+                }
+            )
+        return timelines
+
+    def _build_legacy_turn_checkpoint(
+        self,
+        source: dict[str, Any],
+        records: list[dict[str, Any]],
+        target_index: int,
+    ) -> dict[str, Any]:
+        target_result = dict(records[target_index].get("result", {}) or {})
+        responses = list(target_result.get("responses", []) or [])
+        history = [dict(item or {}) for item in list(source.get("history", []) or [])]
+        end_index = -1
+        if responses:
+            tail = dict(responses[-1] or {})
+            for index, item in enumerate(history):
+                if (
+                    str(item.get("speaker", "")).strip() == str(tail.get("speaker", "")).strip()
+                    and str(item.get("message", "")).strip() == str(tail.get("message", "")).strip()
+                    and (
+                        not str(tail.get("ts", "")).strip()
+                        or str(item.get("ts", "")).strip() == str(tail.get("ts", "")).strip()
+                    )
+                ):
+                    end_index = index
+        if end_index >= 0:
+            history = history[: end_index + 1]
+        state_source = source
+        if target_index + 1 < len(records):
+            next_payload = dict(records[target_index + 1].get("payload", {}) or {})
+            next_checkpoint = dict(next_payload.get("checkpoint_before", {}) or {})
+            if next_checkpoint:
+                next_checkpoint["history"] = history
+                return next_checkpoint
+            memory_context = dict(next_payload.get("memory_context", {}) or {})
+            input_payload = dict(next_payload.get("input", {}) or {})
+            state_source = {
+                "scene_card": dict(next_payload.get("scene_card", {}) or {}),
+                "scene_progress": dict(next_payload.get("scene_progress", {}) or {}),
+                "character_snapshots": dict(input_payload.get("character_snapshots", {}) or {}),
+                "relation_delta": dict(memory_context.get("relation_delta", {}) or {}),
+                "event_signals": {"recent": list(memory_context.get("event_signals", []) or [])},
+                "memory_summary_state": dict(memory_context.get("archived_summary", {}) or {}),
+                "consistency_monitor": {
+                    "knowledge_ledger": list(next_payload.get("knowledge_context", []) or [])
+                },
+            }
+        return {
+            "history": history,
+            "scene_card": dict(state_source.get("scene_card", {}) or source.get("scene_card", {}) or {}),
+            "scene_card_id": str(state_source.get("scene_card_id", source.get("scene_card_id", ""))).strip(),
+            "scene_history": list(source.get("scene_history", []) or []),
+            "scene_progress": (
+                dict(state_source.get("scene_progress", {}) or {})
+                if state_source is not source
+                else self._session_scene_progress(source)
+            ),
+            "character_snapshots": (
+                dict(state_source.get("character_snapshots", {}) or {})
+                if state_source is not source
+                else self._session_character_snapshots(source)
+            ),
+            "relation_delta": (
+                dict(state_source.get("relation_delta", {}) or {})
+                if state_source is not source
+                else self._session_relation_delta(source)
+            ),
+            "relation_matrix": self._session_relation_matrix(source),
+            "event_signals": (
+                dict(state_source.get("event_signals", {}) or {})
+                if state_source is not source
+                else self._session_event_signals(source)
+            ),
+            "memory_summary_state": (
+                dict(state_source.get("memory_summary_state", {}) or {})
+                if state_source is not source
+                else self._session_memory_summary_state(source)
+            ),
+            "consistency_monitor": dict(state_source.get("consistency_monitor", {}) or {}),
+        }
 
     _serialize_transcript = staticmethod(_session_views.serialize_transcript)
 

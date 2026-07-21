@@ -58,6 +58,36 @@ class ChatCacheStatsTests(unittest.TestCase):
         self.assertEqual(summary["status"], "unsupported")
         self.assertIsNone(summary["hit_rate"])
 
+    def test_summarizes_tokens_latency_cost_and_parse_retries(self) -> None:
+        summary = summarize_completion_results(
+            [
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "elapsed_time": 1.25,
+                    "cost": 0.001,
+                },
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "prompt_tokens": 60,
+                    "completion_tokens": 15,
+                    "elapsed_time": 0.75,
+                    "cost": 0.002,
+                },
+            ]
+        )
+
+        self.assertEqual(summary["prompt_tokens"], 160)
+        self.assertEqual(summary["completion_tokens"], 35)
+        self.assertEqual(summary["total_tokens"], 195)
+        self.assertEqual(summary["elapsed_seconds"], 2.0)
+        self.assertEqual(summary["cost_usd"], 0.003)
+        self.assertEqual(summary["attempt_count"], 2)
+        self.assertEqual(summary["retry_count"], 1)
+
     def test_records_latest_turn_and_lifetime_session_totals(self) -> None:
         session = {"generation_cache_stats": empty_generation_cache_stats()}
         record_generation_cache_observation(
@@ -95,6 +125,49 @@ class ChatCacheStatsTests(unittest.TestCase):
         self.assertEqual(stats["session"]["total_turns"], 2)
         self.assertEqual(stats["session"]["observed_turns"], 1)
         self.assertEqual(stats["session"]["hit_rate"], 0.6)
+
+    def test_records_session_generation_totals_and_model_breakdown(self) -> None:
+        session = {"generation_cache_stats": empty_generation_cache_stats()}
+        record_generation_cache_observation(
+            session,
+            {
+                "provider": "openai",
+                "model": "gpt-a",
+                "prompt_tokens": 100,
+                "completion_tokens": 25,
+                "total_tokens": 125,
+                "elapsed_seconds": 1.5,
+                "cost_usd": 0.004,
+                "attempt_count": 2,
+                "retry_count": 1,
+            },
+            turn_id="turn-1",
+            updated_at="2026-07-20T10:00:00Z",
+        )
+        record_generation_cache_observation(
+            session,
+            {
+                "provider": "openai",
+                "model": "gpt-b",
+                "prompt_tokens": 80,
+                "completion_tokens": 20,
+                "total_tokens": 100,
+                "elapsed_seconds": 0.5,
+                "cost_usd": 0.001,
+                "attempt_count": 1,
+            },
+            turn_id="turn-2",
+            updated_at="2026-07-20T10:01:00Z",
+        )
+
+        totals = session["generation_cache_stats"]["session"]
+        self.assertEqual(totals["total_tokens"], 225)
+        self.assertEqual(totals["elapsed_seconds"], 2.0)
+        self.assertEqual(totals["average_elapsed_seconds"], 1.0)
+        self.assertEqual(totals["cost_usd"], 0.005)
+        self.assertEqual(totals["attempt_count"], 3)
+        self.assertEqual(totals["retry_count"], 1)
+        self.assertEqual(totals["models"], {"gpt-a": 2, "gpt-b": 1})
 
     def test_dialogue_prompt_keeps_persona_in_stable_cache_prefix(self) -> None:
         payload = {

@@ -122,6 +122,130 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertNotIn(".dialogue-cache-stat {", styles)
         self.assertIn("#dialogue-association-toggle-row", styles)
 
+    def test_dialogue_renders_consistency_quality_history(self):
+        content = read_js("dialogue.js")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn("function appendConsistencyQualityPanel(card, monitor) {", content)
+        self.assertIn("function consistencyMetricCategoryLabel(category) {", content)
+        self.assertIn('strip.className = "consistency-quality-strip";', content)
+        self.assertIn('details.className = "consistency-quality-details";', content)
+        self.assertIn(".consistency-score-trend {", styles)
+        self.assertIn(".consistency-category-counts {", styles)
+        self.assertIn("async function deepReviewLatestConsistencyTurn(button) {", content)
+        self.assertIn('reviewButton.dataset.consistencyReview = "true";', content)
+        self.assertIn(".consistency-review-button {", styles)
+
+    def test_dialogue_event_timeline_and_turn_branch_are_wired(self):
+        dialogue = read_js("dialogue.js")
+        api = read_js("webui-api.js")
+        shell = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "main-shell.html").read_text(encoding="utf-8")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-event-timeline"', shell)
+        self.assertIn("function renderDialogueEventTimeline(session)", dialogue)
+        self.assertIn("branchDialogueSessionFromTurn", dialogue)
+        self.assertIn("/branch-turn", api)
+        self.assertIn(".dialogue-event-timeline {", styles)
+
+    def test_dialogue_relation_evolution_and_lock_are_wired(self):
+        dialogue = read_js("dialogue.js")
+        api = read_js("webui-api.js")
+        shell = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "main-shell.html").read_text(encoding="utf-8")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-relation-evolution"', shell)
+        self.assertIn("function renderDialogueRelationEvolution(session)", dialogue)
+        self.assertIn("function updateDialogueRelationLock(timeline, button)", dialogue)
+        self.assertIn("createRelationChartNode", dialogue)
+        self.assertIn("/relation-lock", api)
+        self.assertIn(".dialogue-relation-evolution {", styles)
+
+    def test_dialogue_controlled_memory_and_context_usage_are_wired(self):
+        dialogue = read_js("dialogue.js")
+        api = read_js("webui-api.js")
+        shell = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "main-shell.html").read_text(encoding="utf-8")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-memory-control"', shell)
+        self.assertIn('id="dialogue-context-usage-list"', shell)
+        self.assertIn("function renderDialogueControlledMemories(session)", dialogue)
+        self.assertIn("function renderDialogueContextUsage(session)", dialogue)
+        self.assertIn("createDialogueMemory", api)
+        self.assertIn("updateDialogueMemory", api)
+        self.assertIn("deleteDialogueMemory", api)
+        self.assertIn(".dialogue-memory-control {", styles)
+
+    def test_dialogue_speaker_balance_panel_is_wired(self):
+        dialogue = read_js("dialogue.js")
+        shell = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "main-shell.html").read_text(encoding="utf-8")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-speaker-balance"', shell)
+        self.assertIn("function renderDialogueSpeakerBalance(session)", dialogue)
+        self.assertIn("dialogueSpeakerStatusLabel", dialogue)
+        self.assertIn(".dialogue-speaker-balance {", styles)
+
+    def test_dialogue_director_panel_and_apply_flow_are_wired(self):
+        dialogue = read_js("dialogue.js")
+        api = read_js("webui-api.js")
+        shell = (REPO_ROOT / "src" / "web" / "static" / "fragments" / "main-shell.html").read_text(encoding="utf-8")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-director-panel"', shell)
+        self.assertIn('data-director-action="slow_emotion"', shell)
+        self.assertIn("function renderDialogueDirectorPanel(session)", dialogue)
+        self.assertIn("function applyDialogueDirectorOption(option, button)", dialogue)
+        self.assertIn("generateDialogueDirectorOptions", api)
+        self.assertIn("suggestDialogueTurn", api)
+        self.assertIn(".dialogue-director-panel {", styles)
+
+    def test_dialogue_branch_manager_and_mainline_event_lock_are_wired(self):
+        dialogue = read_js("dialogue.js")
+        api = read_js("webui-api.js")
+        shell = read_fragment("main-shell.html")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-branch-manager"', shell)
+        self.assertIn("function renderDialogueBranchManager(session)", dialogue)
+        self.assertIn("function toggleDialogueMainlineEvent(turnId, locked, button)", dialogue)
+        self.assertIn("updateDialogueBranchMeta", api)
+        self.assertIn("/branch-meta", api)
+        self.assertIn(".dialogue-branch-manager {", styles)
+
+    def test_dialogue_chapter_outline_and_scene_reopen_are_wired(self):
+        dialogue = read_js("dialogue.js")
+        shell = read_fragment("main-shell.html")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-chapter-outline"', shell)
+        self.assertIn("function renderDialogueChapterOutline(session)", dialogue)
+        self.assertIn("function focusDialogueChapterEvent(turnId)", dialogue)
+        self.assertIn("window.branchDialogueSessionFromScene", dialogue)
+        self.assertIn(".dialogue-chapter-outline {", styles)
+
+    def test_dialogue_character_growth_timeline_is_wired(self):
+        dialogue = read_js("dialogue.js")
+        shell = read_fragment("main-shell.html")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-character-growth"', shell)
+        self.assertIn("function renderDialogueCharacterGrowth(session)", dialogue)
+        self.assertIn("selectedDialogueCharacterArc", dialogue)
+        self.assertIn("focusDialogueChapterEvent(turnId)", dialogue)
+        self.assertIn(".dialogue-character-growth {", styles)
+
+    def test_dialogue_generation_metrics_panel_is_wired(self):
+        dialogue = read_js("dialogue.js")
+        shell = read_fragment("main-shell.html")
+        styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "dialogue.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="dialogue-generation-metrics"', shell)
+        self.assertIn("function renderDialogueGenerationMetrics(session)", dialogue)
+        self.assertIn("formatDialogueGenerationDuration", dialogue)
+        self.assertIn("formatDialogueGenerationCost", dialogue)
+        self.assertIn(".dialogue-generation-metrics {", styles)
+
     def test_main_publishes_optimistic_dialogue_and_suggest_retry_state(self):
         content = read_js("main.js")
         self.assertIn('UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-optimistic", {', content)
