@@ -300,7 +300,11 @@ class DialogueService:
         return changes
 
     def _build_branch_graph(
-        self, run_id: str, current: dict[str, Any]
+        self,
+        run_id: str,
+        current: dict[str, Any],
+        *,
+        current_records: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         current_id = str(current.get("session_id", "")).strip()
         family = self._branch_family_payloads(run_id, current_id)
@@ -321,7 +325,15 @@ class DialogueService:
                         origin.get("event_title", "") or origin.get("scene_title", "")
                     ).strip(),
                     "updated_at": str(item.get("updated_at", "")).strip(),
-                    "event_count": len(self._serialize_event_timeline(run_id, item)),
+                    "event_count": len(
+                        self._serialize_event_timeline(
+                            run_id,
+                            item,
+                            records=(
+                                current_records if item_id == current_id else None
+                            ),
+                        )
+                    ),
                     "relation_changes": self._branch_relation_changes(current, item),
                 }
             )
@@ -335,12 +347,20 @@ class DialogueService:
         return {"current_session_id": current_id, "nodes": nodes}
 
     def _serialize_character_arcs(
-        self, run_id: str, session: dict[str, Any]
+        self,
+        run_id: str,
+        session: dict[str, Any],
+        *,
+        records: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         return _character_arc.build_character_arcs(
             list(session.get("participants", []) or []),
-            self._completed_turn_records(
-                run_id, str(session.get("session_id", "")).strip()
+            (
+                records
+                if records is not None
+                else self._completed_turn_records(
+                    run_id, str(session.get("session_id", "")).strip()
+                )
             ),
             inherited_arcs=list(session.get("inherited_character_arcs", []) or []),
         )
@@ -1381,6 +1401,7 @@ class DialogueService:
         message_kind: str = "dialogue",
         speaker_override: str = "",
         transcript_message: str | None = None,
+        _serialize_result: bool = True,
     ) -> dict[str, Any]:
         run_id = str(run_manifest.get("run_id", "")).strip()
         session = self._read_json(self._session_file(run_id, session_id))
@@ -1434,6 +1455,10 @@ class DialogueService:
         session["updated_at"] = _utc_now()
         session["status"] = "waiting_for_host_reply"
         self._write_json(self._session_file(run_id, session_id), session)
+        if not _serialize_result:
+            return {
+                "pending_turn_summary": self._build_pending_turn_summary(session)
+            }
         return self._serialize_session(run_id, session)
 
     def _stale_pending_turn_reason(
@@ -2690,6 +2715,8 @@ class DialogueService:
         self, run_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         session = dict(payload)
+        session_id = str(session.get("session_id", "")).strip()
+        turn_records = self._completed_turn_records(run_id, session_id)
         session["file_urls"] = self._build_file_urls(run_id, session)
         session["mode_display"] = self._mode_display(
             str(session.get("mode", "")).strip()
@@ -2706,7 +2733,9 @@ class DialogueService:
         session["last_entry_preview"] = self._build_last_entry_preview(session)
         session["session_card"] = self._build_session_card(session)
         session["scene_history"] = self._serialize_scene_history(session)
-        session["event_timeline"] = self._serialize_event_timeline(run_id, session)
+        session["event_timeline"] = self._serialize_event_timeline(
+            run_id, session, records=turn_records
+        )
         session["branch_meta"] = dict(session.get("branch_meta", {}) or {})
         locked_event_ids = {
             str(item).strip()
@@ -2717,8 +2746,12 @@ class DialogueService:
             event["is_mainline_anchor"] = (
                 str(event.get("turn_id", "")).strip() in locked_event_ids
             )
-        session["branch_graph"] = self._build_branch_graph(run_id, session)
-        session["relation_timeline"] = self._serialize_relation_timeline(run_id, session)
+        session["branch_graph"] = self._build_branch_graph(
+            run_id, session, current_records=turn_records
+        )
+        session["relation_timeline"] = self._serialize_relation_timeline(
+            run_id, session, records=turn_records
+        )
         session["relation_locks"] = dict(session.get("relation_locks", {}) or {})
         session["memory_ledger"] = [
             dict(item or {})
@@ -2730,9 +2763,7 @@ class DialogueService:
         )
         session["speaker_activity"] = _speaker_balance.build_speaker_activity(
             list(session.get("participants", []) or []),
-            self._completed_turn_records(
-                run_id, str(session.get("session_id", "")).strip()
-            ),
+            turn_records,
         )
         current_progress = self._session_scene_progress(session)
         active_for_plan = [
@@ -2768,7 +2799,9 @@ class DialogueService:
             session["event_timeline"],
             session_summary=session["session_memory_summary"],
         )
-        session["character_arcs"] = self._serialize_character_arcs(run_id, session)
+        session["character_arcs"] = self._serialize_character_arcs(
+            run_id, session, records=turn_records
+        )
         session["runtime_state_overview"] = self._build_runtime_state_overview(session)
         monitor = dict(session.get("consistency_monitor", {}) or {})
         monitor_history = list(monitor.get("history", []) or [])
@@ -2842,7 +2875,11 @@ class DialogueService:
         ][-6:]
 
     def _serialize_event_timeline(
-        self, run_id: str, session: dict[str, Any]
+        self,
+        run_id: str,
+        session: dict[str, Any],
+        *,
+        records: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         session_id = str(session.get("session_id", "")).strip()
         items: list[dict[str, Any]] = []
@@ -2857,7 +2894,12 @@ class DialogueService:
             )
             items.append(inherited)
         turn_offset = len(items)
-        for index, record in enumerate(self._completed_turn_records(run_id, session_id)):
+        completed_records = (
+            records
+            if records is not None
+            else self._completed_turn_records(run_id, session_id)
+        )
+        for index, record in enumerate(completed_records):
             payload = dict(record.get("payload", {}) or {})
             result = dict(record.get("result", {}) or {})
             input_payload = dict(payload.get("input", {}) or {})
@@ -2933,7 +2975,11 @@ class DialogueService:
         return items
 
     def _serialize_relation_timeline(
-        self, run_id: str, session: dict[str, Any]
+        self,
+        run_id: str,
+        session: dict[str, Any],
+        *,
+        records: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         participants = [
             str(item).strip()
@@ -2954,8 +3000,12 @@ class DialogueService:
                 key = self._pair_key(left, right)
                 if key:
                     pair_keys.add(key)
-        records = self._completed_turn_records(
-            run_id, str(session.get("session_id", "")).strip()
+        records = (
+            records
+            if records is not None
+            else self._completed_turn_records(
+                run_id, str(session.get("session_id", "")).strip()
+            )
         )
         metric_fields = ("trust", "affection", "hostility", "ambiguity")
         timelines: list[dict[str, Any]] = []
@@ -3124,8 +3174,26 @@ class DialogueService:
             next_payload = dict(records[target_index + 1].get("payload", {}) or {})
             next_checkpoint = dict(next_payload.get("checkpoint_before", {}) or {})
             if next_checkpoint:
-                next_checkpoint["history"] = history
+                checkpoint_history = [
+                    dict(item or {})
+                    for item in list(next_checkpoint.get("history", []) or [])
+                    if isinstance(item, dict)
+                ]
+                if checkpoint_history:
+                    next_checkpoint["history"] = checkpoint_history
+                else:
+                    next_checkpoint["history"] = history
                 return next_checkpoint
+            next_history = [
+                dict(item or {})
+                for item in list(next_payload.get("history", []) or [])
+                if isinstance(item, dict)
+            ]
+            if next_history:
+                # Legacy results predate per-turn checkpoints.  The next turn's
+                # prompt history is the closest persisted post-turn snapshot and
+                # remains valid even after the live session history is compressed.
+                history = next_history
             memory_context = dict(next_payload.get("memory_context", {}) or {})
             input_payload = dict(next_payload.get("input", {}) or {})
             state_source = {

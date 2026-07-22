@@ -108,6 +108,104 @@ class DialogueBranchManagementTests(unittest.TestCase):
                     locked_event_ids=["turn-missing"],
                 )
 
+    def test_legacy_turn_branch_uses_next_prompt_history_after_live_compression(self):
+        try:
+            from src.web.chat.service import DialogueService
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"optional runtime dependency unavailable: {exc}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            persona_dir = root / "personas" / "A"
+            persona_dir.mkdir(parents=True, exist_ok=True)
+            profile_path = persona_dir / "PROFILE.md"
+            profile_path.write_text(
+                "# PROFILE\n- name: A\n- core_identity: test character\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "run_id": "run-legacy-branch",
+                "novel_id": "novel-1",
+                "artifact_index": {
+                    "characters": [
+                        {
+                            "name": "A",
+                            "profile_file": str(profile_path),
+                            "persona_dir": str(persona_dir),
+                        }
+                    ]
+                },
+            }
+            dialogue = DialogueService(root / "runs")
+            created = dialogue.create_session(
+                manifest,
+                mode="observe",
+                participants=["A"],
+            )
+            session_id = created["session_id"]
+
+            dialogue.prepare_turn(
+                manifest,
+                session_id=session_id,
+                message="First choice.",
+            )
+            first = dialogue.ingest_turn_responses(
+                "run-legacy-branch",
+                session_id=session_id,
+                responses=[{"speaker": "A", "message": "First reply."}],
+            )
+            first_turn_id = first["event_timeline"][0]["turn_id"]
+
+            dialogue.prepare_turn(
+                manifest,
+                session_id=session_id,
+                message="Second choice.",
+            )
+            second = dialogue.ingest_turn_responses(
+                "run-legacy-branch",
+                session_id=session_id,
+                responses=[{"speaker": "A", "message": "Second reply."}],
+            )
+            second_turn_id = second["event_timeline"][-1]["turn_id"]
+
+            first_result_path = dialogue._turn_file(
+                "run-legacy-branch", session_id, first_turn_id, "result"
+            )
+            first_result = dialogue._read_json(first_result_path)
+            first_result.pop("checkpoint", None)
+            dialogue._write_json(first_result_path, first_result)
+
+            second_payload_path = dialogue._turn_file(
+                "run-legacy-branch", session_id, second_turn_id, "payload"
+            )
+            second_payload = dialogue._read_json(second_payload_path)
+            second_payload.pop("checkpoint_before", None)
+            dialogue._write_json(second_payload_path, second_payload)
+
+            source_path = dialogue._session_file("run-legacy-branch", session_id)
+            source = dialogue._read_json(source_path)
+            source["history"] = list(source.get("history", []) or [])[-2:]
+            dialogue._write_json(source_path, source)
+            self.assertNotIn(
+                "First reply.",
+                [item["message"] for item in source["history"]],
+            )
+
+            branch = dialogue.branch_session_from_turn(
+                manifest,
+                session_id,
+                turn_id=first_turn_id,
+            )
+
+            self.assertEqual(
+                [item["message"] for item in branch["history"]],
+                ["First choice.", "First reply."],
+            )
+            self.assertNotIn(
+                "Second reply.",
+                [item["message"] for item in branch["history"]],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

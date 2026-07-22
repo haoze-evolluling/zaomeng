@@ -2255,7 +2255,7 @@ const DIALOGUE_AUTO_PLOT_PUSH_MESSAGE = "请基于当前场景、未完成线索
 const DIALOGUE_PLACEHOLDER_WAITING = "他们正在接住你的话。";
 const DIALOGUE_SUGGESTION_WAITING = "正在生成中...";
 const DIALOGUE_SUGGESTION_BUSY_LABEL = "…";
-const DIALOGUE_RETRY_FEEDBACK_DELAY_MS = 8000;
+const DIALOGUE_RETRY_FEEDBACK_DELAY_MS = 4000;
 const DIALOGUE_SEND_RETRY_MESSAGE = "这次响应稍慢，正在等待声源返回...";
 const DIALOGUE_SUGGEST_RETRY_MESSAGE = "这次生成稍慢，正在等待结果返回...";
 let currentDialogueSceneRecommendationCacheKey = "";
@@ -3041,6 +3041,15 @@ function coerceMessageOverride(value) {
   return String(value || "");
 }
 
+function dismissMobileDialogueKeyboard() {
+  const mobileInput = window.matchMedia
+    ? window.matchMedia("(max-width: 768px), (pointer: coarse)").matches
+    : window.innerWidth <= 768;
+  if (mobileInput) {
+    el("dialogue-message")?.blur();
+  }
+}
+
 function clearDialogueAssociations() {
   dialogueAssociationRequestId += 1;
   dialogueAssociationState = {
@@ -3194,6 +3203,7 @@ async function requestDialogueAssociations(session = currentDialogueSession) {
           .map((item) => ({
             label: String(item?.label || "").trim(),
             direction: String(item?.direction || "").trim(),
+            suggestion: String(item?.suggestion || item?.draft || "").trim(),
           }))
           .filter((item) => item.label && item.direction)
           .slice(0, 4)
@@ -3239,7 +3249,7 @@ function maybeRequestDialogueAssociations(session = currentDialogueSession) {
   const requestKey = dialogueAssociationRequestKey(session);
   if (!requestKey || requestKey === dialogueAssociationLastRequestKey) return;
   dialogueAssociationLastRequestKey = requestKey;
-  requestDialogueAssociations(session).catch((error) => {
+  return requestDialogueAssociations(session).catch((error) => {
     console.warn("dialogue associations failed", error);
   });
 }
@@ -3247,6 +3257,7 @@ function maybeRequestDialogueAssociations(session = currentDialogueSession) {
 async function handleDialogueAssociationChoice(option) {
   const label = String(option?.label || "").trim();
   const direction = String(option?.direction || "").trim();
+  const prefetchedSuggestion = String(option?.suggestion || option?.draft || "").trim();
   const sessionId = String(currentDialogueSessionId || "").trim();
   if (!label || !direction || !currentRunId || !sessionId || dialogueAssociationState.status === "generating") {
     return;
@@ -3261,20 +3272,23 @@ async function handleDialogueAssociationChoice(option) {
   renderDialogueAssociations();
   setSuggestingState(true);
   try {
-    const payload = await apiJson(
-      `/api/web/runs/${currentRunId}/dialogue/sessions/${sessionId}/suggest`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seed_text: "", direction }),
-      },
-      "按这个方向生成文案失败。"
-    );
+    let suggestion = prefetchedSuggestion;
+    if (!suggestion) {
+      const payload = await apiJson(
+        `/api/web/runs/${currentRunId}/dialogue/sessions/${sessionId}/suggest`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seed_text: "", direction }),
+        },
+        "按这个方向生成文案失败。"
+      );
+      suggestion = String(payload?.suggestion || "").trim();
+    }
     if (sessionId !== currentDialogueSessionId) {
       setSuggestingState(false);
       return;
     }
-    const suggestion = String(payload?.suggestion || "").trim();
     if (!suggestion) throw new Error("模型没有返回可发送的文案。");
     setSuggestingState(false);
     clearDialogueAssociations();
@@ -3313,13 +3327,14 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
   const requestedMessage = coerceMessageOverride(messageOverride).trim() || trimmedValue("dialogue-message", "");
   const automaticPlotPush = messageKind === "plot" && !requestedMessage;
   const message = requestedMessage || (automaticPlotPush ? DIALOGUE_AUTO_PLOT_PUSH_MESSAGE : "");
-  const silentOptimistic = Boolean(options?.silentOptimistic) || messageKind === "plot";
+  const silentOptimistic = Boolean(options?.silentOptimistic);
   const suppressTranscriptMessage = Boolean(options?.suppressTranscriptMessage) || messageKind === "plot";
   if (!message) {
     setComposerWaiting(false, "先写一句你想让他们听见的话。");
     return false;
   }
 
+  dismissMobileDialogueKeyboard();
   clearDialogueAssociations();
 
   const sessionSnapshot = currentDialogueSession
@@ -3330,7 +3345,7 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
         })
       )
     : null;
-  setComposerDraft("", { publish: true, focus: true });
+  setComposerDraft("", { publish: true });
   const retryFeedbackTimer = window.setTimeout(() => {
     setComposerWaiting(true, DIALOGUE_SEND_RETRY_MESSAGE);
   }, DIALOGUE_RETRY_FEEDBACK_DELAY_MS);
@@ -3408,7 +3423,7 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
       }
     }
     if (silentOptimistic && requestedMessage) {
-      setComposerDraft(requestedMessage, { publish: true, focus: true });
+      setComposerDraft(requestedMessage, { publish: true });
     }
     setComposerWaiting(false, "");
     return false;

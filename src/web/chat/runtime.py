@@ -7,6 +7,10 @@ from src.web.chat.cache_stats import summarize_completion_results
 from src.web.path_safety import resolve_storage_child, validate_storage_id
 
 
+DIALOGUE_ASSOCIATION_MAX_TOKENS = 768
+DIALOGUE_SUGGESTION_MAX_TOKENS = 512
+
+
 def load_pending_turn_payload(
     *,
     runs_root: Path,
@@ -102,11 +106,10 @@ def generate_dialogue_suggestion_for_run(
     if not hasattr(parts.llm, "chat_completion"):
         raise ValueError("Configured model does not support chat generation.")
 
-    configured_max_tokens = int(config.get("llm.max_tokens", 0) or 0)
     return generate_dialogue_suggestion(
         payload=payload,
         temperature=float(config.get("llm.temperature", 0.45) or 0.45),
-        max_tokens=max(configured_max_tokens, 512),
+        max_tokens=DIALOGUE_SUGGESTION_MAX_TOKENS,
         chat_completion=lambda messages, temperature, max_tokens: parts.llm.chat_completion(
             messages,
             temperature=temperature,
@@ -141,7 +144,13 @@ def generate_dialogue_associations_for_run(
     return generate_dialogue_associations(
         payload=payload,
         temperature=float(config.get("llm.temperature", 0.5) or 0.5),
-        max_tokens=max(configured_max_tokens, 512),
+        max_tokens=max(
+            512,
+            min(
+                configured_max_tokens or DIALOGUE_ASSOCIATION_MAX_TOKENS,
+                DIALOGUE_ASSOCIATION_MAX_TOKENS,
+            ),
+        ),
         chat_completion=lambda messages, temperature, max_tokens: parts.llm.chat_completion(
             messages,
             temperature=temperature,

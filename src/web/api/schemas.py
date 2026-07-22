@@ -112,7 +112,14 @@ class SessionRef(BaseModel):
 
 
 class DeleteSessionsRequest(BaseModel):
-    items: list[SessionRef] = Field(..., min_length=1)
+    items: list[SessionRef] = Field(...)
+
+    @field_validator("items")
+    @classmethod
+    def _validate_items(cls, value: list[SessionRef]) -> list[SessionRef]:
+        if not value:
+            raise ValueError("items must not be empty")
+        return value
 
 
 class UpdateRelationDetailRequest(BaseModel):

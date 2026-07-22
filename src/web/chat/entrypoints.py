@@ -210,6 +210,7 @@ def reply_dialogue_turn_payload(
         message_kind=message_kind,
         speaker_override=speaker_override,
         transcript_message="" if suppress_transcript_message or is_plot_push else None,
+        _serialize_result=False,
     )
     expected_turn_id = _prepared_turn_id(prepared)
     try:

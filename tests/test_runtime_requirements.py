@@ -47,6 +47,9 @@ class RuntimeRequirementsTests(unittest.TestCase):
 
         self.assertIn("from pydantic import field_validator", schemas)
         self.assertIn("from pydantic import validator as field_validator", schemas)
+        self.assertNotIn(
+            "items: list[SessionRef] = Field(..., min_length=1)", schemas
+        )
 
     def test_root_readmes_describe_full_and_runtime_dependency_sets(self):
         repo_root = Path(__file__).resolve().parents[1]

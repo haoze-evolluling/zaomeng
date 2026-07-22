@@ -278,6 +278,9 @@ class PendingTurnRecoveryTests(unittest.TestCase):
             expected_turn_id="turn-new",
             reason="reply_failed",
         )
+        self.assertFalse(
+            dialogue.prepare_turn.call_args.kwargs["_serialize_result"]
+        )
 
     def test_create_session_opening_failure_aborts_the_prepared_turn(self):
         dialogue = Mock()

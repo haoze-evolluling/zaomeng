@@ -9,6 +9,9 @@ from src.core.exceptions import LLMRequestError
 from src.skill_support.scene_recommendations import build_scene_opening_message
 
 
+DIALOGUE_SUGGESTION_COMPACT_PROMPT_CHAR_THRESHOLD = 18_000
+
+
 def _strip_code_fence(text: str) -> str:
     text = str(text or "").strip()
     if text.startswith("```"):
@@ -347,6 +350,79 @@ def _compact_user_persona(persona: dict[str, Any]) -> dict[str, Any]:
     return compact_persona
 
 
+def _compact_association_history(history: list[Any]) -> list[dict[str, str]]:
+    compact: list[dict[str, str]] = []
+    for raw_item in history[-4:]:
+        if not isinstance(raw_item, dict):
+            continue
+        item = {
+            key: value
+            for key, value in {
+                "speaker": str(raw_item.get("speaker", "")).strip(),
+                "role": str(raw_item.get("role", "")).strip(),
+                "message": _trim_text(
+                    str(raw_item.get("message", "")).strip(), 160
+                ),
+            }.items()
+            if value
+        }
+        if item.get("message"):
+            compact.append(item)
+    return compact
+
+
+def _compact_association_scene_card(scene_card: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: _trim_text(str(scene_card.get(key, "")).strip(), 140)
+        for key in (
+            "title",
+            "location",
+            "time",
+            "time_hint",
+            "atmosphere",
+            "opening_situation",
+            "public_goal",
+            "hidden_tension",
+            "scene_drive",
+            "expected_rhythm",
+        )
+        if _has_meaningful_value(scene_card.get(key))
+    }
+
+
+def _compact_association_scene_progress(
+    scene_progress: dict[str, Any],
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in (
+        "present_participants",
+        "offstage_participants",
+        "time_hint",
+        "location",
+        "atmosphere_summary",
+        "progression_note",
+        "beat_maturity",
+        "world_tension_summary",
+        "should_offer_scene_shift",
+        "scene_shift_reason",
+        "next_hint",
+    ):
+        value = scene_progress.get(key)
+        if not _has_meaningful_value(value):
+            continue
+        if isinstance(value, list):
+            compact[key] = [
+                _trim_text(str(item).strip(), 80)
+                for item in value[:6]
+                if str(item).strip()
+            ]
+        elif isinstance(value, str):
+            compact[key] = _trim_text(value, 160)
+        else:
+            compact[key] = value
+    return compact
+
+
 def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
     session_summary = dict(memory_context.get("session_summary", {}) or {})
     archived_summary = dict(memory_context.get("archived_summary", {}) or {})
@@ -446,6 +522,47 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
                 for item in controlled_memories[:20]
                 if isinstance(item, dict) and str(item.get("text", "")).strip()
             ],
+        }.items()
+        if _has_meaningful_value(value)
+    }
+
+
+def _compact_association_memory_context(
+    memory_context: dict[str, Any],
+) -> dict[str, Any]:
+    compact = _compact_memory_context(memory_context)
+    session_summary = dict(compact.get("session_summary", {}) or {})
+    summary_keys = (
+        "current_location",
+        "current_companions",
+        "pending_commitments",
+        "current_goal",
+        "unresolved_threads",
+        "recent_conflicts",
+        "major_beats",
+    )
+    controlled_memories = [
+        {
+            "text": _trim_text(str(item.get("text", "")).strip(), 180),
+            "category": str(item.get("category", "story")).strip() or "story",
+            "pinned": bool(item.get("pinned", False)),
+        }
+        for item in list(compact.get("controlled_memories", []) or [])[:4]
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    ]
+    return {
+        key: value
+        for key, value in {
+            "session_summary": {
+                key: session_summary[key]
+                for key in summary_keys
+                if _has_meaningful_value(session_summary.get(key))
+            },
+            "archived_summary": dict(compact.get("archived_summary", {}) or {}),
+            "retrieved_memories": list(
+                compact.get("retrieved_memories", []) or []
+            )[:2],
+            "controlled_memories": controlled_memories,
         }.items()
         if _has_meaningful_value(value)
     }
@@ -569,7 +686,11 @@ def build_dialogue_llm_messages(
     }
     stable_system_parts.append(
         "STATIC_CHARACTER_CONTEXT\n"
-        + json.dumps(stable_context, ensure_ascii=False, indent=2)
+        + json.dumps(
+            stable_context,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     )
 
     turn_system_parts = [
@@ -640,7 +761,11 @@ def build_dialogue_llm_messages(
         ),
         "retry_on_empty": retry_on_empty,
     }
-    user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
+    user_prompt = json.dumps(
+        user_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return [
         {
             "role": "system",
@@ -757,7 +882,11 @@ def build_dialogue_suggestion_llm_messages(
         ],
         "retry_on_empty": retry_on_empty,
     }
-    user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
+    user_prompt = json.dumps(
+        user_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -774,6 +903,27 @@ def build_dialogue_association_llm_messages(
     instructions = dict(payload.get("instructions", {}) or {})
     host_action = dict(payload.get("host_action", {}) or {})
     option_count = max(2, min(int(instructions.get("option_count", 3) or 3), 4))
+    response_shape = deepcopy(host_action.get("expected_output", {}) or {})
+    option_shapes = [
+        dict(item)
+        for item in list(response_shape.get("options", []) or [])
+        if isinstance(item, dict)
+    ]
+    if not option_shapes:
+        option_shapes = [
+            {
+                "label": "4-10字的推进选项",
+                "direction": "供下一步代写使用的明确剧情方向",
+                "anchor_speaker": "该方向所依据的最新回复角色",
+                "anchor_quote": "从该角色最新回复中原样摘录的4-20字",
+            }
+        ]
+    for option_shape in option_shapes:
+        option_shape.setdefault(
+            "suggestion",
+            "一至三句符合当前用户角色口吻、可直接发送的成品文案",
+        )
+    response_shape["options"] = option_shapes
     system_parts = [
         "你是互动小说的剧情分支编辑，负责在角色回复后给用户少量、明确的推进方向。",
         "本接口只会在一轮角色回复完成后调用，此刻就是向用户提供推进方向的时机；不要返回空列表，也不要拒绝推荐。",
@@ -787,7 +937,8 @@ def build_dialogue_association_llm_messages(
         "只使用上下文中已经成立的事实，不剧透，不凭空引入核心秘密，不把成品台词直接放进 label。",
         "选项要符合当前 mode：act/insert 是用户所扮演角色能采取的表达或行动，observe 是观察者可施加的场景推进。",
         "每个选项都要提供 anchor_speaker 和 anchor_quote。anchor_quote 必须从该角色在 latest_exchange.replies 里的原话连续摘录 4-20 个字，不得改写；这是事实校验字段，不会显示给用户。",
-        '只返回合法 JSON，不要 markdown，不要解释。格式为：{"options":[{"label":"追问旧事","direction":"让当前用户角色顺着对方刚提到的旧事继续追问","anchor_speaker":"林黛玉","anchor_quote":"当年的事你还记得"}]}。',
+        "每个选项还要尽量提供 suggestion：把该 direction 写成符合当前 mode 与 user_persona、可直接发送的一至三句话；不得复述 label，不得解释写作意图。",
+        '只返回合法 JSON，不要 markdown，不要解释。格式为：{"options":[{"label":"追问旧事","direction":"让当前用户角色顺着对方刚提到的旧事继续追问","suggestion":"你刚才说当年的事并未全忘，究竟还记得多少？","anchor_speaker":"林黛玉","anchor_quote":"当年的事你还记得"}]}。',
         str(instructions.get("generation_goal", "")).strip(),
         str(host_action.get("output_rule", "")).strip(),
     ]
@@ -796,6 +947,11 @@ def build_dialogue_association_llm_messages(
             "上一次输出无法解析或不完整。重来：严格返回 JSON，并给足指定数量且不重复的选项。"
         )
     system_prompt = "\n".join(part for part in system_parts if part)
+    scene_progress = dict(
+        payload.get("scene_progress", {})
+        or memory_context.get("scene_progress", {})
+        or {}
+    )
     user_payload = {
         "mode": str(payload.get("mode", "")).strip() or "observe",
         "speaker": str(input_block.get("speaker", "")).strip(),
@@ -805,13 +961,16 @@ def build_dialogue_association_llm_messages(
             for item in input_block.get("participants", [])
             if str(item).strip()
         ],
-        "recent_completed_history": list(payload.get("history", []) or [])[-8:],
-        "scene_card": dict(payload.get("scene_card", {}) or {}),
-        "scene_progress": dict(
-            payload.get("scene_progress", {})
-            or memory_context.get("scene_progress", {})
-            or {}
+        "recent_completed_history": _compact_association_history(
+            list(payload.get("history", []) or [])
         ),
+        "scene_card": _compact_association_scene_card(
+            dict(payload.get("scene_card", {}) or {})
+        ),
+        "scene_progress": _compact_association_scene_progress(
+            scene_progress
+        ),
+        "memory_anchors": _compact_association_memory_context(memory_context),
         "user_persona": _compact_user_persona(
             dict(payload.get("user_persona", {}) or {})
         ),
@@ -819,10 +978,13 @@ def build_dialogue_association_llm_messages(
             _compact_persona_context(item)
             for item in list(payload.get("persona_contexts", []) or [])[:4]
         ],
-        "relation_excerpt": str(
-            payload.get("relation_context", {}).get("relations_excerpt", "")
-        ).strip(),
-        "response_shape": host_action.get("expected_output", {}),
+        "relation_excerpt": _trim_text(
+            str(
+                payload.get("relation_context", {}).get("relations_excerpt", "")
+            ).strip(),
+            800,
+        ),
+        "response_shape": response_shape,
         "option_count": option_count,
         "retry_on_empty": retry_on_empty,
     }
@@ -830,7 +992,11 @@ def build_dialogue_association_llm_messages(
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": json.dumps(user_payload, ensure_ascii=False, indent=2),
+            "content": json.dumps(
+                user_payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
         },
     ]
 
@@ -1409,12 +1575,16 @@ def parse_dialogue_associations(content: str) -> list[dict[str, str]]:
     options: list[dict[str, str]] = []
     seen: set[str] = set()
     for item in raw_options:
+        suggestion = ""
         if isinstance(item, str):
             label = " ".join(item.split()).strip()
             direction = label
         elif isinstance(item, dict):
             label = " ".join(str(item.get("label", "")).split()).strip()
             direction = " ".join(str(item.get("direction", "")).split()).strip()
+            suggestion = " ".join(
+                str(item.get("suggestion", "") or item.get("draft", "")).split()
+            ).strip()
             anchor_speaker = " ".join(
                 str(item.get("anchor_speaker", "")).split()
             ).strip()
@@ -1430,6 +1600,11 @@ def parse_dialogue_associations(content: str) -> list[dict[str, str]]:
             continue
         seen.add(key)
         option = {"label": label, "direction": direction}
+        if suggestion:
+            try:
+                option["suggestion"] = parse_dialogue_suggestion(suggestion)[:600]
+            except ValueError:
+                pass
         if isinstance(item, dict) and anchor_speaker and anchor_quote:
             option["anchor_speaker"] = anchor_speaker[:24].strip()
             option["anchor_quote"] = anchor_quote[:80].strip()
@@ -1555,10 +1730,20 @@ def generate_dialogue_suggestion(
     build_messages: Callable[[dict[str, Any], bool], list[dict[str, str]]],
     parse_suggestion: Callable[[str], str],
 ) -> str:
-    initial_max_tokens = max(256, int(max_tokens or 0))
+    initial_max_tokens = min(512, max(256, int(max_tokens or 0)))
+    initial_payload = payload
+    initial_messages = build_messages(payload, False)
+    prompt_chars = sum(
+        len(str(message.get("content", "")))
+        for message in initial_messages
+        if isinstance(message, dict)
+    )
+    if prompt_chars > DIALOGUE_SUGGESTION_COMPACT_PROMPT_CHAR_THRESHOLD:
+        initial_payload = compact_dialogue_suggestion_payload(payload)
+        initial_messages = build_messages(initial_payload, False)
     attempts = (
-        (build_messages(payload, False), initial_max_tokens),
-        (build_messages(payload, True), max(initial_max_tokens * 2, 768)),
+        (initial_messages, initial_max_tokens),
+        (build_messages(initial_payload, True), 1024),
     )
     last_error: Exception | None = None
     for index, (llm_messages, attempt_max_tokens) in enumerate(attempts):

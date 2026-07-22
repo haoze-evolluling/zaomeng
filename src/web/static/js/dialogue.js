@@ -1012,7 +1012,7 @@ function renderDialogueMemory(session) {
   setText("dialogue-memory-mode", `模式：${snapshot.modeLabel}`, "");
   const branchNote = el("dialogue-memory-branch");
   const branchOrigin = session?.branch_origin || {};
-  const branchTitle = String(branchOrigin?.scene_title || "").trim();
+  const branchTitle = String(branchOrigin?.scene_title || branchOrigin?.event_title || "").trim();
   if (branchNote) {
     branchNote.textContent = branchTitle ? `分支自：${branchTitle}` : "";
     branchNote.classList.toggle("hidden", !branchTitle);
@@ -1867,6 +1867,7 @@ function renderDialogueEventTimeline(session) {
 async function branchDialogueSessionFromTurn(turnId, button) {
   const normalizedTurnId = String(turnId || "").trim();
   if (!currentRunId || !currentDialogueSessionId || !normalizedTurnId) return;
+  const sourceSessionId = currentDialogueSessionId;
   const originalText = button?.textContent || "回到这里重新演绎";
   if (button) {
     button.disabled = true;
@@ -1874,12 +1875,22 @@ async function branchDialogueSessionFromTurn(turnId, button) {
   }
   try {
     const api = await requireWebUiApi();
-    const payload = await api.branchDialogueSessionFromTurn(currentRunId, currentDialogueSessionId, normalizedTurnId);
+    const payload = await api.branchDialogueSessionFromTurn(currentRunId, sourceSessionId, normalizedTurnId);
+    const branchSessionId = String(payload?.session_id || "").trim();
+    if (!branchSessionId || branchSessionId === sourceSessionId) {
+      throw new Error("新分支没有创建成功，请稍后重试。");
+    }
+    closeDialogueMemoryModal();
     await renderDialogueSession(payload);
-    setDialogueSessionSuccess("已从所选剧情节点创建新分支。", "原会话保持不变，可以继续重新演绎。 ");
+    const branchTitle = String(payload?.branch_origin?.event_title || "").trim();
+    setDialogueSessionSuccess(
+      branchTitle ? `已从“${branchTitle}”切换到新分支。` : "已切换到新分支。",
+      "原会话保持不变；接下来发送的内容只会推进当前新分支。"
+    );
   } catch (error) {
     setDialogueSessionFailure(error.message || "剧情节点回溯失败。", "原会话没有变化，可以稍后重试。", false);
-    if (button) {
+  } finally {
+    if (button?.isConnected && button.textContent === "正在创建分支...") {
       button.disabled = false;
       button.textContent = originalText;
     }
@@ -2548,6 +2559,7 @@ function renderTranscript(items) {
     const name = document.createElement("span");
     name.className = "speaker-name";
     name.textContent = item.speaker || (role === "user" ? "你" : "角色");
+    name.title = name.textContent;
 
     const bubble = createMessageBubble(role, item.message || "");
     if (role === "user") {
@@ -2665,7 +2677,10 @@ function ensureRunReadyForDialogue(run, options = {}) {
 function buildOptimisticTranscript(session, message, messageKind = "dialogue") {
   const transcript = stripFailedSendTranscript(Array.isArray(session?.transcript) ? session.transcript : []);
   transcript.push(buildOptimisticUserTranscriptEntry(session, message, messageKind));
-  transcript.push({ speaker: "", message: "正在生成回复...", role: "loading" });
+  const loadingMessage = String(messageKind || "").trim() === "plot"
+    ? "正在按这个方向推进剧情..."
+    : "正在生成回复...";
+  transcript.push({ speaker: "", message: loadingMessage, role: "loading" });
   return transcript;
 }
 
@@ -2708,6 +2723,16 @@ async function maybeAutoRecommendNextScene(session) {
   }
 }
 
+function shouldAutoFocusDialogueComposer() {
+  const narrowViewport = window.matchMedia
+    ? window.matchMedia("(max-width: 768px)").matches
+    : window.innerWidth <= 768;
+  const coarsePointer = window.matchMedia
+    ? window.matchMedia("(pointer: coarse)").matches
+    : false;
+  return !narrowViewport && !coarsePointer;
+}
+
 async function renderDialogueSession(session) {
   if (typeof UI_BRIDGE_TOOLS?.syncLegacyUiState === "function") {
     UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-local", {
@@ -2740,7 +2765,10 @@ async function renderDialogueSession(session) {
   }
   renderDialogueMemory(session);
   renderDialogueTranscript(session);
-  await loadRecentSessions();
+  let associationRequest = null;
+  if (typeof window.maybeRequestDialogueAssociations === "function") {
+    associationRequest = window.maybeRequestDialogueAssociations(session);
+  }
   updateWorkflowState();
   if (typeof UI_BRIDGE_TOOLS?.syncLegacyUiState === "function") {
     UI_BRIDGE_TOOLS.syncLegacyUiState("dialogue-session-rendered", {
@@ -2754,11 +2782,18 @@ async function renderDialogueSession(session) {
     });
   }
   scrollTranscriptToBottom();
-  await maybeAutoRecommendNextScene(session);
-  if (typeof window.maybeRequestDialogueAssociations === "function") {
-    window.maybeRequestDialogueAssociations(session);
+  void loadRecentSessions()
+    .then(() => updateWorkflowState())
+    .catch((error) => console.warn("loadRecentSessions failed", error));
+  const sceneRecommendationRequest = associationRequest
+    ? Promise.resolve(associationRequest).then(() => maybeAutoRecommendNextScene(session))
+    : maybeAutoRecommendNextScene(session);
+  void sceneRecommendationRequest.catch((error) => {
+    console.warn("automatic scene recommendation failed", error);
+  });
+  if (shouldAutoFocusDialogueComposer()) {
+    el("dialogue-message")?.focus();
   }
-  el("dialogue-message")?.focus();
 }
 
 function sessionListItemKey(item) {

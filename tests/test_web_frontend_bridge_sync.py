@@ -158,6 +158,23 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
         self.assertIn("branchDialogueSessionFromTurn", dialogue)
         self.assertIn("/branch-turn", api)
         self.assertIn(".dialogue-event-timeline {", styles)
+        branch_handler = dialogue.split(
+            "async function branchDialogueSessionFromTurn(turnId, button) {", 1
+        )[1].split("function createRelationChartNode", 1)[0]
+        self.assertIn("branchSessionId === sourceSessionId", branch_handler)
+        self.assertIn("closeDialogueMemoryModal();", branch_handler)
+        self.assertIn("已从“${branchTitle}”切换到新分支", branch_handler)
+        self.assertIn('button.textContent === "正在创建分支..."', branch_handler)
+        self.assertIn("button.disabled = false;", branch_handler)
+        self.assertIn("controller.abort()", api)
+        self.assertIn("剧情节点回溯请求超时", api)
+        memory_renderer = dialogue.split("function renderDialogueMemory(session) {", 1)[
+            1
+        ].split("function directorActionLabel", 1)[0]
+        self.assertIn(
+            "branchOrigin?.scene_title || branchOrigin?.event_title",
+            memory_renderer,
+        )
 
     def test_dialogue_relation_evolution_and_lock_are_wired(self):
         dialogue = read_js("dialogue.js")
@@ -286,13 +303,37 @@ class WebFrontendBridgeSyncTests(unittest.TestCase):
 
         self.assertIn("const DIALOGUE_AUTO_PLOT_PUSH_MESSAGE =", main_content)
         self.assertIn('const automaticPlotPush = messageKind === "plot" && !requestedMessage;', main_content)
-        self.assertIn('|| messageKind === "plot";', main_content)
+        self.assertIn("const silentOptimistic = Boolean(options?.silentOptimistic);", main_content)
+        self.assertIn('const suppressTranscriptMessage = Boolean(options?.suppressTranscriptMessage) || messageKind === "plot";', main_content)
         self.assertIn("if (silentOptimistic && requestedMessage) {", main_content)
         self.assertIn("留空则由系统主动推进", main_content)
         self.assertIn('normalizeDialogueMessageKind(currentDialogueMessageKind) === "narration"', main_content)
         self.assertIn('sendButton.textContent = isPlotPush ? "推进" : "送出";', main_content)
         self.assertIn('data-kind="plot"', fragment_content)
         self.assertIn(">推进剧情</button>", fragment_content)
+
+    def test_mobile_dialogue_keeps_speaker_labels_and_does_not_refocus_after_send(self):
+        main_content = read_js("main.js")
+        dialogue_content = read_js("dialogue.js")
+        app_styles = (REPO_ROOT / "src" / "web" / "static" / "styles" / "app.css").read_text(encoding="utf-8")
+
+        self.assertIn("function shouldAutoFocusDialogueComposer()", dialogue_content)
+        self.assertIn('window.matchMedia("(pointer: coarse)").matches', dialogue_content)
+        self.assertIn("if (shouldAutoFocusDialogueComposer()) {", dialogue_content)
+        self.assertIn("function dismissMobileDialogueKeyboard()", main_content)
+        self.assertIn('el("dialogue-message")?.blur();', main_content)
+        self.assertIn("dismissMobileDialogueKeyboard();", main_content)
+        self.assertNotIn('setComposerDraft("", { publish: true, focus: true });', main_content)
+        self.assertIn(".speaker-name {\n    display: inline-flex;", app_styles)
+
+    def test_plot_push_renders_an_immediate_progress_state(self):
+        main_content = read_js("main.js")
+        dialogue_content = read_js("dialogue.js")
+
+        self.assertIn("const silentOptimistic = Boolean(options?.silentOptimistic);", main_content)
+        self.assertIn("transcript: window.buildOptimisticTranscript(currentDialogueSession, message, messageKind)", main_content)
+        self.assertIn('String(messageKind || "").trim() === "plot"', dialogue_content)
+        self.assertIn("正在按这个方向推进剧情...", dialogue_content)
 
     def test_composer_at_mentions_only_offer_present_characters(self):
         main_content = read_js("main.js")

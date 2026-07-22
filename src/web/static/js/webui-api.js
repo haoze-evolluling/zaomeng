@@ -217,15 +217,29 @@
   }
 
   async function branchDialogueSessionFromTurn(runId, sessionId, turnId) {
-    return requireApiJson()(
-      `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/branch-turn`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ turn_id: turnId }),
-      },
-      "剧情节点回溯失败。"
-    );
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timeoutId = controller
+      ? window.setTimeout(() => controller.abort(), 15000)
+      : null;
+    try {
+      return await requireApiJson()(
+        `/api/web/runs/${encodeURIComponent(runId)}/dialogue/sessions/${encodeURIComponent(sessionId)}/branch-turn`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ turn_id: turnId }),
+          ...(controller ? { signal: controller.signal } : {}),
+        },
+        "剧情节点回溯失败。"
+      );
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new Error("剧情节点回溯请求超时，请稍后重试。");
+      }
+      throw error;
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    }
   }
 
   async function updateDialogueBranchMeta(runId, sessionId, payload) {
