@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-配置管理模块
-负责加载、验证和管理项目配置
-"""
+"""Load, validate, and manage project configuration."""
 
 import copy
 import logging
 import os
+import warnings
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -20,15 +18,19 @@ _CONFIG_FILE_CACHE: dict[Path, tuple[tuple[int, int], Dict[str, Any]]] = {}
 
 
 def clear_config_cache() -> None:
+    """Clear every cached configuration file."""
+
     _CONFIG_FILE_CACHE.clear()
 
 
 def invalidate_config_cache(config_path: str | Path) -> None:
+    """Remove one configuration file from the load cache."""
+
     _CONFIG_FILE_CACHE.pop(Path(config_path).resolve(), None)
 
 
 class Config:
-    """配置管理类"""
+    """Provide merged defaults and file-backed project configuration."""
 
     SUPPORTED_PROVIDERS = (
         "auto",
@@ -128,25 +130,20 @@ class Config:
     }
     
     def __init__(self, config_path: Optional[str] = None):
-        """
-        初始化配置
-        
-        Args:
-            config_path: 配置文件路径，如为None则自动查找
-        """
+        """Load ``config_path`` or discover a config file when it is omitted."""
         self.config_path = self._find_config(config_path)
         self.project_root = self._resolve_project_root()
         self.config = self._load_config()
         self._ensure_paths()
 
     def _resolve_project_root(self) -> Path:
-        """解析项目根目录，避免输出路径依赖当前工作目录。"""
+        """Resolve a stable project root independent of the working directory."""
         if self.config_path:
             return self.config_path.parent.resolve()
         return Path(__file__).resolve().parents[2]
         
     def _find_config(self, config_path: Optional[str]) -> Optional[Path]:
-        """查找配置文件"""
+        """Find an explicit config path or the first conventional location."""
         if config_path and os.path.exists(config_path):
             return Path(config_path)
         
@@ -165,7 +162,7 @@ class Config:
         return None
     
     def _load_config(self) -> Dict[str, Any]:
-        """加载配置"""
+        """Load user configuration and merge it over a copy of the defaults."""
         if self.config_path:
             try:
                 config = self._load_config_file(self.config_path)
@@ -202,7 +199,7 @@ class Config:
         return copy.deepcopy(loaded)
 
     def _merge_dicts(self, base: Dict, overlay: Dict) -> Dict:
-        """深度合并两个字典"""
+        """Recursively merge ``overlay`` into ``base`` without mutating either."""
         result = base.copy()
         
         for key, value in overlay.items():
@@ -214,7 +211,7 @@ class Config:
         return result
     
     def _validate_config(self, config: Dict[str, Any]):
-        """验证配置"""
+        """Warn when configuration values are unsupported."""
         provider = str(config.get("llm", {}).get("provider", "auto")).strip().lower()
         if provider not in self.SUPPORTED_PROVIDERS:
             logger.warning(
@@ -223,13 +220,13 @@ class Config:
             )
     
     def _ensure_paths(self):
-        """确保所有必需的目录存在"""
+        """Create all configured runtime directories."""
         for path_key in ["characters", "relations", "sessions", "corrections", "logs", "rules"]:
             path = self.get_path(path_key)
             os.makedirs(path, exist_ok=True)
     
     def get(self, key: str, default: Any = None) -> Any:
-        """获取配置值"""
+        """Return a value addressed by a dot-separated key."""
         keys = key.split('.')
         value = self.config
         
@@ -242,7 +239,7 @@ class Config:
         return value
     
     def get_path(self, path_key: str) -> str:
-        """获取路径配置，转换为绝对路径"""
+        """Return a configured path as an absolute path."""
         relative_path = self.get(f"paths.{path_key}")
         if not relative_path:
             raise ValueError(
@@ -258,19 +255,19 @@ class Config:
         return str((self.project_root / relative_path).resolve())
     
     def get_llm_config(self) -> Dict[str, Any]:
-        """获取 LLM 配置"""
+        """Return the LLM configuration section."""
         return self.get("llm", {})
     
     def get_distillation_config(self) -> Dict[str, Any]:
-        """获取蒸馏配置"""
+        """Return the distillation configuration section."""
         return self.get("distillation", {})
     
     def get_cost_config(self) -> Dict[str, Any]:
-        """获取成本控制配置"""
+        """Return the cost-control configuration section."""
         return self.get("cost_control", {})
     
     def save(self, path: Optional[str] = None):
-        """保存配置到文件"""
+        """Persist the current configuration to ``path``."""
         save_path = Path(path) if path else self.config_path
         
         if not save_path:
@@ -285,24 +282,28 @@ class Config:
         logger.info("配置已保存到: %s", save_path)
     
     def update(self, updates: Dict[str, Any]):
-        """更新配置"""
+        """Recursively merge ``updates`` into the current configuration."""
         self.config = self._merge_dicts(self.config, updates)
 
     def reload(self, *, force: bool = False):
-        """重新加载配置，可选强制清理单文件缓存。"""
+        """Reload configuration, optionally invalidating its file cache first."""
         if force and self.config_path:
             invalidate_config_cache(self.config_path)
         self.config = self._load_config()
         self._ensure_paths()
     
-    def get_supported_models(self) -> list:
-        """保留兼容接口，返回支持的 provider 列表"""
+    def get_supported_providers(self) -> list[str]:
+        """Return the supported LLM provider identifiers."""
+
         return list(self.SUPPORTED_PROVIDERS)
-    
-    def set_api_key(self, api_key: str):
-        """兼容旧接口；本地模式不需要 API key"""
-        self.config["llm"]["api_key"] = api_key
-    
-    def set_model(self, model: str):
-        """设置引擎名（兼容旧接口）"""
-        self.config["llm"]["model"] = model
+
+    def get_supported_models(self) -> list[str]:
+        """Return providers via the deprecated, historically misnamed API."""
+
+        warnings.warn(
+            "Config.get_supported_models() returns providers and is deprecated; "
+            "use get_supported_providers() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_supported_providers()

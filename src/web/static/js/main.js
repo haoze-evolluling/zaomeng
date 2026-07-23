@@ -24,49 +24,39 @@ let dialogueAssociationState = {
 
 const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
 
-function setDialogueSessionLoading(message, nextStep = "") {
-  setFlowLoadingStatus("dialogue-session-status", message, nextStep);
+function createFlowStatusActions(statusId, { affectsChatFlow: defaultAffectsChatFlow = false } = {}) {
+  return {
+    loading(message, nextStep = "") {
+      setFlowLoadingStatus(statusId, message, nextStep);
+    },
+    success(message, nextStep = "") {
+      setFlowSuccessStatus(statusId, message, nextStep);
+    },
+    failure(message, nextStep = "", affectsChatFlow = defaultAffectsChatFlow) {
+      setFlowFailureStatus(statusId, message, nextStep, { affectsChatFlow });
+    },
+  };
 }
 
-function setDialogueSessionSuccess(message, nextStep = "") {
-  setFlowSuccessStatus("dialogue-session-status", message, nextStep);
-}
-
-function setDialogueSessionFailure(message, nextStep = "", affectsChatFlow = true) {
-  setFlowFailureStatus("dialogue-session-status", message, nextStep, { affectsChatFlow });
-}
-
-function setOpeningPresetLoading(message, nextStep = "") {
-  setFlowLoadingStatus("opening-preset-status", message, nextStep);
-}
-
-function setOpeningPresetSuccess(message, nextStep = "") {
-  setFlowSuccessStatus("opening-preset-status", message, nextStep);
-}
-
-function setOpeningPresetFailure(message, nextStep = "") {
-  setFlowFailureStatus("opening-preset-status", message, nextStep, { affectsChatFlow: false });
-}
-
-function setPersonaReviewLoading(message, nextStep = "") {
-  setFlowLoadingStatus("persona-review-status", message, nextStep);
-}
-
-function setPersonaReviewSuccess(message, nextStep = "") {
-  setFlowSuccessStatus("persona-review-status", message, nextStep);
-}
-
-function setPersonaReviewFailure(message, nextStep = "") {
-  setFlowFailureStatus("persona-review-status", message, nextStep, { affectsChatFlow: false });
-}
-
-function setRelationDetailsLoading(message, nextStep = "") {
-  setFlowLoadingStatus("relation-details-status", message, nextStep);
-}
-
-function setRelationDetailsFailure(message, nextStep = "") {
-  setFlowFailureStatus("relation-details-status", message, nextStep, { affectsChatFlow: false });
-}
+const {
+  loading: setDialogueSessionLoading,
+  success: setDialogueSessionSuccess,
+  failure: setDialogueSessionFailure,
+} = createFlowStatusActions("dialogue-session-status", { affectsChatFlow: true });
+const {
+  loading: setOpeningPresetLoading,
+  success: setOpeningPresetSuccess,
+  failure: setOpeningPresetFailure,
+} = createFlowStatusActions("opening-preset-status");
+const {
+  loading: setPersonaReviewLoading,
+  success: setPersonaReviewSuccess,
+  failure: setPersonaReviewFailure,
+} = createFlowStatusActions("persona-review-status");
+const {
+  loading: setRelationDetailsLoading,
+  failure: setRelationDetailsFailure,
+} = createFlowStatusActions("relation-details-status");
 
 async function requireWebUiApi(timeoutMs = 4000) {
   const startedAt = Date.now();
@@ -2463,7 +2453,7 @@ function buildComposerUiState() {
     suggestHidden: Boolean(suggestButton?.classList.contains("hidden")),
     suggestDisabled: Boolean(suggestButton?.disabled),
     sendDisabled: Boolean(sendButton?.disabled),
-    quickReplies: mode === "observe" ? buildObserveQuickReplies(currentDialogueSession) : [],
+    quickReplies: [],
     quickHint: nextHint,
     observeAutoMode,
     associationEnabled: dialogueAssociationsEnabled,
@@ -2865,6 +2855,7 @@ function syncDialogueMessageKindVisibility(session = currentDialogueSession) {
   const mode = session?.mode || session?.session_card?.mode || "";
   const hide = mode === "observe";
   syncDialogueMentionButton(session);
+  syncDialogueAssociationToggle();
   if (toggle) {
     toggle.classList.toggle("hidden", hide);
   }
@@ -2888,6 +2879,10 @@ function setObserveAutoUiState() {
   const status = el("observe-auto-status");
   const quickReplyRoot = el("observe-quick-replies");
   const available = mode === "observe" && Boolean(currentDialogueSessionId);
+  if (quickReplyRoot) {
+    quickReplyRoot.innerHTML = "";
+    quickReplyRoot.classList.add("hidden");
+  }
   if (row) {
     row.classList.toggle("hidden", !available);
   }
@@ -2908,9 +2903,6 @@ function setObserveAutoUiState() {
   toggleButton.disabled = false;
   toggleButton.textContent = observeAutoMode ? "停止连续旁观" : "开启连续旁观";
   status.textContent = observeAutoMode ? "开启：自动推进中，点停止即可收住" : "关闭：每轮手动推进";
-  if (quickReplyRoot) {
-    quickReplyRoot.classList.toggle("hidden", observeAutoMode);
-  }
   publishComposerUiState("composer-observe-auto-ui");
 }
 
@@ -2990,23 +2982,11 @@ function renderObserveQuickReplies(session = currentDialogueSession) {
     publishComposerUiState("composer-quick-replies-hidden");
     return;
   }
-
   if (kindToggle) kindToggle.classList.add("hidden");
   root.innerHTML = "";
-  buildObserveQuickReplies(session).forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "quick-reply-chip";
-    button.textContent = item.label;
-    button.setAttribute("data-value", item.value);
-    button.addEventListener("click", () => {
-      applyQuickReply(item.value);
-    });
-    root.appendChild(button);
-  });
-  root.classList.remove("hidden");
+  root.classList.add("hidden");
   setObserveAutoUiState();
-  publishComposerUiState("composer-quick-replies-rendered");
+  publishComposerUiState("composer-quick-replies-hidden");
 }
 
 async function applyQuickReply(value) {
@@ -3064,6 +3044,11 @@ function clearDialogueAssociations() {
 
 function syncDialogueAssociationToggle() {
   const toggle = el("dialogue-association-toggle");
+  const row = el("dialogue-association-toggle-row");
+  const mode = currentDialogueSession?.mode || currentDialogueSession?.session_card?.mode || "";
+  if (row) {
+    row.classList.toggle("hidden", mode === "observe");
+  }
   if (toggle) {
     toggle.checked = dialogueAssociationsEnabled;
   }
@@ -3092,6 +3077,8 @@ function setDialogueAssociationsEnabled(enabled) {
 function renderDialogueAssociations() {
   el("dialogue-association-panel")?.remove();
   if (!dialogueAssociationsEnabled) return;
+  const mode = currentDialogueSession?.mode || currentDialogueSession?.session_card?.mode || "";
+  if (mode === "observe") return;
   const root = el("dialogue-transcript");
   const state = dialogueAssociationState;
   if (!root || !state.sessionId || state.sessionId !== currentDialogueSessionId) return;
@@ -3175,6 +3162,11 @@ function renderDialogueAssociations() {
 
 async function requestDialogueAssociations(session = currentDialogueSession) {
   if (!dialogueAssociationsEnabled) return;
+  const mode = session?.mode || session?.session_card?.mode || "";
+  if (mode === "observe") {
+    clearDialogueAssociations();
+    return;
+  }
   const runId = String(currentRunId || "").trim();
   const sessionId = String(session?.session_id || currentDialogueSessionId || "").trim();
   if (!runId || !sessionId) return;
@@ -3245,7 +3237,8 @@ function dialogueAssociationRequestKey(session = currentDialogueSession) {
 function maybeRequestDialogueAssociations(session = currentDialogueSession) {
   const sessionId = String(session?.session_id || "").trim();
   const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
-  if (!dialogueAssociationsEnabled || !sessionId || !transcript.length || observeAutoMode) return;
+  const mode = session?.mode || session?.session_card?.mode || "";
+  if (!dialogueAssociationsEnabled || mode === "observe" || !sessionId || !transcript.length || observeAutoMode) return;
   const requestKey = dialogueAssociationRequestKey(session);
   if (!requestKey || requestKey === dialogueAssociationLastRequestKey) return;
   dialogueAssociationLastRequestKey = requestKey;

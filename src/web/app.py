@@ -46,10 +46,21 @@ def create_app(
 
     @app.middleware("http")
     async def require_web_auth(request: Request, call_next):
+        is_web_api = request.url.path.startswith("/api/web/")
+        is_web_shell = request.url.path in {
+            "/",
+            "/web",
+            "/web/",
+            "/web/index.html",
+            "/web/js/bootstrap.js",
+        }
         if not configured_token:
-            return await call_next(request)
+            response = await call_next(request)
+            if is_web_api or is_web_shell:
+                response.headers["Cache-Control"] = "no-store"
+            return response
 
-        protected_path = request.url.path.startswith("/api/web/") or request.url.path in {
+        protected_path = is_web_api or request.url.path in {
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -59,9 +70,12 @@ def create_app(
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Bearer authentication is required."},
-                    headers={"WWW-Authenticate": "Bearer"},
+                    headers={"WWW-Authenticate": "Bearer", "Cache-Control": "no-store"},
                 )
-        return await call_next(request)
+        response = await call_next(request)
+        if is_web_api or is_web_shell:
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.exception_handler(InvalidStorageIdentifier)
     async def invalid_storage_identifier_handler(_request: Request, exc: InvalidStorageIdentifier) -> JSONResponse:
@@ -72,7 +86,7 @@ def create_app(
 
     @app.get("/")
     def root() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
 
     for router in ROUTERS:
         app.include_router(router)

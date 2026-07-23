@@ -4,6 +4,14 @@ if (existingDialogueModule?.initialized) {
   return;
 }
 const UI_BRIDGE_TOOLS = window.__ZAOMENG_UI_BRIDGE_TOOLS__ || {};
+const DIALOGUE_STATE_TOOLS = window.__ZAOMENG_DIALOGUE_STATE_TOOLS__ || {};
+const trimInlineMessage = typeof DIALOGUE_STATE_TOOLS.trimInlineMessage === "function"
+  ? DIALOGUE_STATE_TOOLS.trimInlineMessage
+  : (value) => {
+      const text = String(value || "").replace(/\s+/g, " ").trim();
+      if (!text) return "";
+      return text.length > 88 ? `${text.slice(0, 88)}...` : text;
+    };
 let lastAutoSceneRecommendationKey = "";
 let sessionSelectionMode = false;
 const selectedSessionKeys = new Set();
@@ -395,12 +403,6 @@ async function deepReviewLatestConsistencyTurn(button) {
   }
 }
 
-function trimInlineMessage(value) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  return text.length > 88 ? `${text.slice(0, 88)}...` : text;
-}
-
 function buildDialogueMemorySnapshot(session) {
   const summary = session?.session_memory_summary || {};
   const summaryMode = String(summary.mode || "").trim();
@@ -596,119 +598,20 @@ function renderDialogueStateMiniList(root, items, emptyText = "这一栏还没�
 }
 
 function buildDialogueStateSnapshot(session) {
-  const overview = session?.runtime_state_overview || null;
-  if (overview && typeof overview === "object") {
-    return {
-      present: Array.isArray(overview.present) ? overview.present.filter(Boolean) : [],
-      offstage: Array.isArray(overview.offstage) ? overview.offstage.filter(Boolean) : [],
-      pills: Array.isArray(overview.pills) ? overview.pills.filter((item) => String(item?.text || "").trim()) : [],
-      tension: trimInlineMessage(String(overview.tension || "").trim()) || "这一拍的情绪和冲突会收在这里。",
-      characterRows: Array.isArray(overview.character_rows) ? overview.character_rows : [],
-      relationRows: Array.isArray(overview.relation_rows) ? overview.relation_rows : [],
-      eventRows: Array.isArray(overview.event_rows) ? overview.event_rows : [],
-      statusLine: trimInlineMessage(String(overview.status_line || "").trim()),
-      nextHint: trimInlineMessage(String(overview.next_hint || "").trim()),
-    };
+  if (typeof DIALOGUE_STATE_TOOLS.buildDialogueStateSnapshot === "function") {
+    return DIALOGUE_STATE_TOOLS.buildDialogueStateSnapshot(session);
   }
-  const state = session?.state || {};
-  const scene = state?.scene || {};
-  const presence = state?.presence || {};
-  const progression = state?.progression || {};
   const progress = session?.scene_progress || {};
-  const present = Array.isArray(progress?.present_participants) ? progress.present_participants : (presence?.present_participants || []);
-  const offstage = Array.isArray(progress?.offstage_participants) ? progress.offstage_participants : (presence?.offstage_participants || []);
-  const location = String(progress?.location || scene?.location || "").trim();
-  const timeHint = String(progress?.time_hint || scene?.time_hint || "").trim();
-  const atmosphere = trimInlineMessage(String(progress?.atmosphere_summary || scene?.atmosphere_summary || "").trim());
-  const beatMaturity = Number(progress?.beat_maturity || progression?.beat_maturity || 0) || 0;
-  const canShift = Boolean(progress?.should_offer_scene_shift ?? progression?.should_offer_scene_shift);
-  const shiftReason = trimInlineMessage(String(progress?.scene_shift_reason || progression?.scene_shift_reason || "").trim());
-  const tension = trimInlineMessage(
-    String(progress?.world_tension_summary || progression?.world_tension_summary || session?.session_memory_summary?.world || "").trim()
-  ) || "这一拍的情绪和冲突会收在这里。";
-  const characterSnapshots = session?.character_snapshots || state?.characters?.snapshots || {};
-  const relationDelta = session?.relation_delta || state?.relations?.delta || {};
-
-  const pills = [];
-  if (location) pills.push({ text: `地点 · ${location}` });
-  if (timeHint) pills.push({ text: `时间 · ${timeHint}` });
-  if (atmosphere) pills.push({ text: `氛围 · ${atmosphere}` });
-  if (beatMaturity > 0) pills.push({ text: `推进 ${Math.max(0, Math.min(100, Math.round(beatMaturity)))}/100` });
-  if (canShift) pills.push({ text: shiftReason ? `可转场 · ${shiftReason}` : "这一拍可以顺势转场" });
-
-  const characterRows = Object.entries(characterSnapshots)
-    .map(([name, snapshot]) => {
-      const item = snapshot || {};
-      const parts = [];
-      const presentState = String(item?.present_state || "").trim();
-      if (presentState === "onstage") parts.push("在场");
-      if (presentState === "offstage") parts.push("离场");
-      if (item?.mood) parts.push(String(item.mood).trim());
-      if (item?.interaction_state) parts.push(String(item.interaction_state).trim());
-      if (item?.focus) parts.push(`看向 ${String(item.focus).trim()}`);
-      if (item?.scene_location && String(item.scene_location).trim() !== location) {
-        parts.push(String(item.scene_location).trim());
-      }
-      return {
-        title: String(name || "").trim(),
-        copy: parts.filter(Boolean).join(" · "),
-        weight: presentState === "onstage" ? 0 : 1,
-      };
-    })
-    .filter((item) => item.title)
-    .sort((left, right) => {
-      if (left.weight !== right.weight) return left.weight - right.weight;
-      return left.title.localeCompare(right.title, "zh-Hans-CN");
-    })
-    .slice(0, 4)
-    .map(({ title, copy }) => ({ title, copy: copy || "这一拍还没有额外漂移。" }));
-
-  const relationRows = Object.entries(relationDelta)
-    .map(([pairKey, delta]) => {
-      const item = delta || {};
-      const metrics = [];
-      [["trust", "信任"], ["affection", "好感"], ["hostility", "敌意"], ["ambiguity", "摇摆"]].forEach(([field, label]) => {
-        const value = Number(item?.[field] || 0) || 0;
-        if (!value) return;
-        metrics.push(`${label}${value > 0 ? "+" : ""}${value}`);
-      });
-      const lastEvent = trimInlineMessage(String(item?.last_event || "").trim());
-      return {
-        title: String(pairKey || "").trim().replace(/_/g, " · "),
-        copy: metrics.length ? `${metrics.join(" / ")}${lastEvent ? ` · ${lastEvent}` : ""}` : (lastEvent || "这组关系本局有变化。"),
-      };
-    })
-    .filter((item) => item.title)
-    .slice(0, 3);
-
-  const eventKindLabel = {
-    scene_transition: "转场",
-    cast_enter: "入场",
-    cast_exit: "离场",
-    atmosphere_shift: "气氛变化",
-    time_change: "时间推进",
-    environment_change: "环境变化",
-    beat_complete: "一拍收束",
-    relationship_shift: "关系变化",
-    micro_action: "细微动作",
-  };
   return {
-    present: Array.isArray(present) ? present.filter(Boolean) : [],
-    offstage: Array.isArray(offstage) ? offstage.filter(Boolean) : [],
-    pills,
-    tension,
-    characterRows,
-    relationRows,
-    eventRows: Array.isArray(session?.event_signals?.recent)
-      ? session.event_signals.recent.slice(-4).map((item) => ({
-          title: [
-            eventKindLabel[String(item?.kind || "").trim()] || String(item?.kind || "").trim(),
-            String(item?.actor || "").trim(),
-            String(item?.target || "").trim(),
-          ].filter(Boolean).join(" · ") || "事件",
-          copy: trimInlineMessage(String(item?.cue || "").trim()) || "这一拍有了新波动。",
-        }))
-      : [],
+    present: Array.isArray(progress.present_participants) ? progress.present_participants.filter(Boolean) : [],
+    offstage: Array.isArray(progress.offstage_participants) ? progress.offstage_participants.filter(Boolean) : [],
+    pills: [progress.location, progress.time_hint, progress.atmosphere_summary]
+      .map((text) => ({ text: trimInlineMessage(text) }))
+      .filter((item) => item.text),
+    tension: trimInlineMessage(progress.world_tension_summary || session?.session_memory_summary?.world) || "这一拍的情绪和冲突会收在这里。",
+    characterRows: [],
+    relationRows: [],
+    eventRows: [],
     statusLine: "",
     nextHint: "",
   };

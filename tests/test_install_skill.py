@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -503,7 +504,7 @@ class InstallSkillTests(unittest.TestCase):
                 "- affection: 8\n"
                 "- power_gap: 0\n"
                 "- conflict_point: 取舍先后\n"
-                "- typical_interaction: 先问进退，再议轻重\n"
+                "- typical_interaction: 先问进退，再议轻重</script><script>alert(1)</script>\n"
                 "- hidden_attitude: 嘴上克制，私下更依赖对方\n"
                 "- relation_change: 升温\n"
                 "- confidence: 8\n",
@@ -547,6 +548,97 @@ class InstallSkillTests(unittest.TestCase):
             self.assertNotIn(";;", mermaid_text)
             self.assertIn("mermaid-11.14.0.min.js", html_text)
             self.assertNotIn("cdn.jsdelivr.net", html_text)
+            embedded_payloads = {}
+            for element_id in ("relation-data", "node-style-data", "default-style-data"):
+                with self.subTest(json_script=element_id):
+                    match = re.search(
+                        rf'<script type="application/json" id="{element_id}">(.*?)</script>',
+                        html_text,
+                        re.DOTALL,
+                    )
+                    self.assertIsNotNone(match)
+                    self.assertNotIn("&quot;", match.group(1))
+                    embedded_payloads[element_id] = json.loads(match.group(1))
+            injected_text = "先问进退，再议轻重</script><script>alert(1)</script>"
+            self.assertEqual(
+                embedded_payloads["relation-data"][0]["typical_interaction"],
+                injected_text,
+            )
+            self.assertNotIn(injected_text, html_text)
+            self.assertIn(
+                f"linkStyle 0 {embedded_payloads['relation-data'][0]['edge_style']}",
+                mermaid_text,
+            )
+            self.assertIn("securityLevel: 'strict'", html_text)
+            self.assertIn("htmlLabels: false", html_text)
+            self.assertIn(
+                '<meta name="zaomeng-relation-ui-version" content="2" />',
+                html_text,
+            )
+            self.assertIn("RELATION EXPLORER", html_text)
+            self.assertIn("system-ui", html_text)
+            self.assertIn("sans-serif", html_text)
+            self.assertNotIn("Noto Serif SC", html_text)
+            self.assertNotIn("Source Han Serif SC", html_text)
+            for label in ("全部关系", "高信任", "高冲突", "角色节点"):
+                with self.subTest(kpi_label=label):
+                    self.assertIn(label, html_text)
+
+            for control_id in (
+                "graph-zoom-out",
+                "graph-zoom-in",
+                "graph-fit",
+            ):
+                with self.subTest(canvas_control=control_id):
+                    self.assertIn(f'id="{control_id}"', html_text)
+            self.assertIn('aria-label="画布控制"', html_text)
+
+            for element_id in (
+                "filter-type",
+                "filter-trust",
+                "filter-trust-value",
+                "filter-intensity",
+                "filter-intensity-value",
+                "filter-reset",
+                "graph-view",
+                "graph-source",
+            ):
+                with self.subTest(element_id=element_id):
+                    self.assertIn(f'id="{element_id}"', html_text)
+
+            for marker in (
+                'class="relation-item"',
+                'data-type="',
+                'data-trust="',
+                'data-intensity="',
+                "重置筛选",
+            ):
+                with self.subTest(interaction_marker=marker):
+                    self.assertIn(marker, html_text)
+            self.assertRegex(
+                html_text,
+                r'<li class="relation-item"\s+data-type="[^"]+"\s+'
+                r'data-trust="\d+"\s+data-intensity="\d+"',
+            )
+
+            self.assertRegex(
+                html_text,
+                r"body\s*\{[^}]*overflow-x:\s*hidden",
+            )
+            self.assertRegex(
+                html_text,
+                r"@media\s*\(max-width:\s*[3-7]\d{2}px\)",
+            )
+            self.assertRegex(
+                html_text,
+                r"\.table-shell\s*\{[^}]*overflow-x:\s*auto",
+            )
+            self.assertIn("graphRenderVersion", html_text)
+            self.assertNotRegex(
+                html_text,
+                r"#graph-view\s+svg\s*\{[^}]*width:\s*100%\s*!important",
+            )
+            self.assertNotIn("#graph-view svg { min-width:500px; }", html_text)
 
     def test_installed_persona_bundle_tool_materializes_split_files_from_profile_markdown(self):
         repo_root = Path(__file__).resolve().parents[1]

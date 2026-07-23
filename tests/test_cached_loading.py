@@ -58,7 +58,7 @@ class CachedLoadingTests(unittest.TestCase):
                 self.assertEqual(second.get("llm.provider"), "openai")
                 self.assertEqual(safe_load.call_count, 1)
 
-                first.set_api_key("changed")
+                first.update({"llm": {"api_key": "changed"}})
                 fresh = Config(str(target))
                 self.assertEqual(fresh.get("llm.api_key"), "")
 

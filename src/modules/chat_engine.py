@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""Run constrained, relation-aware conversations between novel characters."""
+
 from __future__ import annotations
 
 import logging

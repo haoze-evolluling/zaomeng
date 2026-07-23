@@ -4,7 +4,7 @@ import random
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from src.core.config import Config
@@ -41,6 +41,49 @@ import src.web.chat.turn_memory as _turn_memory
 from src.web.artifacts.ingest import load_relations_source
 from src.web.path_safety import InvalidStorageIdentifier, validate_storage_id
 from src.web.time_utils import utc_now as _utc_now
+
+
+class _SessionStateOwner(Protocol):
+    def _ensure_session_state(self, session: dict[str, Any]) -> dict[str, Any]: ...
+
+
+_SessionStateGetter = Callable[[dict[str, Any]], dict[str, Any]]
+_SessionStateSetter = Callable[
+    [dict[str, Any], dict[str, Any] | None],
+    None,
+]
+_SessionGetterMethod = Callable[
+    [_SessionStateOwner, dict[str, Any]],
+    dict[str, Any],
+]
+_SessionSetterMethod = Callable[
+    [_SessionStateOwner, dict[str, Any], dict[str, Any] | None],
+    None,
+]
+
+
+def _session_state_accessors(
+    name: str,
+    getter: _SessionStateGetter,
+    setter: _SessionStateSetter,
+) -> tuple[_SessionGetterMethod, _SessionSetterMethod]:
+    """Build a named getter/setter pair over the canonical session state."""
+
+    def get_session_state(
+        self: _SessionStateOwner, session: dict[str, Any]
+    ) -> dict[str, Any]:
+        return getter(self._ensure_session_state(session))
+
+    def set_session_state(
+        self: _SessionStateOwner,
+        session: dict[str, Any],
+        payload: dict[str, Any] | None,
+    ) -> None:
+        setter(self._ensure_session_state(session), payload)
+
+    get_session_state.__name__ = f"_session_{name}"
+    set_session_state.__name__ = f"_set_session_{name}"
+    return get_session_state, set_session_state
 
 
 class DialogueService:
@@ -80,35 +123,25 @@ class DialogueService:
         _state_utils.set_session_scene_progress(state, payload, updated_at=updated_at)
         self._sync_character_runtime_cards(session, payload, updated_at=updated_at)
 
-    def _session_relation_matrix(self, session: dict[str, Any]) -> dict[str, Any]:
-        state = self._ensure_session_state(session)
-        return _state_utils.relation_matrix(state)
-
-    def _set_session_relation_matrix(
-        self, session: dict[str, Any], payload: dict[str, Any] | None
-    ) -> None:
-        state = self._ensure_session_state(session)
-        _state_utils.set_relation_matrix(state, payload)
-
-    def _session_relation_delta(self, session: dict[str, Any]) -> dict[str, Any]:
-        state = self._ensure_session_state(session)
-        return _state_utils.relation_delta(state)
-
-    def _set_session_relation_delta(
-        self, session: dict[str, Any], payload: dict[str, Any] | None
-    ) -> None:
-        state = self._ensure_session_state(session)
-        _state_utils.set_relation_delta(state, payload)
-
-    def _session_character_snapshots(self, session: dict[str, Any]) -> dict[str, Any]:
-        state = self._ensure_session_state(session)
-        return _state_utils.character_snapshots(state)
-
-    def _set_session_character_snapshots(
-        self, session: dict[str, Any], payload: dict[str, Any] | None
-    ) -> None:
-        state = self._ensure_session_state(session)
-        _state_utils.set_character_snapshots(state, payload)
+    _session_relation_matrix, _set_session_relation_matrix = (
+        _session_state_accessors(
+            "relation_matrix",
+            _state_utils.relation_matrix,
+            _state_utils.set_relation_matrix,
+        )
+    )
+    _session_relation_delta, _set_session_relation_delta = _session_state_accessors(
+        "relation_delta",
+        _state_utils.relation_delta,
+        _state_utils.set_relation_delta,
+    )
+    _session_character_snapshots, _set_session_character_snapshots = (
+        _session_state_accessors(
+            "character_snapshots",
+            _state_utils.character_snapshots,
+            _state_utils.set_character_snapshots,
+        )
+    )
 
     def _sync_character_runtime_cards(
         self,
@@ -143,25 +176,18 @@ class DialogueService:
             snapshots[name] = current
         state.setdefault("characters", {})["snapshots"] = snapshots
 
-    def _session_event_signals(self, session: dict[str, Any]) -> dict[str, Any]:
-        state = self._ensure_session_state(session)
-        return _state_utils.event_signals(state)
-
-    def _set_session_event_signals(
-        self, session: dict[str, Any], payload: dict[str, Any] | None
-    ) -> None:
-        state = self._ensure_session_state(session)
-        _state_utils.set_event_signals(state, payload)
-
-    def _session_memory_summary_state(self, session: dict[str, Any]) -> dict[str, Any]:
-        state = self._ensure_session_state(session)
-        return _state_utils.memory_summary(state)
-
-    def _set_session_memory_summary_state(
-        self, session: dict[str, Any], payload: dict[str, Any] | None
-    ) -> None:
-        state = self._ensure_session_state(session)
-        _state_utils.set_memory_summary(state, payload)
+    _session_event_signals, _set_session_event_signals = _session_state_accessors(
+        "event_signals",
+        _state_utils.event_signals,
+        _state_utils.set_event_signals,
+    )
+    _session_memory_summary_state, _set_session_memory_summary_state = (
+        _session_state_accessors(
+            "memory_summary_state",
+            _state_utils.memory_summary,
+            _state_utils.set_memory_summary,
+        )
+    )
 
     def list_sessions(self, run_id: str) -> list[dict[str, Any]]:
         root = self._sessions_root(run_id)

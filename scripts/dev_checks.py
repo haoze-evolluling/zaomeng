@@ -71,6 +71,10 @@ def main() -> int:
     test_env["TMPDIR"] = str(temp_root)
     test_env["TEMP"] = str(temp_root)
     test_env["TMP"] = str(temp_root)
+    run_step(
+        "check generated config example",
+        [sys.executable, "scripts/generate_config_example.py", "--check"],
+    )
     run_step("run smoke guardrails", [sys.executable, "-m", "unittest", *SMOKE_TEST_MODULES])
     run_step("run mypy", [sys.executable, "-m", "mypy", "--config-file", "mypy.ini"])
     run_step(

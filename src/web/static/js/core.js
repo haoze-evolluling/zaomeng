@@ -15,7 +15,7 @@ function webAuthFetchOptions(options = {}) {
   if (authToken && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${authToken}`);
   }
-  return { ...options, headers };
+  return { cache: "no-store", ...options, headers };
 }
 
 function textToBase64(text) {
@@ -78,6 +78,14 @@ var redistillSuggestionState = {
   selectedSegmentId: "",
   loading: false,
 };
+
+const webUiStateStore = window.__ZAOMENG_STATE_STORE__;
+if (webUiStateStore && typeof webUiStateStore.installLegacyBindings === "function") {
+  const currentRunDescriptor = Object.getOwnPropertyDescriptor(window, "currentRunId");
+  if (!currentRunDescriptor || currentRunDescriptor.configurable) {
+    webUiStateStore.installLegacyBindings(window);
+  }
+}
 const DISTILL_CHUNK_MAX_CHARS = 9000;
 const DISTILL_CHUNK_MAX_SENTENCES = 70;
 const RELATION_CHUNK_MAX_CHARS = 4800;

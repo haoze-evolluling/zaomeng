@@ -6,7 +6,7 @@
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }
 
-  const version = "20260722064534";
+  const version = "2026072306";
   window.__ZAOMENG_WEB_UI_VERSION__ = version;
   const rootFragments = [
     { id: "header-root", url: `/web/fragments/header.html?v=${version}` },
@@ -43,6 +43,7 @@
   const coreScripts = [
     `/web/vendor/vue.global.prod.js?v=${version}`,
     `/web/js/legacy-bridge.js?v=${version}`,
+    `/web/js/state-store.js?v=${version}`,
     `/web/js/core.js?v=${version}`,
     `/web/js/flow-feedback.js?v=${version}`,
     `/web/js/app-update.js?v=${version}`,
@@ -58,6 +59,7 @@
     `/web/js/run-detail.js?v=${version}`,
     `/web/js/persona-review-legacy.js?v=${version}`,
     `/web/js/relation-details-legacy.js?v=${version}`,
+    `/web/js/dialogue-state.js?v=${version}`,
     `/web/js/dialogue.js?v=${version}`,
     `/web/js/webui-api.js?v=${version}`,
     `/web/js/main.js?v=${version}`,
