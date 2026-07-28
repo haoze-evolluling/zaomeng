@@ -4,7 +4,10 @@ import unittest
 from unittest.mock import Mock
 
 from src.core.exceptions import LLMRequestError
-from src.web.chat.entrypoints import reply_dialogue_turn_payload
+from src.web.chat.entrypoints import (
+    create_dialogue_session_payload,
+    reply_dialogue_turn_payload,
+)
 
 
 class ChatEntrypointWorkflowTests(unittest.TestCase):
@@ -111,6 +114,37 @@ class ChatEntrypointWorkflowTests(unittest.TestCase):
             reason="reply_failed",
         )
         dialogue.ingest_turn_responses.assert_not_called()
+
+    def test_failed_opening_removes_new_session(self):
+        dialogue = Mock()
+        dialogue.create_session.return_value = {
+            "session_id": "dlg-1",
+            "participants": ["甲"],
+        }
+        dialogue.prepare_turn.return_value = {
+            "pending_turn_summary": {"turn_id": "turn-1"}
+        }
+
+        with self.assertRaises(ValueError):
+            create_dialogue_session_payload(
+                run_id="run-1",
+                manifest={"run_id": "run-1"},
+                dialogue=dialogue,
+                mode="observe",
+                participants=["甲"],
+                controlled_character="",
+                scene_profile={},
+                self_profile={},
+                build_dialogue_opening_message=Mock(return_value="开场"),
+                load_pending_turn_payload=Mock(return_value={"turn_id": "turn-1"}),
+                generate_dialogue_responses=Mock(
+                    side_effect=LLMRequestError("upstream detail")
+                ),
+                friendly_dialogue_llm_error=Mock(return_value="friendly message"),
+                evolve_relations_from_turn=Mock(),
+            )
+
+        dialogue.delete_session.assert_called_once_with("run-1", "dlg-1")
 
 
 if __name__ == "__main__":

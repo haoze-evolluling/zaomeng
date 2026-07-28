@@ -70,6 +70,18 @@ def get_dialogue_session(
         raise HTTPException(status_code=404, detail="Session not found.") from exc
 
 
+@router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/recover")
+def recover_dialogue_session(
+    run_id: str,
+    session_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.recover_dialogue_session(run_id, session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+
 @router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/branch")
 def branch_dialogue_session(
     run_id: str,

@@ -37,6 +37,26 @@ from fastapi.testclient import TestClient
 from src.web.app import create_app
 
 class WebAppRouteTests(unittest.TestCase):
+    def test_create_run_route_accepts_deferred_import_without_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(WebRunService(tmp)))
+
+            response = client.post(
+                "/api/web/runs",
+                json={
+                    "novel_name": "hongloumeng.txt",
+                    "novel_content_base64": base64.b64encode(
+                        "林黛玉见了贾宝玉。".encode("utf-8")
+                    ).decode("ascii"),
+                    "characters": ["林黛玉"],
+                    "auto_run": False,
+                    "defer_run": True,
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "draft")
+
     def test_delete_run_route_removes_group(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)
@@ -52,6 +72,7 @@ class WebAppRouteTests(unittest.TestCase):
                     "林黛玉见了贾宝玉。".encode("utf-8")
                 ).decode("ascii"),
                 characters=["林黛玉"],
+                defer_run=True,
             )
             client = TestClient(create_app(service))
 

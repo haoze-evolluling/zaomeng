@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">造梦</string>
+    <string name="distillation_notification_channel_name">蒸馏进度</string>
+    <string name="distillation_notification_channel_description">显示正在手机上处理的小说蒸馏任务</string>
+    <string name="distillation_notification_starting_title">正在准备蒸馏</string>
+    <string name="distillation_notification_starting_text">正在启动本地服务…</string>
+    <string name="distillation_notification_running_title">小说蒸馏进行中</string>
+    <string name="distillation_notification_running_text">正在整理人物与关系</string>
+    <string name="distillation_notification_reconnecting">正在重新连接本地服务…</string>
+    <string name="distillation_notification_single_title">正在蒸馏《%1$s》</string>
+    <string name="distillation_notification_multiple_title">正在蒸馏 %1$d 本小说</string>
+    <string name="distillation_notification_character">正在处理：%1$s</string>
+</resources>

@@ -61,6 +61,38 @@ class RunLifecycleServiceTests(unittest.TestCase):
             )
             self.assertTrue(settings["configured"])
 
+    def test_deferred_run_can_be_created_before_model_configuration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+
+            run = service.create_run(
+                novel_name="hongloumeng.txt",
+                novel_content_base64=base64.b64encode(
+                    "林黛玉见了贾宝玉。".encode("utf-8")
+                ).decode("ascii"),
+                characters=["林黛玉"],
+                defer_run=True,
+            )
+
+            self.assertEqual(run["locked_characters"], ["林黛玉"])
+            self.assertEqual(run["status"], "draft")
+            self.assertEqual(run["progress"]["stage"], "waiting_to_start")
+
+            service.save_model_settings(
+                provider="openai-compatible",
+                model="deepseek-chat",
+                base_url="https://example.com/v1",
+                api_key="sk-test",
+            )
+            with patch.object(service, "_start_background_run") as start_background:
+                restarted = service.restart_run_distill(
+                    run["run_id"],
+                    characters=["林黛玉"],
+                )
+
+            self.assertEqual(restarted["status"], "running")
+            start_background.assert_called_once()
+
     def test_get_app_update_status_reports_available_update(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)

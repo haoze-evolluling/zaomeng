@@ -100,6 +100,78 @@ class RunPackageTests(unittest.TestCase):
             self.assertEqual(len(imported["artifact_index"]["characters"]), 2)
             self.assertFalse((Path(imported["webui"]["run_dir"]) / "dialogue").exists())
 
+    def test_export_does_not_require_permission_to_copy_file_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            run = self._build_ready_run(service)
+
+            with patch(
+                "src.web.run_ops.packages.shutil.copystat",
+                side_effect=PermissionError("SELinux denied metadata copy"),
+            ) as copy_metadata:
+                exported = service.export_run_package(run["run_id"])
+
+            self.assertTrue(Path(exported["path"]).exists())
+            copy_metadata.assert_not_called()
+
+    def test_import_does_not_require_permission_to_copy_file_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            run = self._build_ready_run(service)
+            exported = service.export_run_package(run["run_id"])
+            encoded = base64.b64encode(Path(exported["path"]).read_bytes()).decode(
+                "ascii"
+            )
+
+            with patch(
+                "src.web.run_ops.packages.shutil.copystat",
+                side_effect=PermissionError("SELinux denied metadata copy"),
+            ) as copy_metadata:
+                imported = service.import_run_package(
+                    filename=exported["filename"],
+                    content_base64=encoded,
+                )
+
+            self.assertEqual(imported["novel_id"], run["novel_id"])
+            self.assertTrue(Path(imported["webui"]["run_dir"]).exists())
+            copy_metadata.assert_not_called()
+
+    def test_failed_import_removes_partially_copied_run_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            run = self._build_ready_run(service)
+            exported = service.export_run_package(run["run_id"])
+            encoded = base64.b64encode(Path(exported["path"]).read_bytes()).decode(
+                "ascii"
+            )
+            imported_run_id = "run-import-failure"
+            imported_run_dir = service.runs_root / imported_run_id
+            copyfile = shutil.copyfile
+            copied_file_count = 0
+
+            def fail_during_copy(source: str, target: str) -> str:
+                nonlocal copied_file_count
+                copied_file_count += 1
+                if copied_file_count == 2:
+                    raise PermissionError("forced mid-copy failure")
+                return copyfile(source, target)
+
+            with (
+                patch.object(service, "_new_run_id", return_value=imported_run_id),
+                patch(
+                    "src.web.run_ops.packages.shutil.copyfile",
+                    side_effect=fail_during_copy,
+                ),
+            ):
+                with self.assertRaisesRegex(PermissionError, "forced mid-copy failure"):
+                    service.import_run_package(
+                        filename=exported["filename"],
+                        content_base64=encoded,
+                    )
+
+            self.assertEqual(copied_file_count, 2)
+            self.assertFalse(imported_run_dir.exists())
+
     def test_list_and_clone_builtin_novels(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = WebRunService(tmp)

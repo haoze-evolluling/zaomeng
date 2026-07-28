@@ -117,8 +117,11 @@ class RunServiceMixin:
         max_sentences: int = 120,
         max_chars: int = 50_000,
         auto_run: bool = False,
+        defer_run: bool = False,
     ) -> dict[str, Any]:
-        if not self.model_is_configured():
+        if auto_run and defer_run:
+            raise ValueError("A deferred run cannot start automatically.")
+        if not defer_run and not self.model_is_configured():
             raise ValueError("Model is not configured yet.")
         prepared = self._prepare_create_run(
             novel_name=novel_name,
@@ -129,6 +132,11 @@ class RunServiceMixin:
         manifest = prepared["manifest"]
         manifest_path = prepared["manifest_path"]
         novel_path = prepared["novel_path"]
+
+        if defer_run:
+            manifest = self._prepare_deferred_run_manifest(manifest)
+            self._write_json(manifest_path, manifest)
+            return self._serialize_manifest(manifest)
 
         if auto_run:
             self._write_json(manifest_path, manifest)

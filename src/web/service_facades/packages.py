@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +34,9 @@ class PackageServiceMixin:
         safe_name = Path(str(filename or "").strip() or "imported-run-package.zip").name
         tmp_dir = self.storage_root / "tmp-imports"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        package_path = tmp_dir / safe_name
-        package_path.write_bytes(data)
-        try:
+        with tempfile.TemporaryDirectory(prefix="upload-", dir=tmp_dir) as request_tmp:
+            package_path = Path(request_tmp) / safe_name
+            package_path.write_bytes(data)
             return import_run_package(
                 package_path=package_path,
                 runs_root=self.runs_root,
@@ -47,8 +48,6 @@ class PackageServiceMixin:
                 discover_artifacts=self._discover_artifacts,
                 serialize_manifest=self._serialize_manifest,
             )
-        finally:
-            package_path.unlink(missing_ok=True)
 
     def export_run_package(self, run_id: str, *, builtin: bool = False) -> dict[str, Any]:
         manifest = self._require_manifest(run_id)

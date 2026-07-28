@@ -1,0 +1,719 @@
+package top.wkbin.zaomeng.feature.rundetail
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.zaomeng.backend.DistillationForegroundController
+import top.wkbin.zaomeng.data.api.ExportedRunPackage
+import top.wkbin.zaomeng.data.api.NovelSourceDto
+import top.wkbin.zaomeng.data.api.PersonaIndexDto
+import top.wkbin.zaomeng.data.api.RunManifestDto
+import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RunDetailScreen(
+    viewModel: RunDetailViewModel,
+    onBack: () -> Unit,
+    onOpenPersona: (runId: String, character: String) -> Unit,
+    onOpenSessions: (runId: String) -> Unit,
+    onOpenRelations: (runId: String) -> Unit,
+    onOpenRedistill: (runId: String) -> Unit,
+    onExportReady: (ExportedRunPackage) -> Unit,
+    onDeleted: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var confirmStop by rememberSaveable { mutableStateOf(false) }
+    var confirmRedistill by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        viewModel.redistillOriginalCharacters()
+    }
+
+    fun startOriginalRedistill() {
+        if (DistillationForegroundController.hasNotificationPermission(context)) {
+            viewModel.redistillOriginalCharacters()
+        } else {
+            notificationPermission.launch(DistillationForegroundController.NOTIFICATION_PERMISSION)
+        }
+    }
+
+    LaunchedEffect(state.exportRequestId) {
+        state.exportedPackage?.let { exported ->
+            onExportReady(exported)
+        }
+    }
+
+    LaunchedEffect(state.deleted) {
+        if (state.deleted) onDeleted()
+    }
+
+    if (confirmStop) {
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            title = { Text("停止这次蒸馏？") },
+            text = { Text("已经完成的人物资料会保留，当前步骤结束后停止。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmStop = false
+                    viewModel.stop()
+                }) { Text("停止蒸馏") }
+            },
+            dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("继续等待") } },
+        )
+    }
+
+    if (confirmRedistill) {
+        val characterCount = state.run
+            ?.let { it.lockedCharacters.ifEmpty { it.availableCharacters }.size }
+            ?: 0
+        AlertDialog(
+            onDismissRequest = { confirmRedistill = false },
+            title = { Text("按原人物重新蒸馏？") },
+            text = { Text("将沿用当前正文和 $characterCount 位原人物，重新生成资料与关系。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRedistill = false
+                    startOriginalRedistill()
+                }) { Text("重新开始") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRedistill = false }) { Text("取消") } },
+        )
+    }
+
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { if (!state.deleting) confirmDelete = false },
+            title = { Text("删除整本书卷？") },
+            text = { Text("人物资料、关系图和这本书的全部会话都会一起删除，且无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        viewModel.deleteRun()
+                    },
+                    enabled = !state.deleting,
+                ) { Text("确认删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }, enabled = !state.deleting) { Text("取消") }
+            },
+        )
+    }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = state.run?.title ?: "书卷详情",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = viewModel::refresh,
+                        enabled = !state.refreshing && !state.loading,
+                    ) {
+                        if (state.refreshing) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "刷新详情")
+                        }
+                    }
+                    IconButton(onClick = viewModel::exportRun, enabled = state.run != null && !state.exporting) {
+                        Icon(Icons.Default.Download, contentDescription = "导出书卷")
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        when {
+            state.loading -> DetailLoading(Modifier.padding(innerPadding))
+            state.run == null -> DetailFailure(
+                message = state.error.ifBlank { "没有找到这份书卷。" },
+                onRetry = viewModel::load,
+                modifier = Modifier.padding(innerPadding),
+            )
+            else -> RunDetailContent(
+                state = state,
+                onDismissNotice = viewModel::dismissNotice,
+                onRetryExportDestination = viewModel::retryExportDestination,
+                onStop = { confirmStop = true },
+                onRedistill = { confirmRedistill = true },
+                onExport = viewModel::exportRun,
+                onOpenPersona = { character -> onOpenPersona(viewModel.runId, character) },
+                onOpenSessions = { onOpenSessions(viewModel.runId) },
+                onOpenRelations = { onOpenRelations(viewModel.runId) },
+                onOpenRedistill = { onOpenRedistill(viewModel.runId) },
+                onDelete = { confirmDelete = true },
+                modifier = Modifier.padding(innerPadding),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RunDetailContent(
+    state: RunDetailUiState,
+    onDismissNotice: () -> Unit,
+    onRetryExportDestination: () -> Unit,
+    onStop: () -> Unit,
+    onRedistill: () -> Unit,
+    onExport: () -> Unit,
+    onOpenPersona: (String) -> Unit,
+    onOpenSessions: () -> Unit,
+    onOpenRelations: () -> Unit,
+    onOpenRedistill: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val run = checkNotNull(state.run)
+    var showAllSources by rememberSaveable(run.runId) { mutableStateOf(false) }
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item { RunHero(run) }
+
+        if (state.error.isNotBlank() || state.message.isNotBlank()) {
+            item {
+                NoticeCard(
+                    message = state.error.ifBlank { state.message },
+                    error = state.error.isNotBlank(),
+                    onDismiss = onDismissNotice,
+                    actionLabel = if (state.error.isNotBlank() && state.exportedPackage != null) {
+                        "重新选择位置"
+                    } else {
+                        ""
+                    },
+                    onAction = onRetryExportDestination,
+                )
+            }
+        }
+
+        item {
+            ActionCard(
+                run = run,
+                stopping = state.stopping,
+                redistilling = state.redistilling,
+                exporting = state.exporting,
+                deleting = state.deleting,
+                onStop = onStop,
+                onRedistill = onRedistill,
+                onExport = onExport,
+                onOpenSessions = onOpenSessions,
+                onOpenRelations = onOpenRelations,
+                onOpenRedistill = onOpenRedistill,
+                onDelete = onDelete,
+            )
+        }
+
+        if (run.novelSources.isNotEmpty()) {
+            item {
+                SourceHistoryCard(
+                    run = run,
+                    expanded = showAllSources,
+                    onToggleExpanded = { showAllSources = !showAllSources },
+                )
+            }
+        }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("可用人物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = if (run.availableCharacters.isEmpty()) {
+                        if (run.status == "running") "人物资料完成后会陆续出现在这里。" else "目前没有可用的人物资料。"
+                    } else {
+                        "${run.availableCharacters.size} 位人物可以查看和校对"
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
+        if (run.artifactIndex.characters.isEmpty()) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                    Text(
+                        text = if (run.status == "running") "正在等待第一位人物完成…" else "还没有人物档案。",
+                        modifier = Modifier.padding(20.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        } else {
+            items(run.artifactIndex.characters, key = PersonaIndexDto::name) { persona ->
+                PersonaCard(persona = persona, onClick = { onOpenPersona(persona.name) })
+            }
+        }
+
+        item { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+private fun SourceHistoryCard(
+    run: RunManifestDto,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    val sortedSources = run.novelSources.sortedByDescending(NovelSourceDto::timestamp)
+    val visibleSources = if (expanded) sortedSources else sortedSources.take(3)
+    val currentPath = run.novelPath.trim()
+
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("正文来源", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "初始正文和后续增量书段都会保留在这里。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            visibleSources.forEachIndexed { index, source ->
+                if (index > 0) HorizontalDivider()
+                val isCurrent = currentPath.isNotBlank() && source.sourcePath == currentPath
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            source.sourceName.ifBlank { "未命名书页" },
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (isCurrent) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(6.dp),
+                            ) {
+                                Text(
+                                    "当前",
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        sourceMeta(source),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            if (sortedSources.size > 3) {
+                TextButton(onClick = onToggleExpanded, modifier = Modifier.align(Alignment.End)) {
+                    Text(if (expanded) "收起" else "查看全部 ${sortedSources.size} 份")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunHero(run: RunManifestDto) {
+    val total = maxOf(run.progress.totalCharacters, run.lockedCharacters.size)
+    val completed = maxOf(run.progress.completedCount, run.availableCharacters.size)
+    val progress = if (total > 0) (completed.toFloat() / total).coerceIn(0f, 1f) else null
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        shape = RoundedCornerShape(24.dp),
+    ) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        run.title,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    Text(
+                        run.novelId.ifBlank { run.runId },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                RunStatus(run.status)
+            }
+
+            if (run.status == "running") {
+                if (progress == null) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                } else {
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+
+            Text(
+                text = run.progress.message.ifBlank { run.summary.statusText.ifBlank { statusCopy(run.status) } },
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                Metric("人物", if (total > 0) "$completed / $total" else "未开始", Modifier.weight(1f))
+                Metric(
+                    "关系图",
+                    graphLabel(run.progress.graphStatus.ifBlank { run.summary.graphStatus }),
+                    Modifier.weight(1f),
+                )
+                Metric("用时", run.timing.elapsedText.ifBlank { "—" }, Modifier.weight(1f))
+            }
+            if (run.progress.currentCharacter.isNotBlank()) {
+                Text(
+                    "正在处理：${run.progress.currentCharacter}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ActionCard(
+    run: RunManifestDto,
+    stopping: Boolean,
+    redistilling: Boolean,
+    exporting: Boolean,
+    deleting: Boolean,
+    onStop: () -> Unit,
+    onRedistill: () -> Unit,
+    onExport: () -> Unit,
+    onOpenSessions: () -> Unit,
+    onOpenRelations: () -> Unit,
+    onOpenRedistill: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("书卷操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+            Button(onClick = onOpenSessions, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Forum, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("查看会话与开始聊天")
+            }
+
+            OutlinedButton(onClick = onOpenRelations, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.People, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("查看与校对人物关系")
+            }
+
+            OutlinedButton(
+                onClick = onExport,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exporting,
+            ) {
+                if (exporting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.Download, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (exporting) "正在打包…" else "导出书卷包")
+            }
+
+            OutlinedButton(
+                onClick = onOpenRedistill,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !redistilling && run.status != "running" &&
+                    (run.lockedCharacters.isNotEmpty() || run.availableCharacters.isNotEmpty()),
+            ) {
+                if (redistilling) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("继续蒸馏或换入新书段")
+            }
+
+            TextButton(
+                onClick = onRedistill,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !redistilling && run.status != "running" &&
+                    (run.lockedCharacters.isNotEmpty() || run.availableCharacters.isNotEmpty()),
+            ) {
+                Text(if (redistilling) "正在重新开始…" else "直接沿用原人物与正文重跑")
+            }
+
+            if (run.status == "running") {
+                HorizontalDivider()
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !stopping && !run.control.stopRequested,
+                ) {
+                    if (stopping) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Outlined.StopCircle, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        when {
+                            run.control.stopRequested -> "正在停止…"
+                            stopping -> "正在发送请求…"
+                            else -> "停止蒸馏"
+                        },
+                    )
+                }
+            } else {
+                HorizontalDivider()
+                TextButton(
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !deleting,
+                ) {
+                    if (deleting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (deleting) "正在删除…" else "删除这本书及其会话")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
+    val preview = persona.preview
+    val summary = listOf(preview.coreIdentity, preview.storyRole, preview.soulGoal)
+        .firstOrNull(String::isNotBlank)
+        .orEmpty()
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Person, contentDescription = null)
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(persona.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = summary.ifBlank { "资料已生成，点此查看和校对。" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunStatus(status: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(999.dp),
+    ) {
+        Text(
+            text = statusLabel(status),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
+private fun NoticeCard(
+    message: String,
+    error: Boolean,
+    onDismiss: () -> Unit,
+    actionLabel: String = "",
+    onAction: () -> Unit = {},
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (error) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                message,
+                color = if (error) MaterialTheme.colorScheme.onErrorContainer
+                else MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                if (actionLabel.isNotBlank()) {
+                    TextButton(onClick = onAction) { Text(actionLabel) }
+                }
+                TextButton(onClick = onDismiss) { Text("知道了") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailLoading(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            Text("正在打开书卷…")
+        }
+    }
+}
+
+@Composable
+private fun DetailFailure(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+            Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("书卷没有打开", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+                Button(onClick = onRetry) { Text("重试") }
+            }
+        }
+    }
+}
+
+private fun statusLabel(status: String): String = when (status) {
+    "ready" -> "可使用"
+    "running" -> "蒸馏中"
+    "draft" -> "待蒸馏"
+    "failed" -> "失败"
+    "stopped" -> "已停止"
+    else -> status.ifBlank { "未知" }
+}
+
+private fun statusCopy(status: String): String = when (status) {
+    "ready" -> "人物资料和关系已经整理完成。"
+    "running" -> "人物和关系正在这台手机上逐步浮现。"
+    "draft" -> "正文已经导入，尚未调用模型。"
+    "failed" -> "这次蒸馏没有完成，已有结果仍会保留。"
+    "stopped" -> "蒸馏已停止，可以按原人物重新开始。"
+    else -> "书卷状态正在更新。"
+}
+
+private fun graphLabel(status: String): String = when (status) {
+    "ready", "completed", "complete" -> "已完成"
+    "running" -> "生成中"
+    "failed" -> "失败"
+    "stopped" -> "已停止"
+    else -> status.ifBlank { "未生成" }
+}
+
+private fun sourceMeta(source: NovelSourceDto): String = buildList {
+    add(if (source.kind == "incremental_update") "增量书段" else "初始正文")
+    when {
+        source.charCount >= 10_000 -> add("约 ${source.charCount / 10_000.0f} 万字".replace(".0 ", " "))
+        source.charCount > 0 -> add("约 ${source.charCount} 字")
+        source.byteSize >= 1024 * 1024 -> add("%.1f MB".format(source.byteSize / (1024.0 * 1024.0)))
+        source.byteSize >= 1024 -> add("%.1f KB".format(source.byteSize / 1024.0))
+        source.byteSize > 0 -> add("${source.byteSize} B")
+    }
+    if (source.timestamp.isNotBlank()) {
+        add(source.timestamp.toLocalDateTimeDisplay())
+    }
+}.joinToString(" · ")

@@ -22,6 +22,7 @@ from src.web.run_ops import (
     classify_requested_characters,
     ensure_run_workspace,
     prepare_restart_novel_source,
+    project_manifest_summary,
 )
 
 
@@ -156,6 +157,39 @@ class RunPreparationMixin:
             stage_presence=stage_presence,
             utc_now=_utc_now,
         )
+
+    def _prepare_deferred_run_manifest(
+        self,
+        manifest: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = _utc_now()
+        manifest["status"] = "draft"
+        manifest["success"] = False
+        manifest["updated_at"] = now
+        progress = manifest.setdefault("progress", {})
+        progress["stage"] = "waiting_to_start"
+        progress["message"] = "小说已导入，等待开始蒸馏"
+        progress["current_character"] = ""
+        capabilities = manifest.setdefault("capabilities", {})
+        for capability in ("distill", "materialize", "export_graph", "verify_workflow"):
+            capabilities[capability] = {
+                "status": "pending",
+                "success": False,
+                "updated_at": now,
+            }
+        manifest["events"] = [
+            {
+                "stage": "waiting_to_start",
+                "status": "draft",
+                "message": "小说已导入，等待开始蒸馏",
+                "character": "",
+                "capability": "distill",
+                "timestamp": now,
+            }
+        ]
+        manifest.setdefault("summary", {})["status_text"] = "waiting_to_start"
+        project_manifest_summary(manifest)
+        return manifest
 
     def _prepare_restart_run(
         self,

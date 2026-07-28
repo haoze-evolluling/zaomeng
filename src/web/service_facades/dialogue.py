@@ -118,6 +118,14 @@ class DialogueServiceMixin:
         self._ensure_run_exists(run_id)
         return self.dialogue.get_session(run_id, session_id)
 
+    def recover_dialogue_session(self, run_id: str, session_id: str) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.abort_pending_turn(
+            run_id,
+            session_id,
+            reason="client_recovery",
+        )
+
     def correct_latest_dialogue_turn(
         self, run_id: str, *, session_id: str
     ) -> dict[str, Any]:

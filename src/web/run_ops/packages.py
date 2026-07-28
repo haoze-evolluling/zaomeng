@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import stat
 import shutil
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable
 
 from src.web.manifest.compat import apply_imported_run_semantics, rewrite_run_root_paths
@@ -17,6 +18,27 @@ PACKAGE_LEGACY_SCHEMA_VERSION = 0
 SUPPORTED_PACKAGE_SCHEMA_VERSIONS = {PACKAGE_LEGACY_SCHEMA_VERSION, PACKAGE_SCHEMA_VERSION}
 PACKAGE_SUFFIX = ".zaomeng-run.zip"
 PACKAGE_ROOT = "run"
+PACKAGE_MANIFEST_NAME = "package_manifest.json"
+
+MAX_PACKAGE_MEMBER_COUNT = 10_000
+MAX_PACKAGE_DIRECTORY_COUNT = 10_000
+MAX_PACKAGE_MEMBER_SIZE = 64 * 1024 * 1024
+MAX_PACKAGE_TOTAL_UNCOMPRESSED_SIZE = 512 * 1024 * 1024
+MAX_PACKAGE_COMPRESSION_RATIO = 200
+MAX_PACKAGE_MANIFEST_SIZE = 256 * 1024
+MAX_PACKAGE_MEMBER_PATH_LENGTH = 1_024
+MAX_PACKAGE_MEMBER_PATH_DEPTH = 32
+MAX_PACKAGE_PATH_COMPONENT_BYTES = 255
+_PACKAGE_COPY_CHUNK_SIZE = 1024 * 1024
+_SUPPORTED_PACKAGE_COMPRESSION = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+_WINDOWS_RESERVED_FILE_STEMS = {
+    "aux",
+    "con",
+    "nul",
+    "prn",
+    *(f"com{index}" for index in range(1, 10)),
+    *(f"lpt{index}" for index in range(1, 10)),
+}
 
 
 def package_filename_slug(title: str, *, fallback: str) -> str:
@@ -54,10 +76,10 @@ def export_run_package(
     with tempfile.TemporaryDirectory(prefix="zaomeng-export-") as tmpdir:
         staging_root = Path(tmpdir)
         staged_run_dir = staging_root / PACKAGE_ROOT
-        shutil.copytree(
+        _copy_tree_without_metadata(
             run_dir,
             staged_run_dir,
-            ignore=shutil.ignore_patterns("dialogue", "exports", "__pycache__", "*.pyc"),
+            ignore=_is_export_copy_ignored,
         )
         _strip_export_only_paths(staged_run_dir)
         package_manifest = _build_package_manifest(
@@ -65,16 +87,22 @@ def export_run_package(
             builtin=builtin,
             exported_at=utc_now(),
         )
-        (staging_root / "package_manifest.json").write_text(
+        (staging_root / PACKAGE_MANIFEST_NAME).write_text(
             json.dumps(package_manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.write(staging_root / "package_manifest.json", "package_manifest.json")
-            for path in sorted(staged_run_dir.rglob("*")):
-                if path.is_dir():
-                    continue
-                archive.write(path, path.relative_to(staging_root).as_posix())
+        try:
+            with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.write(staging_root / PACKAGE_MANIFEST_NAME, PACKAGE_MANIFEST_NAME)
+                for path in sorted(staged_run_dir.rglob("*")):
+                    if path.is_dir():
+                        continue
+                    archive.write(path, path.relative_to(staging_root).as_posix())
+            with zipfile.ZipFile(package_path) as archive:
+                _read_package_manifest(archive)
+        except Exception:
+            package_path.unlink(missing_ok=True)
+            raise
     return package_path, filename
 
 
@@ -134,34 +162,37 @@ def import_run_package(
     if target_run_dir.exists():
         raise ValueError("新书卷目录已经存在，请稍后再试。")
 
-    with tempfile.TemporaryDirectory(prefix="zaomeng-import-") as tmpdir:
-        extract_root = Path(tmpdir)
-        with zipfile.ZipFile(package_path) as archive:
-            _read_package_manifest(archive)
-            archive.extractall(extract_root)
-        source_run_dir = extract_root / PACKAGE_ROOT
-        if not source_run_dir.exists():
-            raise ValueError("小说包缺少 run 数据目录。")
-        shutil.copytree(source_run_dir, target_run_dir)
+    try:
+        with tempfile.TemporaryDirectory(prefix="zaomeng-import-") as tmpdir:
+            extract_root = Path(tmpdir)
+            with zipfile.ZipFile(package_path) as archive:
+                _extract_package_archive(archive, extract_root)
+            source_run_dir = extract_root / PACKAGE_ROOT
+            if not source_run_dir.exists():
+                raise ValueError("小说包缺少 run 数据目录。")
+            _copy_tree_without_metadata(source_run_dir, target_run_dir)
 
-    manifest_path = target_run_dir / "run_manifest.json"
-    manifest = load_manifest(manifest_path)
-    if not manifest:
-        raise ValueError("小说包缺少有效的 run_manifest.json。")
+        manifest_path = target_run_dir / "run_manifest.json"
+        manifest = load_manifest(manifest_path)
+        if not manifest:
+            raise ValueError("小说包缺少有效的 run_manifest.json。")
 
-    source_run_dir = Path(str(manifest.get("webui", {}).get("run_dir", "")).strip() or target_run_dir)
-    rewritten = rewrite_imported_run_manifest(
-        manifest,
-        source_run_dir=source_run_dir,
-        target_run_dir=target_run_dir,
-        new_run_id=new_run_id,
-        imported_at=utc_now(),
-        package_filename=package_path.name,
-        builtin_source=builtin_source,
-    )
-    refreshed = discover_artifacts(rewritten)
-    write_json(manifest_path, refreshed)
-    return serialize_manifest(refreshed)
+        source_run_dir = Path(str(manifest.get("webui", {}).get("run_dir", "")).strip() or target_run_dir)
+        rewritten = rewrite_imported_run_manifest(
+            manifest,
+            source_run_dir=source_run_dir,
+            target_run_dir=target_run_dir,
+            new_run_id=new_run_id,
+            imported_at=utc_now(),
+            package_filename=package_path.name,
+            builtin_source=builtin_source,
+        )
+        refreshed = discover_artifacts(rewritten)
+        write_json(manifest_path, refreshed)
+        return serialize_manifest(refreshed)
+    except Exception:
+        shutil.rmtree(target_run_dir, ignore_errors=True)
+        raise
 
 
 def rewrite_imported_run_manifest(
@@ -222,17 +253,217 @@ def _package_title(manifest: dict[str, Any]) -> str:
     return novel_id or str(manifest.get("run_id", "")).strip() or "未命名书卷"
 
 
-def _read_package_manifest(archive: zipfile.ZipFile) -> dict[str, Any]:
+def _read_package_manifest(
+    archive: zipfile.ZipFile,
+    *,
+    members: list[tuple[zipfile.ZipInfo, PurePosixPath, bool]] | None = None,
+) -> dict[str, Any]:
+    validated_members = _validate_package_archive(archive) if members is None else members
+    manifest_info = next(
+        (
+            info
+            for info, relative, is_directory in validated_members
+            if relative.as_posix() == PACKAGE_MANIFEST_NAME and not is_directory
+        ),
+        None,
+    )
+    if manifest_info is None:
+        raise ValueError("小说包缺少 package_manifest.json。")
     try:
-        with archive.open("package_manifest.json") as handle:
-            payload = json.loads(handle.read().decode("utf-8"))
-    except KeyError as exc:
-        raise ValueError("小说包缺少 package_manifest.json。") from exc
+        payload = json.loads(
+            _read_archive_member_bytes(
+                archive,
+                manifest_info,
+                max_bytes=MAX_PACKAGE_MANIFEST_SIZE,
+            ).decode("utf-8")
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("小说包元数据格式不正确。") from exc
     if not isinstance(payload, dict):
         raise ValueError("小说包元数据格式不正确。")
     if str(payload.get("kind", "")).strip() != PACKAGE_KIND:
         raise ValueError("不是可识别的造梦小说包。")
     return _normalize_package_manifest(payload)
+
+
+def _extract_package_archive(archive: zipfile.ZipFile, extract_root: Path) -> None:
+    members = _validate_package_archive(archive)
+    _read_package_manifest(archive, members=members)
+    extracted_total = 0
+    root = extract_root.resolve(strict=False)
+
+    for info, relative, is_directory in members:
+        target = extract_root.joinpath(*relative.parts)
+        try:
+            target.resolve(strict=False).relative_to(root)
+        except ValueError as exc:  # pragma: no cover - validation is the primary guard
+            raise ValueError(f"小说包成员路径越界：{info.filename}") from exc
+
+        if is_directory:
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(info, "r") as source, target.open("xb") as destination:
+            copied = 0
+            while True:
+                chunk = source.read(_PACKAGE_COPY_CHUNK_SIZE)
+                if not chunk:
+                    break
+                copied += len(chunk)
+                extracted_total += len(chunk)
+                if copied > MAX_PACKAGE_MEMBER_SIZE:
+                    raise ValueError(f"小说包成员展开后过大：{info.filename}")
+                if extracted_total > MAX_PACKAGE_TOTAL_UNCOMPRESSED_SIZE:
+                    raise ValueError("小说包展开后的总大小超过限制。")
+                destination.write(chunk)
+        if copied != info.file_size:
+            raise ValueError(f"小说包成员大小与目录记录不一致：{info.filename}")
+
+
+def _validate_package_archive(
+    archive: zipfile.ZipFile,
+) -> list[tuple[zipfile.ZipInfo, PurePosixPath, bool]]:
+    infos = archive.infolist()
+    if len(infos) > MAX_PACKAGE_MEMBER_COUNT:
+        raise ValueError("小说包包含的文件数量超过限制。")
+
+    members: list[tuple[zipfile.ZipInfo, PurePosixPath, bool]] = []
+    seen: dict[str, tuple[PurePosixPath, bool]] = {}
+    directories: set[str] = set()
+    total_size = 0
+    manifest_count = 0
+
+    for info in infos:
+        original_filename = getattr(info, "orig_filename", info.filename)
+        relative = _validated_package_member_path(original_filename)
+        is_directory = _package_member_is_directory(info)
+        canonical = relative.as_posix().casefold()
+        if canonical in seen:
+            raise ValueError(f"小说包包含重复成员：{info.filename}")
+        seen[canonical] = (relative, is_directory)
+
+        directory_depth = len(relative.parts) if is_directory else len(relative.parts) - 1
+        for parent_length in range(1, directory_depth + 1):
+            directory = PurePosixPath(*relative.parts[:parent_length]).as_posix().casefold()
+            directories.add(directory)
+        if len(directories) > MAX_PACKAGE_DIRECTORY_COUNT:
+            raise ValueError("小说包展开后的目录数量超过限制。")
+
+        if relative.as_posix() == PACKAGE_MANIFEST_NAME:
+            if is_directory:
+                raise ValueError("package_manifest.json 必须是普通文件。")
+            manifest_count += 1
+        elif relative.parts[0] != PACKAGE_ROOT:
+            raise ValueError(f"小说包包含 run 目录之外的成员：{info.filename}")
+        elif len(relative.parts) == 1 and not is_directory:
+            raise ValueError("小说包中的 run 必须是目录。")
+
+        if info.flag_bits & 0x1:
+            raise ValueError(f"小说包不能包含加密成员：{info.filename}")
+        if is_directory:
+            if info.file_size != 0:
+                raise ValueError(f"小说包目录成员大小非法：{info.filename}")
+        else:
+            if info.compress_type not in _SUPPORTED_PACKAGE_COMPRESSION:
+                raise ValueError(f"小说包使用了不支持的压缩方式：{info.filename}")
+            if info.file_size < 0 or info.compress_size < 0:
+                raise ValueError(f"小说包成员大小非法：{info.filename}")
+            if info.file_size > MAX_PACKAGE_MEMBER_SIZE:
+                raise ValueError(f"小说包成员展开后过大：{info.filename}")
+            if relative.as_posix() == PACKAGE_MANIFEST_NAME and info.file_size > MAX_PACKAGE_MANIFEST_SIZE:
+                raise ValueError("package_manifest.json 超过大小限制。")
+            if info.file_size > 0 and info.compress_size == 0:
+                raise ValueError(f"小说包成员压缩大小非法：{info.filename}")
+            if info.file_size > info.compress_size * MAX_PACKAGE_COMPRESSION_RATIO:
+                raise ValueError(f"小说包成员压缩比过高：{info.filename}")
+            total_size += info.file_size
+            if total_size > MAX_PACKAGE_TOTAL_UNCOMPRESSED_SIZE:
+                raise ValueError("小说包展开后的总大小超过限制。")
+
+        members.append((info, relative, is_directory))
+
+    if manifest_count != 1:
+        raise ValueError("小说包缺少 package_manifest.json。")
+
+    for canonical, (relative, _) in seen.items():
+        for parent_length in range(1, len(relative.parts)):
+            parent_key = PurePosixPath(*relative.parts[:parent_length]).as_posix().casefold()
+            parent = seen.get(parent_key)
+            if parent is not None and not parent[1]:
+                raise ValueError(
+                    f"小说包成员路径与普通文件冲突：{relative.as_posix()}"
+                )
+        if canonical == PACKAGE_MANIFEST_NAME.casefold() and len(relative.parts) != 1:
+            raise ValueError("package_manifest.json 路径非法。")
+    return members
+
+
+def _validated_package_member_path(filename: str) -> PurePosixPath:
+    if not filename or "\x00" in filename:
+        raise ValueError("小说包包含空路径或非法路径。")
+    if len(filename) > MAX_PACKAGE_MEMBER_PATH_LENGTH:
+        raise ValueError("小说包成员路径过长。")
+
+    normalized = filename.replace("\\", "/")
+    windows_path = PureWindowsPath(filename)
+    if normalized.startswith("/") or windows_path.is_absolute() or windows_path.drive:
+        raise ValueError(f"小说包不能包含绝对路径：{filename}")
+
+    parts = normalized.split("/")
+    if parts and parts[-1] == "":
+        parts.pop()
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"小说包成员路径包含穿越段：{filename}")
+    if len(parts) > MAX_PACKAGE_MEMBER_PATH_DEPTH:
+        raise ValueError(f"小说包成员路径层级过深：{filename}")
+    if any(len(part.encode("utf-8")) > MAX_PACKAGE_PATH_COMPONENT_BYTES for part in parts):
+        raise ValueError(f"小说包成员路径段过长：{filename}")
+    if any(":" in part or part.rstrip(" .") != part for part in parts):
+        raise ValueError(f"小说包成员路径不适用于本地存储：{filename}")
+    if any(_is_windows_reserved_filename(part) for part in parts):
+        raise ValueError(f"小说包成员路径使用了系统保留名称：{filename}")
+    return PurePosixPath(*parts)
+
+
+def _is_windows_reserved_filename(component: str) -> bool:
+    stem = component.split(".", 1)[0].rstrip(" ").casefold()
+    return stem in _WINDOWS_RESERVED_FILE_STEMS
+
+
+def _package_member_is_directory(info: zipfile.ZipInfo) -> bool:
+    file_type = stat.S_IFMT((info.external_attr >> 16) & 0xFFFF)
+    if file_type == stat.S_IFLNK:
+        raise ValueError(f"小说包不能包含符号链接：{info.filename}")
+    if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+        raise ValueError(f"小说包包含不支持的特殊成员：{info.filename}")
+    if file_type == stat.S_IFDIR and not info.is_dir():
+        raise ValueError(f"小说包目录成员格式非法：{info.filename}")
+    if info.is_dir() and file_type == stat.S_IFREG:
+        raise ValueError(f"小说包目录成员格式非法：{info.filename}")
+    return info.is_dir()
+
+
+def _read_archive_member_bytes(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    max_bytes: int,
+) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    with archive.open(info, "r") as source:
+        while True:
+            chunk = source.read(min(_PACKAGE_COPY_CHUNK_SIZE, max_bytes + 1 - size))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                raise ValueError(f"小说包成员超过读取限制：{info.filename}")
+            chunks.append(chunk)
+    if size != info.file_size:
+        raise ValueError(f"小说包成员大小与目录记录不一致：{info.filename}")
+    return b"".join(chunks)
 
 
 def _normalize_package_manifest(payload: dict[str, Any]) -> dict[str, Any]:
@@ -305,6 +536,41 @@ def _coerce_non_negative_int(value: Any, *, default: int) -> int:
         except ValueError:
             return default
     return max(coerced, 0)
+
+
+def _copy_tree_without_metadata(
+    source_root: Path,
+    target_root: Path,
+    *,
+    ignore: Callable[[Path], bool] | None = None,
+) -> None:
+    """Copy package data without propagating host xattrs or ownership metadata."""
+    if target_root.exists():
+        raise FileExistsError(target_root)
+    target_root.mkdir(parents=True)
+    try:
+        for source in sorted(source_root.rglob("*")):
+            relative = source.relative_to(source_root)
+            if ignore is not None and ignore(relative):
+                continue
+            if source.is_symlink():
+                raise ValueError("书卷目录不能包含符号链接。")
+            target = target_root / relative
+            if source.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif source.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+            else:
+                raise ValueError(f"书卷目录包含不支持的文件类型：{relative.as_posix()}")
+    except Exception:
+        shutil.rmtree(target_root, ignore_errors=True)
+        raise
+
+
+def _is_export_copy_ignored(relative: Path) -> bool:
+    ignored_directories = {"dialogue", "exports", "__pycache__"}
+    return any(part in ignored_directories for part in relative.parts) or relative.suffix == ".pyc"
 
 
 def _strip_export_only_paths(run_dir: Path) -> None:

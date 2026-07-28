@@ -75,6 +75,7 @@ def create_run_route(
             max_sentences=payload.max_sentences,
             max_chars=payload.max_chars,
             auto_run=payload.auto_run,
+            defer_run=payload.defer_run,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

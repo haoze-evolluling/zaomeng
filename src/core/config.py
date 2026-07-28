@@ -140,6 +140,9 @@ class Config:
         """Resolve a stable project root independent of the working directory."""
         if self.config_path:
             return self.config_path.parent.resolve()
+        runtime_root = str(os.getenv("ZAOMENG_RUNTIME_ROOT", "")).strip()
+        if runtime_root:
+            return Path(runtime_root).expanduser().resolve()
         return Path(__file__).resolve().parents[2]
         
     def _find_config(self, config_path: Optional[str]) -> Optional[Path]:

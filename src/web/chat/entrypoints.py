@@ -132,26 +132,34 @@ def create_dialogue_session_payload(
         self_profile=self_profile,
     )
     session_id = str(session.get("session_id", "")).strip()
-    opening_message = build_dialogue_opening_message(session)
-    prepared = dialogue.prepare_turn(
-        manifest,
-        session_id=session_id,
-        message=opening_message,
-        speaker_override="场景提示",
-        transcript_message="",
-    )
-    return _complete_prepared_dialogue_turn(
-        run_id=run_id,
-        session_id=session_id,
-        prepared=prepared,
-        dialogue=dialogue,
-        load_pending_turn_payload=load_pending_turn_payload,
-        generate_dialogue_responses=generate_dialogue_responses,
-        friendly_dialogue_llm_error=friendly_dialogue_llm_error,
-        evolve_relations_from_turn=evolve_relations_from_turn,
-        refresh_scene_progress=refresh_scene_progress,
-        failure_reason="opening_failed",
-    )
+    try:
+        opening_message = build_dialogue_opening_message(session)
+        prepared = dialogue.prepare_turn(
+            manifest,
+            session_id=session_id,
+            message=opening_message,
+            speaker_override="场景提示",
+            transcript_message="",
+        )
+        return _complete_prepared_dialogue_turn(
+            run_id=run_id,
+            session_id=session_id,
+            prepared=prepared,
+            dialogue=dialogue,
+            load_pending_turn_payload=load_pending_turn_payload,
+            generate_dialogue_responses=generate_dialogue_responses,
+            friendly_dialogue_llm_error=friendly_dialogue_llm_error,
+            evolve_relations_from_turn=evolve_relations_from_turn,
+            refresh_scene_progress=refresh_scene_progress,
+            failure_reason="opening_failed",
+        )
+    except Exception:
+        try:
+            dialogue.delete_session(run_id, session_id)
+        except Exception:
+            # Keep the opening error as the public failure reason.
+            pass
+        raise
 
 
 def continue_dialogue_scene_opening_payload(

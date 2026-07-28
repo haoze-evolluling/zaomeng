@@ -4,12 +4,15 @@ import unittest
 
 from pydantic import ValidationError
 
+from src.web.api.compat import model_to_dict
 from src.web.api.schemas import (
     CreateRunRequest,
     DeleteSessionsRequest,
     DialogueAssociationsRequest,
     DialogueResponseItem,
     IngestDialogueTurnRequest,
+    SavePersonaReviewRequest,
+    SaveSelfCardRequest,
 )
 
 
@@ -43,6 +46,44 @@ class WebApiSchemasTests(unittest.TestCase):
             DialogueAssociationsRequest(option_count=1)
         with self.assertRaises(ValidationError):
             DialogueAssociationsRequest(option_count=5)
+
+    def test_all_persona_review_fields_can_be_saved(self):
+        payload = model_to_dict(
+            SavePersonaReviewRequest(
+                gender="女性",
+                age_stage="青年",
+                appearance_feature="眉眼清秀",
+                habit_action="常先垂眼再开口",
+                preference_like="诗词",
+                dislike_hate="虚伪",
+            )
+        )
+
+        self.assertEqual(payload["gender"], "女性")
+        self.assertEqual(payload["age_stage"], "青年")
+        self.assertEqual(payload["appearance_feature"], "眉眼清秀")
+        self.assertEqual(payload["habit_action"], "常先垂眼再开口")
+        self.assertEqual(payload["preference_like"], "诗词")
+        self.assertEqual(payload["dislike_hate"], "虚伪")
+
+    def test_all_self_card_profile_fields_can_be_saved(self):
+        payload = model_to_dict(
+            SaveSelfCardRequest(
+                gender="女性",
+                age_stage="青年",
+                appearance_feature="眉眼清秀",
+                habit_action="常先垂眼再开口",
+                preference_like="诗词",
+                dislike_hate="虚伪",
+            )
+        )
+
+        self.assertEqual(payload["gender"], "女性")
+        self.assertEqual(payload["age_stage"], "青年")
+        self.assertEqual(payload["appearance_feature"], "眉眼清秀")
+        self.assertEqual(payload["habit_action"], "常先垂眼再开口")
+        self.assertEqual(payload["preference_like"], "诗词")
+        self.assertEqual(payload["dislike_hate"], "虚伪")
 
 
 if __name__ == "__main__":
