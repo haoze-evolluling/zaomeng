@@ -534,23 +534,31 @@ private fun ChatComposer(
                     },
                     minLines = 1,
                     maxLines = 4,
+                    shape = RoundedCornerShape(24.dp),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { if (state.canSend) onSend() }),
                 )
-                Spacer(Modifier.size(8.dp))
-                Button(
+                Spacer(Modifier.size(2.dp))
+                IconButton(
                     onClick = onSend,
                     enabled = state.canSend,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 ) {
                     if (state.sending) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(19.dp),
                             strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = MaterialTheme.colorScheme.primary,
                         )
                     } else {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "发送",
+                            tint = if (state.canSend) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                            },
+                        )
                     }
                 }
             }

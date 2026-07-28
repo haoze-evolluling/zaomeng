@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -8,6 +10,12 @@ plugins {
 val repositoryRoot = rootProject.projectDir.parentFile
 val generatedPythonSources = layout.buildDirectory.dir("generated/python/main")
 val configuredBuildPython = providers.gradleProperty("chaquopyBuildPython").orNull
+val signingPropertiesFile = rootProject.file("keystore.properties")
+val signingProperties = Properties().apply {
+    if (signingPropertiesFile.exists()) {
+        signingPropertiesFile.inputStream().use { input -> load(input) }
+    }
+}
 val syncSharedPythonSources by tasks.registering(Sync::class) {
     from(repositoryRoot) {
         include("src/**")
@@ -39,15 +47,33 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        if (signingPropertiesFile.exists()) {
+            create("release") {
+                val storePath = signingProperties.getProperty("storeFile").orEmpty()
+                storeFile = rootProject.file(storePath)
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+            }
         }
     }
 
     buildTypes {
         release {
-            optimization {
-                enable = false
+            if (signingPropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
             }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
     compileOptions {
