@@ -227,9 +227,9 @@ class ImportBookViewModel(
                 mutableState.update {
                     it.copy(
                         error = if (current.autoDistill) {
-                            "TXT 蒸馏至少需要填写一个人物名。"
+                            "正文蒸馏至少需要填写一个人物名。"
                         } else {
-                            "导入 TXT 至少需要填写一个人物名，供之后蒸馏使用。"
+                            "导入正文至少需要填写一个人物名，供之后蒸馏使用。"
                         },
                     )
                 }

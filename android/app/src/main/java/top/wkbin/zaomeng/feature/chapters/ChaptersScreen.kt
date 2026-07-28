@@ -1,0 +1,251 @@
+package top.wkbin.zaomeng.feature.chapters
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.zaomeng.data.api.ChapterDto
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChaptersScreen(
+    viewModel: ChaptersViewModel,
+    onBack: () -> Unit,
+    onOpenChat: (String, String) -> Unit,
+    onOpenPersona: (String, String) -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<ChapterDto?>(null) }
+    var showCreate by remember { mutableStateOf(false) }
+    var showArchive by remember { mutableStateOf(false) }
+    var launchedRequestId by remember { mutableStateOf(0L) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri == null) viewModel.discardExport() else viewModel.saveExport(uri)
+    }
+
+    LaunchedEffect(state.exportRequestId, state.exported?.filename) {
+        val exported = state.exported ?: return@LaunchedEffect
+        if (state.exportRequestId != launchedRequestId) {
+            launchedRequestId = state.exportRequestId
+            exportLauncher.launch(exported.filename)
+        }
+    }
+    LaunchedEffect(state.navigationSessionId) {
+        val sessionId = state.navigationSessionId
+        if (sessionId.isNotBlank()) {
+            viewModel.consumeNavigationSession()
+            onOpenChat(viewModel.runId, sessionId)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("章节工作台") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } },
+                actions = {
+                    IconButton(onClick = { showArchive = true }, enabled = state.sessions.isNotEmpty() && !state.saving) {
+                        Icon(Icons.Default.Forum, "归档会话")
+                    }
+                    IconButton(onClick = { viewModel.export("markdown") }, enabled = !state.exporting) {
+                        Icon(Icons.Default.FileDownload, "导出 Markdown")
+                    }
+                    IconButton(onClick = { showCreate = true }, enabled = !state.saving) {
+                        Icon(Icons.Default.Add, "新建章节")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("把会话沉淀成章节草稿，再统一导出全书。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = state.searchQuery,
+                            onValueChange = viewModel::updateSearchQuery,
+                            label = { Text("搜索章节和会话") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                        Button(onClick = viewModel::search, enabled = !state.searching && state.searchQuery.isNotBlank()) {
+                            Text(if (state.searching) "…" else "搜索")
+                        }
+                    }
+                }
+            }
+            if (state.error.isNotBlank()) item { Text(state.error, color = MaterialTheme.colorScheme.error) }
+            if (state.message.isNotBlank()) item { Text(state.message, color = MaterialTheme.colorScheme.primary) }
+            if (state.searchResults.isNotEmpty()) {
+                item { Text("搜索结果", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+                items(state.searchResults, key = { "${it.kind}:${it.chapterId}:${it.sessionId}:${it.character}" }) { result ->
+                    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(if (result.kind == "session") "会话 · ${result.title}" else result.title, fontWeight = FontWeight.SemiBold)
+                        Text(result.preview, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        if (result.kind == "persona" && result.character.isNotBlank()) {
+                            TextButton(onClick = { onOpenPersona(viewModel.runId, result.character) }) { Text("校对人物") }
+                        }
+                        if (result.kind == "session" && result.sessionId.isNotBlank()) {
+                            TextButton(onClick = { onOpenChat(viewModel.runId, result.sessionId) }) { Text("打开会话") }
+                        }
+                    } }
+                }
+            }
+            if (state.loading) item { CircularProgressIndicator() }
+            if (!state.loading && state.chapters.isEmpty()) item {
+                Card { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("还没有章节", fontWeight = FontWeight.SemiBold)
+                    Text("新建一个空白章节，或把现有聊天会话归档为草稿。")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { showCreate = true }) { Text("新建章节") }
+                        OutlinedButton(onClick = { showArchive = true }, enabled = state.sessions.isNotEmpty()) { Text("归档会话") }
+                    }
+                } }
+            }
+            items(state.chapters, key = ChapterDto::chapterId) { chapter ->
+                ChapterCard(
+                    chapter = chapter,
+                    opening = state.openingChapterId == chapter.chapterId,
+                    syncing = state.syncingChapterId == chapter.chapterId,
+                    canMoveUp = chapter.order > 1,
+                    canMoveDown = chapter.order < state.chapters.size,
+                    onContinue = { viewModel.continueWriting(chapter.chapterId) },
+                    onSync = { viewModel.syncLatestSession(chapter.chapterId) },
+                    onMoveUp = { viewModel.move(chapter.chapterId, chapter.order - 1) },
+                    onMoveDown = { viewModel.move(chapter.chapterId, chapter.order + 1) },
+                    onEdit = { editing = chapter },
+                    onDelete = { viewModel.delete(chapter.chapterId) },
+                )
+            }
+            if (state.chapters.isNotEmpty()) item {
+                OutlinedButton(onClick = { viewModel.export("text") }, enabled = !state.exporting, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (state.exporting) "正在准备导出…" else "导出全书 TXT")
+                }
+            }
+        }
+    }
+    if (showCreate) ChapterEditorDialog(onDismiss = { showCreate = false }) { title, goal, participants, content ->
+        viewModel.save(title = title, goal = goal, participants = participants, content = content)
+        showCreate = false
+    }
+    editing?.let { chapter -> ChapterEditorDialog(chapter = chapter, onDismiss = { editing = null }) { title, goal, participants, content ->
+        viewModel.save(chapter.chapterId, title, goal, participants, content)
+        editing = null
+    } }
+    if (showArchive) ArchiveSessionDialog(
+        sessions = state.sessions,
+        onDismiss = { showArchive = false },
+        onArchive = { sessionId, title -> viewModel.archiveSession(sessionId, title); showArchive = false },
+    )
+}
+
+@Composable
+private fun ChapterCard(
+    chapter: ChapterDto,
+    opening: Boolean,
+    syncing: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onContinue: () -> Unit,
+    onSync: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("第 ${chapter.order} 章 · ${chapter.title}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        if (chapter.goal.isNotBlank()) Text("目标：${chapter.goal}", style = MaterialTheme.typography.bodySmall)
+        if (chapter.participants.isNotEmpty()) Text(chapter.participants.joinToString("、"), style = MaterialTheme.typography.labelSmall)
+        Text(chapter.content.ifBlank { "空白草稿" }, maxLines = 5, overflow = TextOverflow.Ellipsis)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onContinue, enabled = !opening) { Text(if (opening) "正在入场…" else "继续写作") }
+            if (chapter.lastSessionId.isNotBlank()) {
+                OutlinedButton(onClick = onSync, enabled = !syncing) { Text(if (syncing) "正在收录…" else "收录会话") }
+            }
+            TextButton(onClick = onMoveUp, enabled = canMoveUp) { Text("上移") }
+            TextButton(onClick = onMoveDown, enabled = canMoveDown) { Text("下移") }
+            OutlinedButton(onClick = onEdit) { Text("编辑") }
+            TextButton(onClick = onDelete) { Text("删除") }
+        }
+    } }
+}
+
+@Composable
+private fun ChapterEditorDialog(chapter: ChapterDto? = null, onDismiss: () -> Unit, onSave: (String, String, String, String) -> Unit) {
+    var title by remember(chapter) { mutableStateOf(chapter?.title.orEmpty()) }
+    var goal by remember(chapter) { mutableStateOf(chapter?.goal.orEmpty()) }
+    var participants by remember(chapter) { mutableStateOf(chapter?.participants?.joinToString("、").orEmpty()) }
+    var content by remember(chapter) { mutableStateOf(chapter?.content.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (chapter == null) "新建章节" else "编辑章节") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(title, { title = it }, label = { Text("章节标题") }, singleLine = true)
+            OutlinedTextField(goal, { goal = it }, label = { Text("本章目标") })
+            OutlinedTextField(participants, { participants = it }, label = { Text("出场人物（用顿号或逗号分隔）") })
+            OutlinedTextField(content, { content = it }, label = { Text("草稿内容") }, minLines = 6)
+        } },
+        confirmButton = { Button(onClick = { onSave(title, goal, participants, content) }, enabled = title.isNotBlank()) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun ArchiveSessionDialog(sessions: List<top.wkbin.zaomeng.data.api.DialogueSessionDto>, onDismiss: () -> Unit, onArchive: (String, String) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("归档会话为章节") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (sessions.isEmpty()) Text("还没有可归档的会话。")
+            sessions.forEach { session ->
+                OutlinedButton(onClick = { onArchive(session.sessionId, "") }, modifier = Modifier.fillMaxWidth()) {
+                    Text(session.lastEntryPreview.ifBlank { "会话 ${session.sessionId.takeLast(6)}" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        } },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}

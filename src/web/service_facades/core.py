@@ -113,19 +113,64 @@ class CoreServiceMixin:
         )
 
     def _load_model_settings_payload(self) -> dict[str, Any]:
-        payload = self._load_json_file(self.settings_path) or {}
+        document = self._load_model_settings_document()
+        profiles = list(document.get("profiles", []) or [])
+        active_profile_id = str(document.get("active_profile_id", "")).strip()
+        payload = next(
+            (dict(item) for item in profiles if str(item.get("profile_id", "")).strip() == active_profile_id),
+            dict(profiles[0]) if profiles else {},
+        )
+        if not payload:
+            return {}
+        secret_name = self._model_profile_secret_name(payload)
         inline_api_key = str(payload.get("api_key", "")).strip()
-        stored_api_key = self._secret_store.read(self._model_api_key_secret_name)
+        stored_api_key = self._secret_store.read(secret_name)
         if inline_api_key:
-            self._secret_store.write(self._model_api_key_secret_name, inline_api_key)
+            self._secret_store.write(secret_name, inline_api_key)
             stored_api_key = inline_api_key
             sanitized = dict(payload)
             sanitized.pop("api_key", None)
-            sanitized["api_key_ref"] = self._model_api_key_secret_name
-            self._write_json(self.settings_path, sanitized)
+            sanitized["api_key_ref"] = secret_name
+            document["profiles"] = [
+                sanitized if str(item.get("profile_id", "")).strip() == str(payload.get("profile_id", "")).strip() else item
+                for item in profiles
+            ]
+            self._write_json(self.settings_path, document)
         resolved = dict(payload)
         resolved["api_key"] = stored_api_key or inline_api_key
         return resolved
+
+    def _load_model_settings_document(self) -> dict[str, Any]:
+        payload = self._load_json_file(self.settings_path) or {}
+        profiles = [dict(item) for item in list(payload.get("profiles", []) or []) if isinstance(item, dict)]
+        if profiles:
+            active_profile_id = str(payload.get("active_profile_id", "")).strip()
+            if not any(str(item.get("profile_id", "")).strip() == active_profile_id for item in profiles):
+                active_profile_id = str(profiles[0].get("profile_id", "")).strip()
+            return {"version": 2, "active_profile_id": active_profile_id, "profiles": profiles}
+        legacy_keys = {"provider", "model", "base_url", "api_key", "api_key_ref", "max_tokens", "updated_at"}
+        if not any(key in payload for key in legacy_keys):
+            return {"version": 2, "active_profile_id": "", "profiles": []}
+        profile = {
+            "profile_id": "default",
+            "name": str(payload.get("name", "")).strip() or "默认模型",
+            "provider": str(payload.get("provider", "")).strip(),
+            "model": str(payload.get("model", "")).strip(),
+            "base_url": str(payload.get("base_url", "")).strip(),
+            "max_tokens": int(payload.get("max_tokens", 0) or 0),
+            "updated_at": str(payload.get("updated_at", "")).strip(),
+            "api_key_ref": str(payload.get("api_key_ref", "")).strip() or self._model_api_key_secret_name,
+        }
+        if str(payload.get("api_key", "")).strip():
+            profile["api_key"] = str(payload.get("api_key", "")).strip()
+        return {"version": 2, "active_profile_id": "default", "profiles": [profile]}
+
+    def _model_profile_secret_name(self, profile: dict[str, Any]) -> str:
+        configured = str(profile.get("api_key_ref", "")).strip()
+        if configured:
+            return configured
+        profile_id = str(profile.get("profile_id", "")).strip()
+        return self._model_api_key_secret_name if profile_id in {"", "default"} else f"{self._model_api_key_secret_name}_{profile_id}"
 
     def _load_pending_turn_payload(self, run_id: str, session_id: str) -> dict[str, Any]:
         return load_dialogue_pending_turn_payload(

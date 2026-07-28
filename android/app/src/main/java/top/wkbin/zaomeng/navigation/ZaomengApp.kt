@@ -22,6 +22,8 @@ import top.wkbin.zaomeng.feature.cards.CardLibraryScreen
 import top.wkbin.zaomeng.feature.cards.CardLibraryViewModel
 import top.wkbin.zaomeng.feature.chat.ChatScreen
 import top.wkbin.zaomeng.feature.chat.ChatViewModel
+import top.wkbin.zaomeng.feature.chapters.ChaptersScreen
+import top.wkbin.zaomeng.feature.chapters.ChaptersViewModel
 import top.wkbin.zaomeng.feature.importbook.ImportBookScreen
 import top.wkbin.zaomeng.feature.importbook.ImportBookViewModel
 import top.wkbin.zaomeng.feature.persona.PersonaScreen
@@ -128,6 +130,7 @@ fun ZaomengApp(
                     navController.navigate(PersonaDestination(runId, character))
                 },
                 onOpenSessions = { runId -> navController.navigate(SessionsDestination(runId)) },
+                onOpenChapters = { runId -> navController.navigate(ChaptersDestination(runId)) },
                 onOpenRelations = { runId -> navController.navigate(RelationsDestination(runId)) },
                 onOpenRedistill = { runId -> navController.navigate(RedistillDestination(runId)) },
                 onDeleted = { navController.popBackStack() },
@@ -152,6 +155,19 @@ fun ZaomengApp(
                 parameters = { parametersOf(destination.runId) },
             )
             RelationsScreen(viewModel = viewModel, onBack = navController::navigateUp)
+        }
+
+        composable<ChaptersDestination> { entry ->
+            val destination = entry.toRoute<ChaptersDestination>()
+            val viewModel: ChaptersViewModel = koinViewModel(
+                parameters = { parametersOf(destination.runId) },
+            )
+            ChaptersScreen(
+                viewModel = viewModel,
+                onBack = navController::navigateUp,
+                onOpenChat = { runId, sessionId -> navController.navigate(ChatDestination(runId, sessionId)) },
+                onOpenPersona = { runId, character -> navController.navigate(PersonaDestination(runId, character)) },
+            )
         }
 
         composable<CardLibraryDestination> {
@@ -256,6 +272,7 @@ private fun RunDetailWithExporter(
     onBack: () -> Unit,
     onOpenPersona: (String, String) -> Unit,
     onOpenSessions: (String) -> Unit,
+    onOpenChapters: (String) -> Unit,
     onOpenRelations: (String) -> Unit,
     onOpenRedistill: (String) -> Unit,
     onDeleted: () -> Unit,
@@ -277,6 +294,7 @@ private fun RunDetailWithExporter(
         onBack = onBack,
         onOpenPersona = onOpenPersona,
         onOpenSessions = onOpenSessions,
+        onOpenChapters = onOpenChapters,
         onOpenRelations = onOpenRelations,
         onOpenRedistill = onOpenRedistill,
         onDeleted = onDeleted,

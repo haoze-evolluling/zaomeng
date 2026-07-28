@@ -186,19 +186,35 @@ class MarkdownSessionStore(SessionStore):
         if not session_id or not normalized:
             return []
         limit = _clamp(top_k, 1, 50)
-        pinecone_hits = self._search_pinecone(session_id, normalized, top_k=limit)
-        if pinecone_hits:
-            return [hit.to_payload() for hit in pinecone_hits]
-
         payload = self._load_long_term_payload(session_id)
         entries = list(payload.get("entries", []) or [])
+        query_key = normalized.casefold()
+        exact_hits = [
+            MemorySearchHit(
+                text=_normalize_text(item.get("text", "")),
+                score=1.0,
+                metadata=dict(item.get("metadata", {}) or {}),
+            )
+            for item in reversed(entries)
+            if query_key in _normalize_text(item.get("text", "")).casefold()
+        ]
+        if len(exact_hits) >= limit:
+            return [hit.to_payload() for hit in exact_hits[:limit]]
+
+        seen = {hit.text for hit in exact_hits}
+        pinecone_hits = self._search_pinecone(session_id, normalized, top_k=limit)
+        if pinecone_hits:
+            combined = [*exact_hits]
+            combined.extend(hit for hit in pinecone_hits if hit.text not in seen)
+            return [hit.to_payload() for hit in combined[:limit]]
+
         if not entries:
-            return []
+            return [hit.to_payload() for hit in exact_hits]
         query_vec = self._embed_local(normalized)
         scored: list[MemorySearchHit] = []
         for item in entries:
             text = _normalize_text(item.get("text", ""))
-            if not text:
+            if not text or text in seen:
                 continue
             item_vec = self._embed_local(text)
             score = self._cosine_similarity(query_vec, item_vec)
@@ -210,7 +226,7 @@ class MarkdownSessionStore(SessionStore):
                 )
             )
         scored.sort(key=lambda hit: hit.score, reverse=True)
-        return [hit.to_payload() for hit in scored[:limit]]
+        return [hit.to_payload() for hit in [*exact_hits, *scored][:limit]]
 
     def save_relation_snapshot(self, session: Dict[str, Any]) -> None:
         session_id = self._session_identity(session)

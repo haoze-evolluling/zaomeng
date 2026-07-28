@@ -2,6 +2,8 @@ from .automatic_pipeline import AutomaticPipelineMixin
 from .core import CoreServiceMixin
 from .artifacts import ArtifactServiceMixin
 from .dialogue import DialogueServiceMixin
+from .diagnostics import DiagnosticsServiceMixin
+from .chapters import ChapterServiceMixin
 from .opening_presets import OpeningPresetServiceMixin
 from .packages import PackageServiceMixin
 from .pipeline_helpers import PipelineHelpersMixin
@@ -18,6 +20,8 @@ __all__ = [
     "ArtifactServiceMixin",
     "CoreServiceMixin",
     "DialogueServiceMixin",
+    "DiagnosticsServiceMixin",
+    "ChapterServiceMixin",
     "OpeningPresetServiceMixin",
     "PackageServiceMixin",
     "PipelineHelpersMixin",

@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.web.api.deps import get_run_service
-from src.web.api.schemas import SaveModelSettingsRequest, StartAppUpdateRequest
+from src.web.api.schemas import SaveModelSettingsRequest, StartAppUpdateRequest, TestModelSettingsRequest
 from src.web.workflow import WebRunService
 
 router = APIRouter()
@@ -33,7 +33,54 @@ def save_model_settings(
             base_url=payload.base_url,
             api_key=payload.api_key,
             max_tokens=payload.max_tokens,
+            profile_id=payload.profile_id,
+            profile_name=payload.profile_name,
+            create_profile=payload.create_profile,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/settings/model/test")
+def test_model_settings(
+    payload: TestModelSettingsRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.test_model_connection(
+            provider=payload.provider,
+            model=payload.model,
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            max_tokens=payload.max_tokens,
+            profile_id=payload.profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Model connection failed: {exc}") from exc
+
+
+@router.post("/api/web/settings/model/profiles/{profile_id}/activate")
+def activate_model_profile(
+    profile_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.activate_model_profile(profile_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Model profile was not found.") from exc
+
+
+@router.delete("/api/web/settings/model/profiles/{profile_id}")
+def delete_model_profile(
+    profile_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.delete_model_profile(profile_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Model profile was not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

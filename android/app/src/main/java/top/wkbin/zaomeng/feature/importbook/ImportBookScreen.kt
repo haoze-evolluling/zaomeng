@@ -88,7 +88,12 @@ fun ImportBookScreen(
         requestedKindName = kind.name
         viewModel.beginFileSelection()
         val mimeTypes = when (kind) {
-            ImportDocumentKind.NovelText -> arrayOf("text/plain", "text/*", "application/octet-stream")
+            ImportDocumentKind.NovelText -> arrayOf(
+                "text/plain",
+                "text/*",
+                "application/epub+zip",
+                "application/octet-stream",
+            )
             ImportDocumentKind.RunPackage -> arrayOf(
                 "application/zip",
                 "application/x-zip-compressed",
@@ -130,7 +135,7 @@ fun ImportBookScreen(
             item {
                 Text("从文件建立书卷", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "选择 TXT 正文开始人物蒸馏，或者恢复之前导出的书卷包。数据只会写入这台手机。",
+                    "选择 TXT 或 EPUB 正文开始人物蒸馏，或者恢复之前导出的书卷包。数据只会写入这台手机。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -184,9 +189,9 @@ fun ImportBookScreen(
             }
             item {
                 ImportSourceCard(
-                    title = "TXT 小说",
-                    description = "支持 UTF-8、UTF-16 和常见中文 GB18030 编码。",
-                    actionLabel = "选择 TXT 小说",
+                    title = "TXT / EPUB 小说",
+                    description = "TXT 支持 UTF-8、UTF-16 和 GB18030；EPUB 会在手机本机提取正文。",
+                    actionLabel = "选择 TXT 或 EPUB",
                     icon = { Icon(Icons.Outlined.Description, contentDescription = null) },
                     enabled = !state.submitting && !state.readingFile,
                     onClick = { chooseDocument(ImportDocumentKind.NovelText) },
@@ -222,7 +227,7 @@ fun ImportBookScreen(
                                 if (state.packageFile) {
                                     "造梦书卷包 · ${state.fileSize.readableFileSize()}"
                                 } else {
-                                    "TXT 正文 · ${state.fileSize.readableFileSize()} · ${state.sourceEncoding}"
+                                    "正文 · ${state.fileSize.readableFileSize()} · ${state.sourceEncoding}"
                                 },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -454,7 +459,7 @@ private fun ModelConfigurationNotice(
             ) {
                 Text("开始蒸馏前需要配置模型", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    error.ifBlank { "书卷包可以直接恢复；TXT 正文需要模型生成角色资料。" },
+                    error.ifBlank { "书卷包可以直接恢复；TXT 或 EPUB 正文需要模型生成角色资料。" },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )

@@ -37,12 +37,19 @@ data class NewSessionDraft(
     val selfProfile: JsonObject = JsonObject(emptyMap()),
 )
 
+enum class SessionsSort(val label: String) {
+    Recent("最近活跃"),
+    Title("按书名"),
+}
+
 data class SessionsUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
     val creating: Boolean = false,
     val sessions: List<DialogueSessionDto> = emptyList(),
     val runs: List<RunManifestDto> = emptyList(),
+    val searchQuery: String = "",
+    val sort: SessionsSort = SessionsSort.Recent,
     val sceneCards: List<ReusableCardDto> = emptyList(),
     val selfCards: List<ReusableCardDto> = emptyList(),
     val openingPresets: List<ReusableCardDto> = emptyList(),
@@ -152,6 +159,14 @@ class SessionsViewModel(
         val current = state.value
         if (current.creating || current.deletingSessionKeys.isNotEmpty()) return
         load(state.value.scopedRunId, force = true)
+    }
+
+    fun updateSearchQuery(value: String) {
+        mutableState.update { it.copy(searchQuery = value.take(120)) }
+    }
+
+    fun selectSort(sort: SessionsSort) {
+        mutableState.update { it.copy(sort = sort) }
     }
 
     fun onScreenResumed() {
@@ -611,6 +626,50 @@ private data class LoadedSessionResources(
     val selfCards: List<ReusableCardDto>,
     val openingPresets: List<ReusableCardDto>,
 )
+
+internal fun filterSessions(state: SessionsUiState): List<DialogueSessionDto> {
+    val runTitles = state.runs.associate { it.runId to it.title }
+    val query = state.searchQuery.trim()
+    val filtered = if (query.isBlank()) {
+        state.sessions
+    } else {
+        state.sessions.filter { session ->
+            listOf(
+                runTitles[session.runId].orEmpty(),
+                session.novelId,
+                session.modeDisplay,
+                session.mode.chineseSearchLabel(),
+                session.participants.joinToString(" "),
+                session.controlledCharacter,
+                session.lastEntryPreview,
+            ).any { value -> value.contains(query, ignoreCase = true) }
+        }
+    }
+    return when (state.sort) {
+        SessionsSort.Recent -> filtered.sortedWith(
+            compareByDescending<DialogueSessionDto> { it.updatedAt }
+                .thenByDescending { it.createdAt },
+        )
+        SessionsSort.Title -> filtered.sortedWith { left, right ->
+            val titleOrder = sessionTitle(left, runTitles)
+                .compareTo(sessionTitle(right, runTitles), ignoreCase = true)
+            if (titleOrder != 0) titleOrder else right.updatedAt.compareTo(left.updatedAt)
+        }
+    }
+}
+
+private fun sessionTitle(
+    session: DialogueSessionDto,
+    runTitles: Map<String, String>,
+): String = runTitles[session.runId]
+    ?.takeIf(String::isNotBlank)
+    ?: session.novelId.ifBlank { session.sessionId }
+
+private fun String.chineseSearchLabel(): String = when (this) {
+    "act" -> "扮演人物"
+    "insert" -> "自设入场"
+    else -> "旁观群聊"
+}
 
 private fun JsonObject.stringValue(key: String): String = this[key]
     ?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }

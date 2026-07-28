@@ -72,6 +72,7 @@ fun RunDetailScreen(
     onBack: () -> Unit,
     onOpenPersona: (runId: String, character: String) -> Unit,
     onOpenSessions: (runId: String) -> Unit,
+    onOpenChapters: (runId: String) -> Unit,
     onOpenRelations: (runId: String) -> Unit,
     onOpenRedistill: (runId: String) -> Unit,
     onExportReady: (ExportedRunPackage) -> Unit,
@@ -211,6 +212,7 @@ fun RunDetailScreen(
                 onExport = viewModel::exportRun,
                 onOpenPersona = { character -> onOpenPersona(viewModel.runId, character) },
                 onOpenSessions = { onOpenSessions(viewModel.runId) },
+                onOpenChapters = { onOpenChapters(viewModel.runId) },
                 onOpenRelations = { onOpenRelations(viewModel.runId) },
                 onOpenRedistill = { onOpenRedistill(viewModel.runId) },
                 onDelete = { confirmDelete = true },
@@ -230,6 +232,7 @@ private fun RunDetailContent(
     onExport: () -> Unit,
     onOpenPersona: (String) -> Unit,
     onOpenSessions: () -> Unit,
+    onOpenChapters: () -> Unit,
     onOpenRelations: () -> Unit,
     onOpenRedistill: () -> Unit,
     onDelete: () -> Unit,
@@ -271,6 +274,7 @@ private fun RunDetailContent(
                 onRedistill = onRedistill,
                 onExport = onExport,
                 onOpenSessions = onOpenSessions,
+                onOpenChapters = onOpenChapters,
                 onOpenRelations = onOpenRelations,
                 onOpenRedistill = onOpenRedistill,
                 onDelete = onDelete,
@@ -480,6 +484,7 @@ private fun ActionCard(
     onRedistill: () -> Unit,
     onExport: () -> Unit,
     onOpenSessions: () -> Unit,
+    onOpenChapters: () -> Unit,
     onOpenRelations: () -> Unit,
     onOpenRedistill: () -> Unit,
     onDelete: () -> Unit,
@@ -492,6 +497,10 @@ private fun ActionCard(
                 Icon(Icons.Outlined.Forum, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("查看会话与开始聊天")
+            }
+
+            OutlinedButton(onClick = onOpenChapters, modifier = Modifier.fillMaxWidth()) {
+                Text("章节工作台与全书导出")
             }
 
             OutlinedButton(onClick = onOpenRelations, modifier = Modifier.fillMaxWidth()) {

@@ -13,9 +13,9 @@ from src.web.run_ops.state import derive_summary_graph_status, derive_summary_st
 from src.utils.file_utils import safe_filename
 
 PACKAGE_KIND = "zaomeng_web_run_package"
-PACKAGE_SCHEMA_VERSION = 1
+PACKAGE_SCHEMA_VERSION = 2
 PACKAGE_LEGACY_SCHEMA_VERSION = 0
-SUPPORTED_PACKAGE_SCHEMA_VERSIONS = {PACKAGE_LEGACY_SCHEMA_VERSION, PACKAGE_SCHEMA_VERSION}
+SUPPORTED_PACKAGE_SCHEMA_VERSIONS = {PACKAGE_LEGACY_SCHEMA_VERSION, 1, PACKAGE_SCHEMA_VERSION}
 PACKAGE_SUFFIX = ".zaomeng-run.zip"
 PACKAGE_ROOT = "run"
 PACKAGE_MANIFEST_NAME = "package_manifest.json"
@@ -79,13 +79,15 @@ def export_run_package(
         _copy_tree_without_metadata(
             run_dir,
             staged_run_dir,
-            ignore=_is_export_copy_ignored,
+            ignore=lambda relative: _is_export_copy_ignored(relative, include_dialogue=not builtin),
         )
-        _strip_export_only_paths(staged_run_dir)
+        _strip_export_only_paths(staged_run_dir, include_dialogue=not builtin)
         package_manifest = _build_package_manifest(
             manifest=manifest,
             builtin=builtin,
             exported_at=utc_now(),
+            includes_dialogue=not builtin and (run_dir / "dialogue").exists(),
+            includes_chapters=(run_dir / "chapters").exists(),
         )
         (staging_root / PACKAGE_MANIFEST_NAME).write_text(
             json.dumps(package_manifest, ensure_ascii=False, indent=2),
@@ -171,6 +173,10 @@ def import_run_package(
             if not source_run_dir.exists():
                 raise ValueError("小说包缺少 run 数据目录。")
             _copy_tree_without_metadata(source_run_dir, target_run_dir)
+            # ZIP archives don't preserve empty directories. Every imported run
+            # must still have a dialogue root so it can create new local sessions
+            # even when the exported book had no chat history yet.
+            (target_run_dir / "dialogue").mkdir(parents=True, exist_ok=True)
 
         manifest_path = target_run_dir / "run_manifest.json"
         manifest = load_manifest(manifest_path)
@@ -178,6 +184,12 @@ def import_run_package(
             raise ValueError("小说包缺少有效的 run_manifest.json。")
 
         source_run_dir = Path(str(manifest.get("webui", {}).get("run_dir", "")).strip() or target_run_dir)
+        _rewrite_imported_dialogue_sessions(
+            target_run_dir=target_run_dir,
+            source_run_dir=source_run_dir,
+            new_run_id=new_run_id,
+            write_json=write_json,
+        )
         rewritten = rewrite_imported_run_manifest(
             manifest,
             source_run_dir=source_run_dir,
@@ -223,6 +235,8 @@ def _build_package_manifest(
     manifest: dict[str, Any],
     builtin: bool,
     exported_at: str,
+    includes_dialogue: bool,
+    includes_chapters: bool,
 ) -> dict[str, Any]:
     title = _package_title(manifest)
     package_id = package_filename_slug(title, fallback=str(manifest.get("run_id", "run")).strip() or "run")
@@ -245,6 +259,8 @@ def _build_package_manifest(
         "exported_at": exported_at,
         "updated_at": str(manifest.get("updated_at", "")).strip(),
         "builtin": builtin,
+        "includes_dialogue": includes_dialogue,
+        "includes_chapters": includes_chapters,
     }
 
 
@@ -568,12 +584,40 @@ def _copy_tree_without_metadata(
         raise
 
 
-def _is_export_copy_ignored(relative: Path) -> bool:
-    ignored_directories = {"dialogue", "exports", "__pycache__"}
+def _rewrite_imported_dialogue_sessions(
+    *,
+    target_run_dir: Path,
+    source_run_dir: Path,
+    new_run_id: str,
+    write_json: Callable[[Path, dict[str, Any]], None],
+) -> None:
+    dialogue_dir = target_run_dir / "dialogue"
+    if not dialogue_dir.exists():
+        return
+    for session_path in dialogue_dir.glob("*/session.json"):
+        try:
+            payload = json.loads(session_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        rewritten = rewrite_run_root_paths(
+            payload,
+            source_root=source_run_dir.resolve(strict=False),
+            target_root=target_run_dir.resolve(strict=False),
+        )
+        rewritten["run_id"] = new_run_id
+        write_json(session_path, rewritten)
+
+
+def _is_export_copy_ignored(relative: Path, *, include_dialogue: bool) -> bool:
+    ignored_directories = {"exports", "__pycache__"}
+    if not include_dialogue:
+        ignored_directories.add("dialogue")
     return any(part in ignored_directories for part in relative.parts) or relative.suffix == ".pyc"
 
 
-def _strip_export_only_paths(run_dir: Path) -> None:
+def _strip_export_only_paths(run_dir: Path, *, include_dialogue: bool) -> None:
     dialogue_dir = run_dir / "dialogue"
-    if dialogue_dir.exists():
+    if not include_dialogue and dialogue_dir.exists():
         shutil.rmtree(dialogue_dir, ignore_errors=False)

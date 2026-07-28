@@ -2,12 +2,27 @@ package top.wkbin.zaomeng.data.api
 
 import java.io.File
 import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class ModelSettingsDto(
+    val provider: String = "openai-compatible",
+    val model: String = "",
+    @SerialName("base_url") val baseUrl: String = "",
+    @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("api_key_configured") val apiKeyConfigured: Boolean = false,
+    val configured: Boolean = false,
+    @SerialName("active_profile_id") val activeProfileId: String = "",
+    val profiles: List<ModelProfileDto> = emptyList(),
+)
+
+@Serializable
+data class ModelProfileDto(
+    @SerialName("profile_id") val profileId: String = "",
+    val name: String = "",
     val provider: String = "openai-compatible",
     val model: String = "",
     @SerialName("base_url") val baseUrl: String = "",
@@ -23,6 +38,28 @@ data class SaveModelSettingsRequest(
     @SerialName("base_url") val baseUrl: String = "",
     @SerialName("api_key") val apiKey: String = "",
     @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("profile_id") val profileId: String = "",
+    @SerialName("profile_name") val profileName: String = "",
+    @SerialName("create_profile") val createProfile: Boolean = false,
+)
+
+@Serializable
+data class TestModelSettingsRequest(
+    val provider: String,
+    val model: String,
+    @SerialName("base_url") val baseUrl: String = "",
+    @SerialName("api_key") val apiKey: String = "",
+    @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("profile_id") val profileId: String = "",
+)
+
+@Serializable
+data class ModelConnectionTestDto(
+    val ok: Boolean = false,
+    val provider: String = "",
+    val model: String = "",
+    @SerialName("latency_ms") val latencyMs: Int = 0,
+    val message: String = "",
 )
 
 @Serializable
@@ -134,6 +171,7 @@ data class PersonaPreviewDto(
     @SerialName("temperament_type") val temperamentType: String = "",
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class CreateRunRequest(
     @SerialName("novel_name") val novelName: String,
@@ -354,10 +392,30 @@ data class TranscriptItemDto(
     val speaker: String = "",
     val message: String = "",
     val role: String = "character",
+    @SerialName("turn_id") val turnId: String = "",
+    val timestamp: String = "",
 )
 
 @Serializable
+data class ChatSearchResponse(
+    val items: List<ChatSearchResultDto> = emptyList(),
+)
+
+@Serializable
+data class ChatSearchResultDto(
+    val speaker: String = "",
+    val message: String = "",
+    val role: String = "character",
+    @SerialName("turn_id") val turnId: String = "",
+    val timestamp: String = "",
+    val archived: Boolean = false,
+    val score: Double = 0.0,
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
 data class CreateDialogueSessionRequest(
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val mode: String = "observe",
     val participants: List<String> = emptyList(),
     @SerialName("controlled_character") val controlledCharacter: String = "",
@@ -372,6 +430,7 @@ data class DialogueReplyRequest(
     val message: String,
     @SerialName("message_kind") val messageKind: String = "dialogue",
     @SerialName("suppress_transcript_message") val suppressTranscriptMessage: Boolean = false,
+    @SerialName("operation_id") val operationId: String = "",
 )
 
 @Serializable
@@ -452,4 +511,58 @@ data class ExportedRunPackage(
     val filename: String,
     val file: File,
     val byteCount: Long,
+)
+
+@Serializable
+data class ChaptersResponse(val items: List<ChapterDto> = emptyList())
+
+@Serializable
+data class ChapterDto(
+    @SerialName("chapter_id") val chapterId: String = "",
+    val order: Int = 0,
+    val title: String = "",
+    val goal: String = "",
+    val participants: List<String> = emptyList(),
+    val content: String = "",
+    @SerialName("source_session_id") val sourceSessionId: String = "",
+    @SerialName("last_session_id") val lastSessionId: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class SaveChapterRequest(
+    val title: String,
+    val goal: String = "",
+    val participants: List<String> = emptyList(),
+    val content: String = "",
+)
+
+@Serializable
+data class ArchiveDialogueChapterRequest(
+    @SerialName("session_id") val sessionId: String,
+    val title: String = "",
+)
+
+@Serializable
+data class ReorderChapterRequest(
+    @SerialName("target_order") val targetOrder: Int,
+)
+
+data class ExportedChapterManuscript(
+    val filename: String,
+    val file: File,
+)
+
+@Serializable
+data class SearchResultsResponse(val items: List<SearchResultDto> = emptyList())
+
+@Serializable
+data class SearchResultDto(
+    val kind: String = "",
+    @SerialName("chapter_id") val chapterId: String = "",
+    @SerialName("session_id") val sessionId: String = "",
+    val character: String = "",
+    val title: String = "",
+    val preview: String = "",
 )

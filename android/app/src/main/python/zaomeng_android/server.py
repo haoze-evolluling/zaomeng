@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import socket
 import threading
@@ -10,8 +11,9 @@ from typing import Any
 import uvicorn
 
 from src.web.app import create_app
+from src.web.secrets import InMemorySecretStore, ProtectedSecretStore
 from src.web.workflow import WebRunService
-from zaomeng_android.recovery import recover_interrupted_runs
+from zaomeng_android.recovery import audit_runtime_storage, record_startup_recovery, recover_interrupted_runs
 
 
 _lock = threading.RLock()
@@ -58,7 +60,71 @@ def _serve(server: uvicorn.Server) -> None:
         _error = f"{type(exc).__name__}: {exc}"
 
 
-def start(storage_root: str, auth_token: str) -> int:
+def _settings_secret_names_and_inline_values(storage_root: Path) -> tuple[set[str], dict[str, str]]:
+    names = {"model_api_key"}
+    inline: dict[str, str] = {}
+    settings_path = storage_root / "model_settings.json"
+    try:
+        document = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return names, inline
+    profiles = document.get("profiles") if isinstance(document, dict) else None
+    if not isinstance(profiles, list):
+        profiles = [document] if isinstance(document, dict) else []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        profile_id = str(profile.get("profile_id", "")).strip()
+        secret_name = str(profile.get("api_key_ref", "")).strip()
+        if not secret_name:
+            secret_name = "model_api_key" if profile_id in {"", "default"} else f"model_api_key_{profile_id}"
+        names.add(secret_name)
+        api_key = str(profile.get("api_key", "")).strip()
+        if api_key:
+            inline[secret_name] = api_key
+    return names, inline
+
+
+def read_legacy_model_secrets(storage_root: str) -> str:
+    """Return legacy plaintext secrets so Kotlin can migrate them to Keystore."""
+    root = Path(str(storage_root)).resolve()
+    names, values = _settings_secret_names_and_inline_values(root)
+    store = ProtectedSecretStore(root / "secrets")
+    for name in names:
+        stored = store.read(name)
+        if stored:
+            values[name] = stored
+    return json.dumps(values, ensure_ascii=False)
+
+
+def purge_legacy_model_secrets(storage_root: str) -> None:
+    """Remove plaintext model keys after Kotlin confirms Keystore migration."""
+    root = Path(str(storage_root)).resolve()
+    settings_path = root / "model_settings.json"
+    try:
+        document = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        document = None
+    changed = False
+    if isinstance(document, dict):
+        profiles = document.get("profiles")
+        targets = profiles if isinstance(profiles, list) else [document]
+        for profile in targets:
+            if isinstance(profile, dict) and "api_key" in profile:
+                profile.pop("api_key", None)
+                changed = True
+        if changed:
+            temporary = settings_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, settings_path)
+    secrets_root = root / "secrets"
+    if secrets_root.is_dir():
+        for child in secrets_root.iterdir():
+            if child.is_file() and child.name.startswith("model_api_key"):
+                child.unlink(missing_ok=True)
+
+
+def start(storage_root: str, auth_token: str, model_secrets_json: str = "{}") -> int:
     """Start one process-local FastAPI server and return its loopback port."""
     global _server, _thread, _port, _error
     with _lock:
@@ -73,12 +139,18 @@ def start(storage_root: str, auth_token: str) -> int:
         if len(token) < 24:
             raise ValueError("The local API token must contain at least 24 characters.")
 
-        recover_interrupted_runs(root)
+        audit_runtime_storage(root)
+        recovered_run_ids = recover_interrupted_runs(root)
+        record_startup_recovery(root, recovered_run_ids)
 
         _port = _available_loopback_port()
         _error = ""
+        try:
+            model_secrets = json.loads(str(model_secrets_json or "{}"))
+        except (TypeError, ValueError):
+            model_secrets = {}
         app = create_app(
-            WebRunService(root),
+            WebRunService(root, secret_store=InMemorySecretStore(model_secrets)),
             auth_token=token,
             allow_app_update=False,
         )

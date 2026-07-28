@@ -9,13 +9,35 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+
+enum class ChatFontSize(
+    val storageValue: String,
+    val scale: Float,
+) {
+    SMALL("small", 0.9f),
+    STANDARD("standard", 1f),
+    LARGE("large", 1.15f),
+    ;
+
+    companion object {
+        fun fromStorageValue(value: String?): ChatFontSize =
+            values().firstOrNull { it.storageValue == value } ?: STANDARD
+    }
+}
+
+data class ChatDisplayPreferences(
+    val fontSize: ChatFontSize = ChatFontSize.STANDARD,
+    val compactMode: Boolean = false,
+)
 
 data class AppPreferences(
     val defaultCharacters: String = "",
     val autoDistill: Boolean = true,
     val lastRunId: String = "",
     val lastSessionId: String = "",
+    val chatDisplay: ChatDisplayPreferences = ChatDisplayPreferences(),
 )
 
 class AppPreferencesRepository(
@@ -31,8 +53,16 @@ class AppPreferencesRepository(
                 autoDistill = values[AUTO_DISTILL] ?: true,
                 lastRunId = values[LAST_RUN_ID].orEmpty(),
                 lastSessionId = values[LAST_SESSION_ID].orEmpty(),
+                chatDisplay = ChatDisplayPreferences(
+                    fontSize = ChatFontSize.fromStorageValue(values[CHAT_FONT_SIZE]),
+                    compactMode = values[CHAT_COMPACT_MODE] ?: false,
+                ),
             )
         }
+
+    val chatDisplayPreferences: Flow<ChatDisplayPreferences> = preferences
+        .map { preferences -> preferences.chatDisplay }
+        .distinctUntilChanged()
 
     suspend fun saveImportDefaults(characters: String, autoDistill: Boolean) {
         dataStore.edit { values ->
@@ -97,10 +127,27 @@ class AppPreferencesRepository(
         }
     }
 
+    suspend fun setChatFontSize(fontSize: ChatFontSize) {
+        dataStore.edit { values -> values[CHAT_FONT_SIZE] = fontSize.storageValue }
+    }
+
+    suspend fun setCompactChatMode(enabled: Boolean) {
+        dataStore.edit { values -> values[CHAT_COMPACT_MODE] = enabled }
+    }
+
+    suspend fun saveChatDisplayPreferences(preferences: ChatDisplayPreferences) {
+        dataStore.edit { values ->
+            values[CHAT_FONT_SIZE] = preferences.fontSize.storageValue
+            values[CHAT_COMPACT_MODE] = preferences.compactMode
+        }
+    }
+
     private companion object {
         val DEFAULT_CHARACTERS = stringPreferencesKey("default_characters")
         val AUTO_DISTILL = booleanPreferencesKey("auto_distill")
         val LAST_RUN_ID = stringPreferencesKey("last_run_id")
         val LAST_SESSION_ID = stringPreferencesKey("last_session_id")
+        val CHAT_FONT_SIZE = stringPreferencesKey("chat_font_size")
+        val CHAT_COMPACT_MODE = booleanPreferencesKey("chat_compact_mode")
     }
 }

@@ -7,13 +7,15 @@ def build_model_settings_response(
     payload: dict[str, Any],
     *,
     configured: bool,
+    active_profile_id: str = "",
+    profiles: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     provider = str(payload.get("provider", "")).strip()
     model = str(payload.get("model", "")).strip()
     base_url = str(payload.get("base_url", "")).strip()
     api_key = str(payload.get("api_key", "")).strip()
     max_tokens = int(payload.get("max_tokens", 0) or 0)
-    return {
+    response = {
         "provider": provider,
         "model": model,
         "base_url": base_url,
@@ -21,6 +23,10 @@ def build_model_settings_response(
         "api_key_configured": bool(api_key),
         "configured": configured,
     }
+    if profiles is not None:
+        response["active_profile_id"] = str(active_profile_id or "").strip()
+        response["profiles"] = profiles
+    return response
 
 
 def normalize_model_settings(

@@ -193,9 +193,19 @@ class SecurityReliabilityTests(unittest.TestCase):
                 max_tokens=1000,
             )
 
-            settings = json.loads(service.settings_path.read_text(encoding="utf-8"))
+            settings_text = service.settings_path.read_text(encoding="utf-8")
+            settings = json.loads(settings_text)
             self.assertNotIn("api_key", settings)
-            self.assertEqual(settings["api_key_ref"], "model_api_key")
+            self.assertNotIn("super-secret", settings_text)
+            profiles = list(settings.get("profiles", []) or [])
+            self.assertTrue(profiles)
+            self.assertTrue(all("api_key" not in profile for profile in profiles))
+            active_profile = next(
+                profile
+                for profile in profiles
+                if profile.get("profile_id") == settings.get("active_profile_id")
+            )
+            self.assertEqual(active_profile["api_key_ref"], "model_api_key")
             self.assertEqual(service._load_model_settings_payload()["api_key"], "super-secret")
             secret_path = service.storage_root / "secrets" / "model_api_key"
             self.assertEqual(secret_path.read_text(encoding="utf-8").strip(), "super-secret")

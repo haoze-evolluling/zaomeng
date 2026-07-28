@@ -6,10 +6,12 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.Query
 import retrofit2.http.Streaming
 
 interface ZaomengApi {
@@ -21,6 +23,19 @@ interface ZaomengApi {
 
     @PUT("api/web/settings/model")
     suspend fun saveModelSettings(@Body request: SaveModelSettingsRequest): ModelSettingsDto
+
+    @POST("api/web/settings/model/test")
+    suspend fun testModelSettings(@Body request: TestModelSettingsRequest): ModelConnectionTestDto
+
+    @POST("api/web/settings/model/profiles/{profileId}/activate")
+    suspend fun activateModelProfile(@Path("profileId") profileId: String): ModelSettingsDto
+
+    @DELETE("api/web/settings/model/profiles/{profileId}")
+    suspend fun deleteModelProfile(@Path("profileId") profileId: String): ModelSettingsDto
+
+    @Streaming
+    @GET("api/web/diagnostics/export")
+    suspend fun exportDiagnostics(): Response<ResponseBody>
 
     @GET("api/web/runs")
     suspend fun listRuns(): RunsResponse
@@ -64,6 +79,64 @@ interface ZaomengApi {
     @Streaming
     @GET("api/web/runs/{runId}/export")
     suspend fun exportRun(@Path("runId") runId: String): Response<ResponseBody>
+
+    @GET("api/web/runs/{runId}/chapters")
+    suspend fun listChapters(@Path("runId") runId: String): ChaptersResponse
+
+    @GET("api/web/runs/{runId}/search")
+    suspend fun searchRunContent(
+        @Path("runId") runId: String,
+        @Query("query") query: String,
+        @Query("limit") limit: Int = 30,
+    ): SearchResultsResponse
+
+    @POST("api/web/runs/{runId}/chapters")
+    suspend fun createChapter(@Path("runId") runId: String, @Body request: SaveChapterRequest): ChapterDto
+
+    @PUT("api/web/runs/{runId}/chapters/{chapterId}")
+    suspend fun updateChapter(
+        @Path("runId") runId: String,
+        @Path("chapterId") chapterId: String,
+        @Body request: SaveChapterRequest,
+    ): ChapterDto
+
+    @PATCH("api/web/runs/{runId}/chapters/{chapterId}/order")
+    suspend fun reorderChapter(
+        @Path("runId") runId: String,
+        @Path("chapterId") chapterId: String,
+        @Body request: ReorderChapterRequest,
+    ): ChaptersResponse
+
+    @POST("api/web/runs/{runId}/chapters/archive-session")
+    suspend fun archiveSessionAsChapter(
+        @Path("runId") runId: String,
+        @Body request: ArchiveDialogueChapterRequest,
+    ): ChapterDto
+
+    @DELETE("api/web/runs/{runId}/chapters/{chapterId}")
+    suspend fun deleteChapter(
+        @Path("runId") runId: String,
+        @Path("chapterId") chapterId: String,
+    ): DeleteStatusDto
+
+    @POST("api/web/runs/{runId}/chapters/{chapterId}/continue")
+    suspend fun continueChapter(
+        @Path("runId") runId: String,
+        @Path("chapterId") chapterId: String,
+    ): DialogueSessionDto
+
+    @POST("api/web/runs/{runId}/chapters/{chapterId}/sync-session")
+    suspend fun syncChapterSession(
+        @Path("runId") runId: String,
+        @Path("chapterId") chapterId: String,
+    ): ChapterDto
+
+    @Streaming
+    @GET("api/web/runs/{runId}/chapters/export")
+    suspend fun exportChapters(
+        @Path("runId") runId: String,
+        @Query("format") format: String,
+    ): Response<ResponseBody>
 
     @GET("api/web/runs/{runId}/personas/{character}")
     suspend fun getPersona(
@@ -182,6 +255,14 @@ interface ZaomengApi {
         @Path("sessionId") sessionId: String,
     ): DialogueSessionDto
 
+    @GET("api/web/runs/{runId}/dialogue/sessions/{sessionId}/search")
+    suspend fun searchDialogueSession(
+        @Path("runId") runId: String,
+        @Path("sessionId") sessionId: String,
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 50,
+    ): ChatSearchResponse
+
     @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/recover")
     suspend fun recoverDialogueSession(
         @Path("runId") runId: String,
@@ -194,6 +275,15 @@ interface ZaomengApi {
         @Path("sessionId") sessionId: String,
         @Body request: DialogueReplyRequest,
     ): DialogueSessionDto
+
+    @Streaming
+    @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/reply/stream")
+    suspend fun streamDialogueReply(
+        @Path("runId") runId: String,
+        @Path("sessionId") sessionId: String,
+        @Header("Idempotency-Key") operationId: String,
+        @Body request: DialogueReplyRequest,
+    ): Response<ResponseBody>
 
     @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/suggest")
     suspend fun suggestDialogue(

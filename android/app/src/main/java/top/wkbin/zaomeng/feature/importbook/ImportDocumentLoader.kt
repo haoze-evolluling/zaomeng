@@ -3,12 +3,14 @@ package top.wkbin.zaomeng.feature.importbook
 import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
+import java.util.zip.ZipInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -27,6 +29,8 @@ data class ImportDocument(
 object ImportDocumentLoader {
     internal const val MAX_NOVEL_BYTES = 24 * 1024 * 1024
     internal const val MAX_PACKAGE_BYTES = 64 * 1024 * 1024
+    private const val MAX_EPUB_UNCOMPRESSED_BYTES = 48 * 1024 * 1024
+    private const val MAX_EPUB_CONTENT_ENTRIES = 2_000
     private const val BUFFER_SIZE = 64 * 1024
 
     suspend fun load(
@@ -69,10 +73,26 @@ object ImportDocumentLoader {
     }
 
     private fun prepareNovel(displayName: String, bytes: ByteArray): ImportDocument {
+        val sanitizedName = sanitizeDisplayName(displayName)
+        if (sanitizedName.endsWith(".epub", ignoreCase = true)) {
+            if (!bytes.hasZipSignature()) {
+                throw IllegalArgumentException("这不是有效的 EPUB 文件。")
+            }
+            val text = extractEpubText(bytes)
+            if (text.isBlank()) {
+                throw IllegalArgumentException("EPUB 中没有可导入的正文。")
+            }
+            val fileName = sanitizedName.removeSuffixIgnoreCase(".epub").ifBlank { "novel" } + ".txt"
+            return ImportDocument(
+                fileName = fileName,
+                bytes = text.toByteArray(Charsets.UTF_8),
+                kind = ImportDocumentKind.NovelText,
+                sourceEncoding = "EPUB",
+            )
+        }
         if (bytes.hasZipSignature()) {
             throw IllegalArgumentException("这个文件是压缩包，请使用“导入书卷包”。")
         }
-        val sanitizedName = sanitizeDisplayName(displayName)
         val decoded = decodeNovelText(bytes)
         if (decoded.text.isBlank()) {
             throw IllegalArgumentException("所选 TXT 没有可导入的正文。")
@@ -136,6 +156,58 @@ object ImportDocumentLoader {
         throw unsupportedEncoding()
     }
 
+    private fun extractEpubText(bytes: ByteArray): String {
+        val sections = mutableListOf<String>()
+        var totalUncompressed = 0
+        ZipInputStream(ByteArrayInputStream(bytes)).use { archive ->
+            while (true) {
+                val entry = archive.nextEntry ?: break
+                val name = entry.name.lowercase()
+                if (!entry.isDirectory && (name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm"))) {
+                    if (sections.size >= MAX_EPUB_CONTENT_ENTRIES) {
+                        throw IllegalArgumentException("EPUB 章节过多，无法安全导入。")
+                    }
+                    val raw = archive.readBytesWithTotalLimit { count ->
+                        totalUncompressed += count
+                        totalUncompressed <= MAX_EPUB_UNCOMPRESSED_BYTES
+                    }
+                    val text = htmlToText(raw.toString(Charsets.UTF_8))
+                    if (text.isNotBlank()) sections += text
+                }
+                archive.closeEntry()
+            }
+        }
+        return sections.joinToString("\n\n").trim()
+    }
+
+    private fun InputStream.readBytesWithTotalLimit(allowMore: (Int) -> Boolean): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(BUFFER_SIZE)
+        while (true) {
+            val count = read(buffer)
+            if (count < 0) break
+            if (!allowMore(count)) {
+                throw IllegalArgumentException("EPUB 解压后的正文过大，当前最多支持 48 MB。")
+            }
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun htmlToText(value: String): String = value
+        .replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), " ")
+        .replace(Regex("(?i)<br\\s*/?>"), "\n")
+        .replace(Regex("(?i)</(p|div|h[1-6]|li|blockquote|section|article)>"), "\n")
+        .replace(Regex("(?s)<[^>]+>"), " ")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace(Regex("[ \\t]+"), " ")
+        .replace(Regex("[ \\t]*\\n[ \\t]*"), "\n")
+        .replace(Regex("\\n{3,}"), "\n\n")
+        .trim()
+
     private fun decodeStrictOrNull(bytes: ByteArray, charset: Charset): String? = try {
         decodeStrict(bytes, charset)
     } catch (_: CharacterCodingException) {
@@ -189,7 +261,7 @@ object ImportDocumentLoader {
 
     internal fun fileTooLargeMessage(kind: ImportDocumentKind, maxBytes: Int): String = when (kind) {
         ImportDocumentKind.NovelText ->
-            "TXT 小说过大，Android 客户端当前最多支持 ${maxBytes / 1024 / 1024} MB。"
+            "TXT 或 EPUB 小说过大，Android 客户端当前最多支持 ${maxBytes / 1024 / 1024} MB。"
         ImportDocumentKind.RunPackage ->
             "书卷包过大，Android 客户端当前最多支持 ${maxBytes / 1024 / 1024} MB 的压缩文件。"
     }
@@ -201,6 +273,9 @@ object ImportDocumentLoader {
         .substringAfterLast('/')
         .substringAfterLast('\\')
         .trim()
+
+    private fun String.removeSuffixIgnoreCase(suffix: String): String =
+        if (endsWith(suffix, ignoreCase = true)) dropLast(suffix.length) else this
 
     private fun ByteArray.hasZipSignature(): Boolean =
         startsWith(0x50, 0x4B, 0x03, 0x04) ||

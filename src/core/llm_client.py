@@ -19,7 +19,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib import error, request
 
 try:
@@ -461,7 +461,13 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         stream: bool = False,
     ) -> Dict[str, Any]:
-        del stream  # streaming is not implemented in this client.
+        if stream:
+            return self.chat_completion_stream(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
         provider = self.provider_name()
         start = time.time()
@@ -509,6 +515,100 @@ class LLMClient:
         usage = self.record_usage(prompt_usage, completion_usage, time.time() - start)
         usage["content"] = result.get("content", "")
         usage["model"] = result.get("model", model or self.llm_config.get("model", ""))
+        usage["provider"] = provider
+        usage["finish_reason"] = str(result.get("finish_reason", "")).strip()
+        usage["raw"] = result.get("raw", {})
+        usage["cache_usage"] = cache_usage
+        return usage
+
+    def chat_completion_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> Dict[str, Any]:
+        """Stream provider text deltas while returning a normal completion result.
+
+        ``on_delta`` receives content only, never provider framing or reasoning tokens.
+        The returned dictionary has the same usage/content/model fields as
+        :meth:`chat_completion`, so callers can keep their existing parsing and cost
+        accounting. Host bridge and local-rule providers fall back to one callback.
+        """
+
+        provider = self.provider_name()
+        start = time.time()
+        prompt = "\n".join(
+            f"{message.get('role', 'user')}: {message.get('content', '')}"
+            for message in messages
+        )
+        estimated_prompt_tokens = self.count_tokens(prompt)
+
+        if provider == self.LOCAL_PROVIDER:
+            content = "本地模式未启用云模型。请使用规则引擎发言。"
+            if callable(on_delta):
+                on_delta(content)
+            completion_tokens = self.count_tokens(content)
+            usage = self.record_usage(
+                estimated_prompt_tokens,
+                completion_tokens,
+                time.time() - start,
+            )
+            usage["content"] = content
+            usage["model"] = self.LOCAL_PROVIDER
+            usage["provider"] = provider
+            usage["finish_reason"] = "stop"
+            usage["raw"] = {}
+            usage["cache_usage"] = normalize_cache_usage(
+                {}, prompt_tokens=estimated_prompt_tokens
+            )
+            return usage
+
+        resolved_model = self._resolve_model_name(provider, model)
+        if provider == "host-bridge":
+            result = self._chat_host_bridge(
+                messages=messages,
+                model=resolved_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = str(result.get("content", ""))
+            if content and callable(on_delta):
+                on_delta(content)
+        else:
+            result = self._dispatch_chat_completion_stream(
+                provider=provider,
+                messages=messages,
+                model=resolved_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                on_delta=on_delta,
+            )
+
+        prompt_usage = _non_negative_int(result.get("prompt_tokens"))
+        if prompt_usage <= 0:
+            prompt_usage = estimated_prompt_tokens
+        completion_usage = _non_negative_int(result.get("completion_tokens"))
+        if completion_usage <= 0:
+            completion_usage = self.count_tokens(str(result.get("content", "")))
+        cache_usage = result.get(
+            "cache_usage",
+            normalize_cache_usage(result.get("raw", {}), prompt_tokens=prompt_usage),
+        )
+        if isinstance(cache_usage, dict) and bool(cache_usage.get("observable")):
+            prompt_usage = max(
+                prompt_usage,
+                _non_negative_int(cache_usage.get("input_tokens", 0)),
+            )
+        usage = self.record_usage(
+            prompt_usage,
+            completion_usage,
+            time.time() - start,
+        )
+        usage["content"] = str(result.get("content", ""))
+        usage["model"] = str(result.get("model", resolved_model)).strip() or resolved_model
         usage["provider"] = provider
         usage["finish_reason"] = str(result.get("finish_reason", "")).strip()
         usage["raw"] = result.get("raw", {})
@@ -593,6 +693,43 @@ class LLMClient:
             )
         raise ValueError(f"Unsupported llm.provider: {provider}")
 
+    def _dispatch_chat_completion_stream(
+        self,
+        *,
+        provider: str,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        on_delta: Callable[[str], None] | None,
+    ) -> Dict[str, Any]:
+        if provider in {"openai", "openai-compatible"}:
+            return self._chat_openai_like_stream(
+                provider=provider,
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                on_delta=on_delta,
+            )
+        if provider == "anthropic":
+            return self._chat_anthropic_stream(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                on_delta=on_delta,
+            )
+        if provider == "ollama":
+            return self._chat_ollama_stream(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                on_delta=on_delta,
+            )
+        raise ValueError(f"Unsupported streaming llm.provider: {provider}")
+
     def _chat_openai_like(
         self,
         *,
@@ -635,6 +772,97 @@ class LLMClient:
                 data, prompt_tokens=_non_negative_int(usage.get("prompt_tokens"))
             ),
             "raw": data,
+        }
+
+    def _chat_openai_like_stream(
+        self,
+        *,
+        provider: str,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        on_delta: Callable[[str], None] | None,
+    ) -> Dict[str, Any]:
+        api_key = self._resolve_api_key(provider)
+        base_url = self._resolve_base_url(provider)
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": strip_cache_static_markers(messages),
+            "temperature": self._resolve_temperature(temperature),
+            "stream": True,
+        }
+        if provider == "openai":
+            payload["stream_options"] = {"include_usage": True}
+        resolved_max_tokens = self._resolve_max_tokens(max_tokens)
+        if resolved_max_tokens:
+            payload["max_tokens"] = resolved_max_tokens
+
+        content_parts: list[str] = []
+        response_model = model
+        finish_reason = ""
+        usage: Dict[str, Any] = {}
+        stream_metadata: Dict[str, Any] = {"stream": True}
+
+        def consume(data: Dict[str, Any]) -> None:
+            nonlocal response_model, finish_reason, usage
+            if isinstance(data.get("error"), dict):
+                error_payload = dict(data.get("error", {}) or {})
+                raise LLMRequestError(
+                    str(error_payload.get("message", "OpenAI-compatible stream failed."))
+                )
+            if str(data.get("model", "")).strip():
+                response_model = str(data.get("model", "")).strip()
+            event_usage = data.get("usage", {})
+            if isinstance(event_usage, dict) and event_usage:
+                usage.update(event_usage)
+            choices = data.get("choices", [])
+            first = choices[0] if isinstance(choices, list) and choices else {}
+            if not isinstance(first, dict):
+                return
+            delta_payload = first.get("delta", {})
+            if isinstance(delta_payload, dict):
+                delta = self._extract_stream_text(delta_payload.get("content", ""))
+            else:
+                delta = ""
+            if delta:
+                content_parts.append(delta)
+                if callable(on_delta):
+                    on_delta(delta)
+            event_finish_reason = str(first.get("finish_reason", "") or "").strip()
+            if event_finish_reason:
+                finish_reason = event_finish_reason
+
+        event_count = self._post_json_stream(
+            url=self._endpoint(base_url, "/chat/completions"),
+            payload=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "text/event-stream",
+            },
+            consume=consume,
+            sse=True,
+            is_complete=lambda: bool(finish_reason),
+        )
+        stream_metadata.update(
+            {
+                "model": response_model,
+                "usage": usage,
+                "event_count": event_count,
+            }
+        )
+        prompt_tokens = _non_negative_int(usage.get("prompt_tokens"))
+        completion_tokens = _non_negative_int(usage.get("completion_tokens"))
+        return {
+            "content": "".join(content_parts),
+            "model": response_model,
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cache_usage": normalize_cache_usage(
+                stream_metadata, prompt_tokens=prompt_tokens
+            ),
+            "raw": stream_metadata,
         }
 
     def _chat_anthropic(
@@ -713,6 +941,146 @@ class LLMClient:
             "raw": data,
         }
 
+    def _chat_anthropic_stream(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        on_delta: Callable[[str], None] | None,
+    ) -> Dict[str, Any]:
+        api_key = self._resolve_api_key("anthropic")
+        base_url = self._resolve_base_url("anthropic")
+        system_parts: List[tuple[str, bool]] = []
+        chat_messages: List[Dict[str, str]] = []
+        for item in messages:
+            role = str(item.get("role", "user")).strip()
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            if role == "system":
+                system_parts.append((content, bool(item.get("cache_static", False))))
+            else:
+                chat_messages.append(
+                    {
+                        "role": "assistant" if role == "assistant" else "user",
+                        "content": content,
+                    }
+                )
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": chat_messages,
+            "temperature": self._resolve_temperature(temperature),
+            "max_tokens": self._resolve_max_tokens(max_tokens, default=512),
+            "stream": True,
+        }
+        if system_parts:
+            if any(cache_static for _, cache_static in system_parts):
+                blocks: List[Dict[str, Any]] = []
+                for index, (content, cache_static) in enumerate(system_parts):
+                    block: Dict[str, Any] = {
+                        "type": "text",
+                        "text": content
+                        + ("\n\n" if index < len(system_parts) - 1 else ""),
+                    }
+                    if cache_static:
+                        block["cache_control"] = {"type": "ephemeral"}
+                    blocks.append(block)
+                payload["system"] = blocks
+            else:
+                payload["system"] = "\n\n".join(
+                    content for content, _ in system_parts
+                )
+
+        content_parts: list[str] = []
+        response_model = model
+        finish_reason = ""
+        usage: Dict[str, Any] = {}
+        saw_message_stop = False
+
+        def consume(data: Dict[str, Any]) -> None:
+            nonlocal response_model, finish_reason, saw_message_stop
+            event_type = str(data.get("type", "")).strip()
+            if event_type == "error" or isinstance(data.get("error"), dict):
+                error_payload = dict(data.get("error", {}) or {})
+                raise LLMRequestError(
+                    str(error_payload.get("message", "Anthropic stream failed."))
+                )
+            if event_type == "message_start":
+                message_payload = dict(data.get("message", {}) or {})
+                if str(message_payload.get("model", "")).strip():
+                    response_model = str(message_payload.get("model", "")).strip()
+                start_usage = message_payload.get("usage", {})
+                if isinstance(start_usage, dict):
+                    usage.update(start_usage)
+                return
+            if event_type == "content_block_start":
+                block = dict(data.get("content_block", {}) or {})
+                delta = (
+                    str(block.get("text", ""))
+                    if str(block.get("type", "")).strip() == "text"
+                    else ""
+                )
+            elif event_type == "content_block_delta":
+                delta_payload = dict(data.get("delta", {}) or {})
+                delta = (
+                    str(delta_payload.get("text", ""))
+                    if str(delta_payload.get("type", "")).strip() == "text_delta"
+                    else ""
+                )
+            else:
+                delta = ""
+            if delta:
+                content_parts.append(delta)
+                if callable(on_delta):
+                    on_delta(delta)
+            if event_type == "message_delta":
+                delta_payload = dict(data.get("delta", {}) or {})
+                event_finish_reason = str(
+                    delta_payload.get("stop_reason", "") or ""
+                ).strip()
+                if event_finish_reason:
+                    finish_reason = event_finish_reason
+                delta_usage = data.get("usage", {})
+                if isinstance(delta_usage, dict):
+                    usage.update(delta_usage)
+            if event_type == "message_stop":
+                saw_message_stop = True
+                finish_reason = finish_reason or "stop"
+
+        event_count = self._post_json_stream(
+            url=self._endpoint(base_url, "/messages"),
+            payload=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Accept": "text/event-stream",
+            },
+            consume=consume,
+            sse=True,
+            is_complete=lambda: saw_message_stop,
+        )
+        raw = {
+            "stream": True,
+            "model": response_model,
+            "usage": usage,
+            "event_count": event_count,
+        }
+        prompt_tokens = _non_negative_int(usage.get("input_tokens"))
+        completion_tokens = _non_negative_int(usage.get("output_tokens"))
+        return {
+            "content": "".join(content_parts).strip(),
+            "model": response_model,
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cache_usage": normalize_cache_usage(
+                raw, prompt_tokens=prompt_tokens
+            ),
+            "raw": raw,
+        }
+
     def _chat_ollama(
         self,
         *,
@@ -755,6 +1123,79 @@ class LLMClient:
             "raw": data,
         }
 
+    def _chat_ollama_stream(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        on_delta: Callable[[str], None] | None,
+    ) -> Dict[str, Any]:
+        base_url = self._resolve_base_url("ollama")
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": strip_cache_static_markers(messages),
+            "stream": True,
+            "options": {
+                "temperature": self._resolve_temperature(temperature),
+            },
+        }
+        resolved_max_tokens = self._resolve_max_tokens(max_tokens)
+        if resolved_max_tokens:
+            payload["options"]["num_predict"] = resolved_max_tokens
+
+        content_parts: list[str] = []
+        response_model = model
+        finish_reason = ""
+        final_payload: Dict[str, Any] = {}
+
+        def consume(data: Dict[str, Any]) -> None:
+            nonlocal response_model, finish_reason, final_payload
+            if data.get("error"):
+                raise LLMRequestError(str(data.get("error")))
+            if str(data.get("model", "")).strip():
+                response_model = str(data.get("model", "")).strip()
+            message_payload = data.get("message", {})
+            delta = (
+                self._extract_stream_text(message_payload.get("content", ""))
+                if isinstance(message_payload, dict)
+                else ""
+            )
+            if delta:
+                content_parts.append(delta)
+                if callable(on_delta):
+                    on_delta(delta)
+            if bool(data.get("done")):
+                final_payload = dict(data)
+                finish_reason = str(data.get("done_reason", "") or "").strip()
+
+        event_count = self._post_json_stream(
+            url=self._endpoint(base_url, "/api/chat"),
+            payload=payload,
+            consume=consume,
+            sse=False,
+            is_complete=lambda: bool(final_payload.get("done")),
+        )
+        raw = {
+            **final_payload,
+            "stream": True,
+            "event_count": event_count,
+        }
+        prompt_tokens = _non_negative_int(final_payload.get("prompt_eval_count"))
+        completion_tokens = _non_negative_int(final_payload.get("eval_count"))
+        return {
+            "content": "".join(content_parts),
+            "model": response_model,
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cache_usage": normalize_cache_usage(
+                raw, prompt_tokens=prompt_tokens
+            ),
+            "raw": raw,
+        }
+
     @staticmethod
     def _extract_text_content(value: Any) -> str:
         if isinstance(value, str):
@@ -786,6 +1227,27 @@ class LLMClient:
                     return text.strip()
             return ""
         return str(value or "").strip()
+
+    @staticmethod
+    def _extract_stream_text(value: Any) -> str:
+        """Extract content without trimming chunk boundary whitespace."""
+
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(LLMClient._extract_stream_text(item))
+            return "".join(parts)
+        if isinstance(value, dict):
+            for key in ("content", "text", "output_text"):
+                if key in value:
+                    return LLMClient._extract_stream_text(value.get(key))
+            return ""
+        return ""
 
     def _chat_host_bridge(
         self,
@@ -870,6 +1332,118 @@ class LLMClient:
                 raise LLMRequestError(f"LLM 连接失败: {exc}") from exc
             except json.JSONDecodeError as exc:
                 raise LLMRequestError("LLM 返回了无法解析的 JSON 响应") from exc
+
+        raise LLMRequestError(f"LLM 请求失败: {last_error}") from last_error
+
+    def _post_json_stream(
+        self,
+        *,
+        url: str,
+        payload: Dict[str, Any],
+        consume: Callable[[Dict[str, Any]], None],
+        headers: Optional[Dict[str, str]] = None,
+        sse: bool,
+        is_complete: Callable[[], bool] | None = None,
+    ) -> int:
+        """Consume an SSE or NDJSON response and return its JSON event count.
+
+        A connection may be retried only before the first provider event. Retrying
+        after content starts would splice a second model generation onto the first.
+        """
+
+        request_headers = {
+            "Content-Type": "application/json",
+        }
+        if headers:
+            request_headers.update(headers)
+
+        timeout = float(self.llm_config.get("timeout_seconds", 120) or 120)
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        attempts = self._retry_attempts()
+        retry_status_codes = self._retry_status_codes()
+        last_error: Optional[Exception] = None
+        event_count = 0
+
+        for attempt in range(1, attempts + 1):
+            saw_event = False
+            req = request.Request(
+                url=url,
+                data=body,
+                headers=request_headers,
+                method="POST",
+            )
+            try:
+                with request.urlopen(req, timeout=timeout) as resp:
+                    charset = resp.headers.get_content_charset() or "utf-8"
+                    for raw_line in resp:
+                        if isinstance(raw_line, bytes):
+                            line = raw_line.decode(charset, errors="replace")
+                        else:
+                            line = str(raw_line)
+                        line = line.rstrip("\r\n")
+                        if not line:
+                            continue
+                        data_text = line
+                        if sse:
+                            if line.startswith(":") or line.startswith(
+                                ("event:", "id:", "retry:")
+                            ):
+                                continue
+                            if line.startswith("data:"):
+                                data_text = line[5:].lstrip()
+                        if data_text == "[DONE]":
+                            return event_count
+                        data = json.loads(data_text)
+                        if not isinstance(data, dict):
+                            raise LLMRequestError(
+                                "LLM stream event must be a JSON object."
+                            )
+                        saw_event = True
+                        event_count += 1
+                        consume(data)
+                    if callable(is_complete) and not is_complete():
+                        if not saw_event and attempt < attempts:
+                            self._sleep_before_retry(
+                                attempt, "stream ended before its completion event"
+                            )
+                            continue
+                        raise LLMRequestError(
+                            "LLM stream ended before its completion event."
+                        )
+                    return event_count
+            except error.HTTPError as exc:
+                body_text = exc.read().decode("utf-8", errors="replace")
+                last_error = exc
+                if (
+                    not saw_event
+                    and attempt < attempts
+                    and exc.code in retry_status_codes
+                ):
+                    self._sleep_before_retry(
+                        attempt, f"HTTP {exc.code} {exc.reason}"
+                    )
+                    continue
+                raise LLMRequestError(
+                    f"LLM 请求失败: {exc.code} {exc.reason} | {body_text}"
+                ) from exc
+            except error.URLError as exc:
+                last_error = exc
+                if not saw_event and attempt < attempts:
+                    self._sleep_before_retry(
+                        attempt, f"connection error: {exc.reason}"
+                    )
+                    continue
+                raise LLMRequestError(f"LLM 连接失败: {exc.reason}") from exc
+            except OSError as exc:
+                last_error = exc
+                if not saw_event and attempt < attempts:
+                    self._sleep_before_retry(attempt, f"socket error: {exc}")
+                    continue
+                raise LLMRequestError(f"LLM 连接失败: {exc}") from exc
+            except json.JSONDecodeError as exc:
+                raise LLMRequestError(
+                    "LLM stream returned an invalid JSON event."
+                ) from exc
 
         raise LLMRequestError(f"LLM 请求失败: {last_error}") from last_error
 

@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.Settings
@@ -28,18 +32,24 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -84,12 +94,12 @@ fun BookshelfScreen(
                 title = {
                     Column {
                         Text(
-                            text = "造梦书架",
+                            text = "造梦",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "故事只保存在这台手机上",
+                            text = "本地故事工坊",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -138,7 +148,13 @@ fun BookshelfScreen(
             is BackendState.Ready -> ReadyBookshelf(
                 state = state,
                 onRefresh = viewModel::refresh,
+                onStopAll = viewModel::stopRunningTasks,
                 onDismissError = viewModel::dismissError,
+                onOpenSettings = onOpenSettings,
+                onSearchQueryChange = viewModel::updateSearchQuery,
+                onSelectFilter = viewModel::selectFilter,
+                onToggleSort = viewModel::toggleSort,
+                onClearFilters = viewModel::clearFilters,
                 onImport = onImport,
                 onOpenRun = onOpenRun,
                 modifier = Modifier.padding(innerPadding),
@@ -151,11 +167,19 @@ fun BookshelfScreen(
 private fun ReadyBookshelf(
     state: BookshelfUiState,
     onRefresh: () -> Unit,
+    onStopAll: () -> Unit,
     onDismissError: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onSelectFilter: (BookshelfFilter) -> Unit,
+    onToggleSort: () -> Unit,
+    onClearFilters: () -> Unit,
     onImport: () -> Unit,
     onOpenRun: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val visibleRuns = filterBookshelfRuns(state)
+    var searchExpanded by rememberSaveable { mutableStateOf(state.searchQuery.isNotBlank()) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 104.dp),
@@ -169,15 +193,24 @@ private fun ReadyBookshelf(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "我的书卷",
-                        style = MaterialTheme.typography.headlineSmall,
+                        text = "书卷",
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "${state.runs.size} 个本地项目",
+                        text = if (visibleRuns.size == state.runs.size) {
+                            "${state.runs.size} 本 · 仅保存在这台手机"
+                        } else {
+                            "显示 ${visibleRuns.size} / ${state.runs.size} 本"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                if (!searchExpanded && state.searchQuery.isBlank()) {
+                    IconButton(onClick = { searchExpanded = true }) {
+                        Icon(Icons.Default.Search, contentDescription = "搜索书卷")
+                    }
                 }
                 IconButton(onClick = onRefresh, enabled = !state.refreshing && !state.loadingRuns) {
                     if (state.refreshing) {
@@ -189,6 +222,23 @@ private fun ReadyBookshelf(
             }
         }
 
+        val activeRuns = state.runs.filter { it.status == "running" }
+        if (state.modelConfigured == false) {
+            item { ModelRequiredCard(onOpenSettings) }
+        }
+        if (state.modelConfigured == true) {
+            item { ActiveModelCard(state.activeModelLabel, onOpenSettings) }
+        }
+        if (activeRuns.isNotEmpty()) {
+            item {
+                ActiveDistillationTasksCard(
+                    runs = activeRuns,
+                    stopping = state.stoppingTasks,
+                    onStopAll = onStopAll,
+                )
+            }
+        }
+
         if (state.error.isNotBlank()) {
             item {
                 ErrorCard(
@@ -196,6 +246,47 @@ private fun ReadyBookshelf(
                     onRetry = onRefresh,
                     onDismiss = onDismissError,
                 )
+            }
+        }
+
+        if (state.runs.isNotEmpty() && (searchExpanded || state.searchQuery.isNotBlank())) {
+            item {
+                OutlinedTextField(
+                    value = state.searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("搜索书卷、人物或来源") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            onSearchQueryChange("")
+                            searchExpanded = false
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "关闭搜索")
+                        }
+                    },
+                    singleLine = true,
+                )
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("状态筛选", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onToggleSort) { Text(state.sort.label) }
+                }
+            }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(BookshelfFilter.values().toList(), key = { filter -> filter.name }) { filter ->
+                        FilterChip(
+                            selected = state.filter == filter,
+                            onClick = { onSelectFilter(filter) },
+                            label = { Text(filter.label) },
+                        )
+                    }
+                }
             }
         }
 
@@ -214,9 +305,103 @@ private fun ReadyBookshelf(
             }
         } else if (state.runs.isEmpty()) {
             item { EmptyBookshelf(onImport) }
+        } else if (visibleRuns.isEmpty()) {
+            item { EmptyFilterResults(onClearFilters) }
         } else {
-            items(state.runs, key = RunManifestDto::runId) { run ->
+            items(visibleRuns, key = RunManifestDto::runId) { run ->
                 RunCard(run = run, onClick = { onOpenRun(run.runId) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyFilterResults(onClearFilters: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("没有匹配的书卷", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("换个关键词，或清除筛选条件后再看看。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = onClearFilters) { Text("清除筛选") }
+        }
+    }
+}
+
+@Composable
+private fun ActiveModelCard(modelLabel: String, onOpenSettings: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.Settings, contentDescription = null)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("当前模型", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    modelLabel.ifBlank { "已配置" },
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            TextButton(onClick = onOpenSettings) { Text("切换") }
+        }
+    }
+}
+
+@Composable
+private fun ModelRequiredCard(onOpenSettings: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Outlined.Settings,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "还没有配置模型",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+            Text(
+                "蒸馏人物、AI 校对和聊天需要先连接一个模型。导入与浏览本地书卷仍可使用。",
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Button(onClick = onOpenSettings) { Text("现在配置模型") }
+        }
+    }
+}
+
+@Composable
+private fun ActiveDistillationTasksCard(
+    runs: List<RunManifestDto>,
+    stopping: Boolean,
+    onStopAll: () -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("后台蒸馏任务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${runs.size} 个任务正在手机后台运行；可离开应用，进度会显示在通知栏。",
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            runs.take(3).forEach { run ->
+                Text(
+                    "• ${run.title} · ${run.progress.message.ifBlank { "正在蒸馏" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (runs.size > 3) Text("另有 ${runs.size - 3} 个任务", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onStopAll, enabled = !stopping) {
+                Icon(Icons.Default.Stop, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (stopping) "正在停止…" else "停止全部蒸馏")
             }
         }
     }
@@ -274,6 +459,20 @@ private fun RunCard(run: RunManifestDto, onClick: () -> Unit) {
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
+
+            run.novelSources.lastOrNull()?.sourceName?.takeIf(String::isNotBlank)?.let { sourceName ->
+                Text(
+                    text = if (run.novelSources.size > 1) {
+                        "当前来源：$sourceName · 共 ${run.novelSources.size} 份正文"
+                    } else {
+                        "来源：$sourceName"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(

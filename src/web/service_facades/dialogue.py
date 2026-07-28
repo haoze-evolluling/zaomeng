@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from functools import wraps
+import queue
+import threading
+import time
 from typing import Any
 
 from src.core.exceptions import LLMRequestError
 import src.web.chat.scene_signals as _scene_signals
+from src.web.chat.reply_operations import ReplyOperationConflict
+from src.web.chat.streaming import DialogueJsonDeltaProjector
 from src.web.chat import (
     associate_dialogue_turn_payload,
     build_dialogue_association_llm_messages,
@@ -118,8 +123,26 @@ class DialogueServiceMixin:
         self._ensure_run_exists(run_id)
         return self.dialogue.get_session(run_id, session_id)
 
+    def search_dialogue_session(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        query: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.search_session_transcript(
+            run_id,
+            session_id,
+            query=query,
+            limit=limit,
+        )
+
     def recover_dialogue_session(self, run_id: str, session_id: str) -> dict[str, Any]:
         self._ensure_run_exists(run_id)
+        if self.reply_operations.has_active_session_operation(run_id, session_id):
+            return self.dialogue.get_session(run_id, session_id)
         return self.dialogue.abort_pending_turn(
             run_id,
             session_id,
@@ -370,7 +393,24 @@ class DialogueServiceMixin:
         message_kind: str = "dialogue",
         suppress_transcript_message: bool = False,
         fast_response: bool = False,
+        operation_id: str = "",
     ) -> dict[str, Any]:
+        if operation_id:
+            for event, payload in self.stream_dialogue_reply_events(
+                run_id,
+                session_id=session_id,
+                message=message,
+                message_kind=message_kind,
+                suppress_transcript_message=suppress_transcript_message,
+                operation_id=operation_id,
+                emit_deltas=False,
+            ):
+                if event == "complete":
+                    return dict(payload.get("session", {}) or {})
+                if event == "error":
+                    raise ValueError(str(payload.get("message", "Reply generation failed.")))
+            raise ValueError("Reply operation ended without a result.")
+
         manifest = self._require_manifest(run_id)
 
         def evolve_relations(
@@ -408,6 +448,450 @@ class DialogueServiceMixin:
             evolve_relations_from_turn=evolve_relations,
             refresh_scene_progress=refresh_scene,
         )
+
+    def stream_dialogue_reply_events(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        message: str,
+        message_kind: str = "dialogue",
+        suppress_transcript_message: bool = False,
+        operation_id: str,
+        emit_deltas: bool = True,
+    ):
+        manifest = self._require_manifest(run_id)
+        normalized_kind = str(message_kind or "dialogue").strip().lower() or "dialogue"
+        is_plot_push = normalized_kind in {"plot", "plot_push", "advance"}
+        fingerprint = self.reply_operations.request_fingerprint(
+            message=message,
+            message_kind=normalized_kind,
+            suppress_transcript_message=suppress_transcript_message,
+        )
+
+        def reconciled_session(current: dict[str, Any]) -> dict[str, Any] | None:
+            recorded_turn_id = str(current.get("turn_id", "")).strip()
+            if not recorded_turn_id:
+                return None
+            return self.dialogue.reconcile_turn_result(
+                run_id,
+                session_id,
+                turn_id=recorded_turn_id,
+            )
+
+        record = self.reply_operations.load(
+            run_id,
+            session_id,
+            operation_id,
+            fingerprint=fingerprint,
+        )
+        completed_session = reconciled_session(record) if record else None
+        if completed_session is not None:
+            if record.get("status") != "completed":
+                record = self.reply_operations.mark_completed(
+                    run_id,
+                    session_id,
+                    operation_id,
+                    fingerprint=fingerprint,
+                    turn_id=str(record.get("turn_id", "")).strip(),
+                )
+            yield "complete", {
+                "session": completed_session,
+                "replayed": True,
+                "operation_id": operation_id,
+            }
+            return
+        if record.get("status") == "completed":
+            yield "error", {
+                "message": "本地回复记录不完整，已停止自动重试以避免重复生成。",
+                "retryable": False,
+                "operation_id": operation_id,
+            }
+            return
+
+        claimed = self.reply_operations.claim(run_id, session_id, operation_id)
+        if not claimed:
+            yield "status", {
+                "phase": "waiting",
+                "message": "正在等待原来的生成完成…",
+                "operation_id": operation_id,
+            }
+            deadline = time.monotonic() + 5 * 60
+            next_heartbeat = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                current = self.reply_operations.load(
+                    run_id,
+                    session_id,
+                    operation_id,
+                    fingerprint=fingerprint,
+                )
+                completed_session = reconciled_session(current) if current else None
+                if completed_session is not None:
+                    if current.get("status") != "completed":
+                        current = self.reply_operations.mark_completed(
+                            run_id,
+                            session_id,
+                            operation_id,
+                            fingerprint=fingerprint,
+                            turn_id=str(current.get("turn_id", "")).strip(),
+                        )
+                    yield "complete", {
+                        "session": completed_session,
+                        "replayed": True,
+                        "operation_id": operation_id,
+                    }
+                    return
+                if current.get("status") == "completed":
+                    yield "error", {
+                        "message": "本地回复记录不完整，已停止自动重试以避免重复生成。",
+                        "retryable": False,
+                        "operation_id": operation_id,
+                    }
+                    return
+                if current.get("status") == "failed":
+                    failure = dict(current.get("failure", {}) or {})
+                    yield "error", {
+                        "message": str(failure.get("message", "回复生成失败。")),
+                        "retryable": bool(failure.get("retryable", True)),
+                        "operation_id": operation_id,
+                    }
+                    return
+                now = time.monotonic()
+                if now >= next_heartbeat:
+                    yield "status", {
+                        "phase": "waiting",
+                        "message": "原来的回复仍在生成，本机正在继续等待…",
+                        "operation_id": operation_id,
+                    }
+                    next_heartbeat = now + 4
+                time.sleep(0.25)
+            yield "error", {
+                "message": "等待原生成超时，可稍后用同一次发送重试。",
+                "retryable": True,
+                "operation_id": operation_id,
+            }
+            return
+
+        turn_id = ""
+        release_in_worker = False
+        try:
+            session = self.dialogue.get_session(run_id, session_id)
+            record = self.reply_operations.load(
+                run_id,
+                session_id,
+                operation_id,
+                fingerprint=fingerprint,
+            )
+            if not record:
+                record = self.reply_operations.mark_pending(
+                    run_id,
+                    session_id,
+                    operation_id,
+                    fingerprint=fingerprint,
+                    turn_id="",
+                )
+            pending_turn = dict(session.get("pending_turn_summary", {}) or {})
+            recorded_turn_id = str(record.get("turn_id", "")).strip()
+            pending_turn_id = str(pending_turn.get("turn_id", "")).strip()
+
+            completed_session = reconciled_session(record)
+            if completed_session is not None:
+                if record.get("status") != "completed":
+                    record = self.reply_operations.mark_completed(
+                        run_id,
+                        session_id,
+                        operation_id,
+                        fingerprint=fingerprint,
+                        turn_id=str(record.get("turn_id", "")).strip(),
+                    )
+                yield "complete", {
+                    "session": completed_session,
+                    "replayed": True,
+                    "operation_id": operation_id,
+                }
+                return
+            if record.get("status") == "completed":
+                yield "error", {
+                    "message": "本地回复记录不完整，已停止自动重试以避免重复生成。",
+                    "retryable": False,
+                    "operation_id": operation_id,
+                }
+                return
+            pending_matches_request = (
+                bool(pending_turn_id)
+                and str(pending_turn.get("message", "")).strip() == str(message).strip()
+                and str(pending_turn.get("message_kind", "")).strip().lower()
+                == normalized_kind
+            )
+            if pending_matches_request and self.reply_operations.find_pending_owner(
+                run_id,
+                session_id,
+                fingerprint=fingerprint,
+                turn_id=pending_turn_id,
+                excluding_operation_id=operation_id,
+            ):
+                raise ReplyOperationConflict(
+                    "当前待处理回复属于另一发送，请等待原请求完成。"
+                )
+            if recorded_turn_id and recorded_turn_id == pending_turn_id:
+                turn_id = recorded_turn_id
+            elif not recorded_turn_id and pending_matches_request:
+                turn_id = pending_turn_id
+                record = self.reply_operations.mark_pending(
+                    run_id,
+                    session_id,
+                    operation_id,
+                    fingerprint=fingerprint,
+                    turn_id=turn_id,
+                )
+            else:
+                speaker_override = (
+                    "场景提示"
+                    if normalized_kind in {"narration", "plot", "plot_push", "advance"}
+                    else ""
+                )
+                prepared = self.dialogue.prepare_turn(
+                    manifest,
+                    session_id=session_id,
+                    message=message,
+                    message_kind=normalized_kind,
+                    speaker_override=speaker_override,
+                    transcript_message=(
+                        "" if suppress_transcript_message or is_plot_push else None
+                    ),
+                    _serialize_result=False,
+                )
+                turn_id = str(
+                    dict(prepared.get("pending_turn_summary", {}) or {}).get("turn_id", "")
+                ).strip()
+                self.reply_operations.mark_pending(
+                    run_id,
+                    session_id,
+                    operation_id,
+                    fingerprint=fingerprint,
+                    turn_id=turn_id,
+                )
+
+            yield "status", {
+                "phase": "generating",
+                "message": "人物正在组织回应…",
+                "operation_id": operation_id,
+                "turn_id": turn_id,
+            }
+            pending_payload = self._load_pending_turn_payload(run_id, session_id)
+            stream_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+            def generate_and_commit() -> None:
+                try:
+                    try:
+                        generated = self._generate_dialogue_responses(
+                            run_id,
+                            pending_payload,
+                            on_delta=(
+                                (lambda delta: stream_queue.put(("raw_delta", delta)))
+                                if emit_deltas
+                                else None
+                            ),
+                            on_attempt=(
+                                (lambda index: stream_queue.put(("attempt", index)))
+                                if emit_deltas
+                                else None
+                            ),
+                        )
+                    except LLMRequestError as exc:
+                        raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+                    if isinstance(generated, dict) and isinstance(
+                        generated.get("responses"), list
+                    ):
+                        responses = list(generated.get("responses", []) or [])
+                        generation_cache = generated.get("generation_cache")
+                    else:
+                        responses = list(generated or [])
+                        generation_cache = None
+
+                    self._evolve_relations_from_turn(
+                        run_id,
+                        pending_payload,
+                        responses,
+                        refine_with_llm=False,
+                    )
+                    ingest_kwargs: dict[str, Any] = {
+                        "session_id": session_id,
+                        "responses": responses,
+                        "remember_turn_memory": True,
+                    }
+                    if isinstance(generation_cache, dict):
+                        ingest_kwargs["generation_cache"] = generation_cache
+                    completed = self.dialogue.ingest_turn_responses(
+                        run_id,
+                        **ingest_kwargs,
+                    )
+                    completed = self._refresh_dialogue_scene_progress(
+                        run_id,
+                        completed,
+                        use_llm=False,
+                    )
+                    self.reply_operations.mark_completed(
+                        run_id,
+                        session_id,
+                        operation_id,
+                        fingerprint=fingerprint,
+                        turn_id=turn_id,
+                        session_updated_at=str(completed.get("updated_at", "")).strip(),
+                    )
+                    stream_queue.put(
+                        (
+                            "complete",
+                            {"session": completed, "responses": responses},
+                        )
+                    )
+                except Exception as exc:
+                    retryable = not isinstance(exc, ReplyOperationConflict)
+                    if turn_id:
+                        try:
+                            self.dialogue.abort_pending_turn(
+                                run_id,
+                                session_id,
+                                expected_turn_id=turn_id,
+                                reason="reply_failed",
+                            )
+                        except Exception:
+                            pass
+                    try:
+                        self.reply_operations.mark_failed(
+                            run_id,
+                            session_id,
+                            operation_id,
+                            fingerprint=fingerprint,
+                            turn_id=turn_id,
+                            message=str(exc) or "回复生成失败。",
+                            retryable=retryable,
+                        )
+                    except Exception:
+                        pass
+                    stream_queue.put(
+                        (
+                            "error",
+                            {
+                                "message": str(exc) or "回复生成失败。",
+                                "retryable": retryable,
+                            },
+                        )
+                    )
+                finally:
+                    self.reply_operations.release(run_id, session_id, operation_id)
+
+            worker = threading.Thread(
+                target=generate_and_commit,
+                name=f"dialogue-reply-{operation_id[:12]}",
+                daemon=True,
+            )
+            worker.start()
+            release_in_worker = True
+            projector = DialogueJsonDeltaProjector(chunk_size=24)
+            projected_any = False
+            next_heartbeat = time.monotonic() + 4
+
+            while True:
+                try:
+                    event_kind, event_payload = stream_queue.get(timeout=1.0)
+                except queue.Empty:
+                    now = time.monotonic()
+                    if now >= next_heartbeat:
+                        yield "status", {
+                            "phase": "generating",
+                            "message": "人物仍在组织回应…",
+                            "operation_id": operation_id,
+                            "turn_id": turn_id,
+                        }
+                        next_heartbeat = now + 4
+                    continue
+
+                if event_kind == "attempt":
+                    projector.reset()
+                    projected_any = False
+                    if int(event_payload or 0) > 0:
+                        yield "reset", {
+                            "message": "正在重新整理回复格式…",
+                            "operation_id": operation_id,
+                        }
+                    continue
+                if event_kind == "raw_delta":
+                    for delta in projector.feed(str(event_payload or "")):
+                        projected_any = True
+                        yield "delta", {
+                            **delta,
+                            "operation_id": operation_id,
+                        }
+                    continue
+                if event_kind == "error":
+                    yield "error", {
+                        **dict(event_payload or {}),
+                        "operation_id": operation_id,
+                    }
+                    return
+                if event_kind == "complete":
+                    final_payload = dict(event_payload or {})
+                    responses = list(final_payload.get("responses", []) or [])
+                    if emit_deltas and not projected_any:
+                        for index, response in enumerate(responses):
+                            speaker = str(response.get("speaker", "")).strip()
+                            text = str(response.get("message", "")).strip()
+                            role = (
+                                "scene"
+                                if speaker in {"旁白", "场景提示"}
+                                else "assistant"
+                            )
+                            for offset in range(0, len(text), 24):
+                                yield "delta", {
+                                    "index": index,
+                                    "speaker": speaker,
+                                    "role": role,
+                                    "text": text[offset : offset + 24],
+                                    "operation_id": operation_id,
+                                }
+                    yield "complete", {
+                        "session": dict(final_payload.get("session", {}) or {}),
+                        "replayed": False,
+                        "operation_id": operation_id,
+                    }
+                    return
+        except Exception as exc:
+            if release_in_worker:
+                yield "error", {
+                    "message": str(exc) or "流式连接处理失败，可安全核对本地结果。",
+                    "retryable": True,
+                    "operation_id": operation_id,
+                }
+                return
+            retryable = not isinstance(exc, ReplyOperationConflict)
+            if turn_id:
+                try:
+                    self.dialogue.abort_pending_turn(
+                        run_id,
+                        session_id,
+                        expected_turn_id=turn_id,
+                        reason="reply_failed",
+                    )
+                except Exception:
+                    pass
+            self.reply_operations.mark_failed(
+                run_id,
+                session_id,
+                operation_id,
+                fingerprint=fingerprint,
+                turn_id=turn_id,
+                message=str(exc) or "回复生成失败。",
+                retryable=retryable,
+            )
+            yield "error", {
+                "message": str(exc) or "回复生成失败。",
+                "retryable": retryable,
+                "operation_id": operation_id,
+            }
+        finally:
+            if not release_in_worker:
+                self.reply_operations.release(run_id, session_id, operation_id)
 
     def suggest_dialogue_turn(
         self,
@@ -491,7 +975,12 @@ class DialogueServiceMixin:
         return self._refresh_dialogue_scene_progress(run_id, session)
 
     def _generate_dialogue_responses(
-        self, run_id: str, payload: dict[str, Any]
+        self,
+        run_id: str,
+        payload: dict[str, Any],
+        *,
+        on_delta=None,
+        on_attempt=None,
     ) -> dict[str, Any]:
         return generate_dialogue_responses_for_run(
             run_dir=self.runs_root / run_id,
@@ -504,6 +993,8 @@ class DialogueServiceMixin:
                 retry_on_empty=retry_on_empty,
             ),
             parse_dialogue_responses=self._parse_dialogue_responses,
+            on_delta=on_delta,
+            on_attempt=on_attempt,
         )
 
     def _generate_dialogue_suggestion(

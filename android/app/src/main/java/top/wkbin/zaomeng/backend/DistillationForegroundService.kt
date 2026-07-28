@@ -34,6 +34,9 @@ class DistillationForegroundService : Service(), KoinComponent {
     private val backend: EmbeddedBackendController by inject()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
+    @Volatile private var stopRequested = false
+    private val observedRunIds = linkedSetOf<String>()
+    private var observedRunning = false
 
     override fun onCreate() {
         super.onCreate()
@@ -41,6 +44,17 @@ class DistillationForegroundService : Service(), KoinComponent {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP_ALL) {
+            if (!startAsForeground(buildStoppingNotification())) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            stopRequested = true
+            if (monitorJob?.isActive != true) {
+                monitorJob = serviceScope.launch { monitorRunningDistillations() }
+            }
+            return START_STICKY
+        }
         if (intent?.action == ACTION_STOP_MONITORING) {
             finishMonitoring()
             return START_NOT_STICKY
@@ -77,11 +91,25 @@ class DistillationForegroundService : Service(), KoinComponent {
                     is BackendState.Failed -> backend.retry()
                     else -> backend.start()
                 }
-                val running = backend.requireApi()
+                val allRuns = backend.requireApi()
                     .listRuns()
                     .items
+                val running = allRuns
                     .filter { it.status == RUNNING_STATUS }
+                if (running.isNotEmpty()) {
+                    observedRunning = true
+                    observedRunIds += running.map(RunManifestDto::runId)
+                }
+                if (stopRequested && running.isNotEmpty()) {
+                    updateNotification(buildStoppingNotification())
+                    running.forEach { run -> backend.requireApi().stopRun(run.runId) }
+                    delay(POLL_INTERVAL_MS)
+                    continue
+                }
                 if (running.isEmpty()) {
+                    if (observedRunning) {
+                        publishResultNotification(allRuns, wasStopped = stopRequested)
+                    }
                     finishMonitoring()
                     return
                 }
@@ -109,6 +137,13 @@ class DistillationForegroundService : Service(), KoinComponent {
             .setProgress(0, 0, true)
             .build()
 
+    private fun buildStoppingNotification(): Notification =
+        notificationBuilder()
+            .setContentTitle(getString(R.string.distillation_notification_stopping_title))
+            .setContentText(getString(R.string.distillation_notification_stopping_text))
+            .setProgress(0, 0, true)
+            .build()
+
     private fun buildProgressNotification(runs: List<RunManifestDto>): Notification {
         val primary = runs.first()
         val total = runs.sumOf { maxOf(it.progress.totalCharacters, it.lockedCharacters.size) }
@@ -133,10 +168,59 @@ class DistillationForegroundService : Service(), KoinComponent {
             .build()
     }
 
+    private fun publishResultNotification(allRuns: List<RunManifestDto>, wasStopped: Boolean) {
+        val observedRuns = allRuns.filter { it.runId in observedRunIds }
+        val failedCount = observedRuns.count { it.status == "failed" }
+        val stopped = wasStopped || observedRuns.any { it.status == "stopped" }
+        val title = when {
+            failedCount > 0 -> getString(R.string.distillation_notification_failed_title)
+            stopped -> getString(R.string.distillation_notification_stopped_title)
+            else -> getString(R.string.distillation_notification_complete_title)
+        }
+        val text = when {
+            failedCount > 0 -> getString(
+                R.string.distillation_notification_failed_text,
+                failedCount,
+                observedRuns.size,
+            )
+            stopped -> getString(R.string.distillation_notification_stopped_result_text)
+            observedRuns.size == 1 -> getString(
+                R.string.distillation_notification_complete_single_text,
+                observedRuns.firstOrNull()?.title.orEmpty(),
+            )
+            else -> getString(
+                R.string.distillation_notification_complete_multiple_text,
+                observedRuns.size,
+            )
+        }
+        try {
+            NotificationManagerCompat.from(this).notify(
+                RESULT_NOTIFICATION_ID,
+                NotificationCompat.Builder(this, RESULT_NOTIFICATION_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_distillation_notification)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setContentIntent(openAppPendingIntent())
+                    .setAutoCancel(true)
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                    .build(),
+            )
+        } catch (_: SecurityException) {
+            // Android 13+ may deny notification permission while the task itself still finishes locally.
+        }
+    }
+
     private fun notificationBuilder(): NotificationCompat.Builder =
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_distillation_notification)
             .setContentIntent(openAppPendingIntent())
+            .addAction(
+                R.drawable.ic_distillation_notification,
+                getString(R.string.distillation_notification_stop_action),
+                stopAllPendingIntent(),
+            )
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -152,6 +236,13 @@ class DistillationForegroundService : Service(), KoinComponent {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+    private fun stopAllPendingIntent(): PendingIntent = PendingIntent.getService(
+        this,
+        1,
+        Intent(this, DistillationForegroundService::class.java).setAction(ACTION_STOP_ALL),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(
@@ -163,6 +254,16 @@ class DistillationForegroundService : Service(), KoinComponent {
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(
+                RESULT_NOTIFICATION_CHANNEL_ID,
+                getString(R.string.distillation_notification_result_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = getString(R.string.distillation_notification_result_channel_description)
+                setShowBadge(true)
+            },
+        )
     }
 
     private fun startAsForeground(notification: Notification): Boolean = try {
@@ -189,6 +290,7 @@ class DistillationForegroundService : Service(), KoinComponent {
     }
 
     private fun finishMonitoring() {
+        stopRequested = false
         monitorJob?.cancel()
         monitorJob = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -200,8 +302,12 @@ class DistillationForegroundService : Service(), KoinComponent {
             "top.wkbin.zaomeng.action.START_DISTILLATION_MONITORING"
         internal const val ACTION_STOP_MONITORING =
             "top.wkbin.zaomeng.action.STOP_DISTILLATION_MONITORING"
+        internal const val ACTION_STOP_ALL =
+            "top.wkbin.zaomeng.action.STOP_ALL_DISTILLATIONS"
         private const val NOTIFICATION_CHANNEL_ID = "distillation_progress"
+        private const val RESULT_NOTIFICATION_CHANNEL_ID = "distillation_result"
         private const val NOTIFICATION_ID = 4101
+        private const val RESULT_NOTIFICATION_ID = 4102
         private const val RUNNING_STATUS = "running"
         private const val POLL_INTERVAL_MS = 2_000L
     }
@@ -227,6 +333,20 @@ object DistillationForegroundController {
     fun stop(context: Context) {
         val appContext = context.applicationContext
         appContext.stopService(Intent(appContext, DistillationForegroundService::class.java))
+    }
+
+    fun stopAll(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val intent = Intent(appContext, DistillationForegroundService::class.java)
+            .setAction(DistillationForegroundService.ACTION_STOP_ALL)
+        return try {
+            ContextCompat.startForegroundService(appContext, intent)
+            true
+        } catch (_: IllegalStateException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
     }
 
     fun hasNotificationPermission(context: Context): Boolean =

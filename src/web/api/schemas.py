@@ -44,6 +44,18 @@ class SaveModelSettingsRequest(BaseModel):
     base_url: str = Field(default="")
     api_key: str = Field(default="")
     max_tokens: int = Field(default=0, ge=0, le=16000)
+    profile_id: str = Field(default="")
+    profile_name: str = Field(default="", max_length=80)
+    create_profile: bool = Field(default=False)
+
+
+class TestModelSettingsRequest(BaseModel):
+    provider: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    base_url: str = Field(default="")
+    api_key: str = Field(default="")
+    max_tokens: int = Field(default=0, ge=0, le=16000)
+    profile_id: str = Field(default="")
 
 
 class StartAppUpdateRequest(BaseModel):
@@ -141,7 +153,7 @@ class UpdateRelationDetailRequest(BaseModel):
 
 
 class CreateDialogueSessionRequest(BaseModel):
-    mode: str = Field(...)
+    mode: str = Field(default="observe")
     participants: list[str] = Field(default_factory=list)
     controlled_character: str = Field(default="")
     scene_card_id: str = Field(default="")
@@ -231,6 +243,7 @@ class PrepareDialogueTurnRequest(BaseModel):
     message: str = Field(..., min_length=1)
     message_kind: str = Field(default="dialogue")
     suppress_transcript_message: bool = Field(default=False)
+    operation_id: str = Field(default="", max_length=128)
 
 
 class SuggestDialogueTurnRequest(BaseModel):
@@ -297,3 +310,19 @@ class IngestDialogueTurnRequest(BaseModel):
         if not value:
             raise ValueError("responses must not be empty")
         return value
+
+
+class SaveChapterRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+    goal: str = Field(default="", max_length=800)
+    participants: list[str] = Field(default_factory=list, max_length=40)
+    content: str = Field(default="", max_length=300_000)
+
+
+class ArchiveDialogueChapterRequest(BaseModel):
+    session_id: str = Field(..., min_length=1)
+    title: str = Field(default="", max_length=120)
+
+
+class ReorderChapterRequest(BaseModel):
+    target_order: int = Field(..., ge=1)

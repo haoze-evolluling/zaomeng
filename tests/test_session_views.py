@@ -8,6 +8,7 @@ from src.web.chat.session_views import (
     serialize_scene_history,
     serialize_transcript,
 )
+from src.web.chat.service import DialogueService
 
 
 class SessionViewsTests(unittest.TestCase):
@@ -16,7 +17,12 @@ class SessionViewsTests(unittest.TestCase):
             "mode": "act",
             "controlled_character": "甲",
             "history": [
-                {"speaker": "甲", "message": "我来。"},
+                {
+                    "speaker": "甲",
+                    "message": "我来。",
+                    "turn_id": "turn-1",
+                    "ts": "2026-07-28T10:00:00Z",
+                },
                 {"speaker": "乙", "message": "等等。"},
                 {"speaker": "场景提示", "message": "天色暗了。"},
             ],
@@ -25,6 +31,8 @@ class SessionViewsTests(unittest.TestCase):
         transcript = serialize_transcript(session)
 
         self.assertEqual([item["role"] for item in transcript], ["user", "character", "scene"])
+        self.assertEqual(transcript[0]["turn_id"], "turn-1")
+        self.assertEqual(transcript[0]["timestamp"], "2026-07-28T10:00:00Z")
 
     def test_session_card_and_scene_history_keep_public_shape(self):
         session = {
@@ -61,6 +69,32 @@ class SessionViewsTests(unittest.TestCase):
 
         self.assertEqual(summary["message_kind"], "dialogue")
         self.assertEqual(summary["response_limit_hint"], 2)
+
+    def test_legacy_transcript_entries_receive_turn_ids(self):
+        transcript = [
+            {"speaker": "User", "message": "继续", "role": "director"},
+            {"speaker": "甲", "message": "我来。", "role": "character"},
+        ]
+        records = [
+            {
+                "turn_id": "turn-legacy",
+                "updated_at": "2026-07-28T10:00:01Z",
+                "payload": {"input": {"speaker": "User", "message": "继续"}},
+                "result": {
+                    "responses": [
+                        {
+                            "speaker": "甲",
+                            "message": "我来。",
+                            "ts": "2026-07-28T10:00:01Z",
+                        }
+                    ]
+                },
+            }
+        ]
+
+        DialogueService._attach_turn_ids_to_transcript(transcript, records)
+
+        self.assertEqual([item["turn_id"] for item in transcript], ["turn-legacy"] * 2)
 
 
 if __name__ == "__main__":

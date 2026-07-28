@@ -20,8 +20,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -153,6 +155,8 @@ fun SessionsScreen(
                 state = state,
                 onOpenChat = onOpenChat,
                 onDelete = { pendingDeletion = it },
+                onSearchQueryChange = viewModel::updateSearchQuery,
+                onSelectSort = viewModel::selectSort,
                 onDismissError = viewModel::clearError,
                 modifier = Modifier.padding(innerPadding),
             )
@@ -216,9 +220,12 @@ private fun SessionsContent(
     state: SessionsUiState,
     onOpenChat: (String, String) -> Unit,
     onDelete: (DialogueSessionDto) -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onSelectSort: (SessionsSort) -> Unit,
     onDismissError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val visibleSessions = filterSessions(state)
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 104.dp),
@@ -227,6 +234,19 @@ private fun SessionsContent(
         if (state.error.isNotBlank()) {
             item {
                 ErrorCard(message = state.error, onDismiss = onDismissError)
+            }
+        }
+
+        if (state.sessions.isNotEmpty()) {
+            item {
+                SessionListControls(
+                    query = state.searchQuery,
+                    sort = state.sort,
+                    visibleCount = visibleSessions.size,
+                    totalCount = state.sessions.size,
+                    onQueryChange = onSearchQueryChange,
+                    onSelectSort = onSelectSort,
+                )
             }
         }
 
@@ -258,8 +278,12 @@ private fun SessionsContent(
                     }
                 }
             }
+        } else if (visibleSessions.isEmpty()) {
+            item {
+                NoSessionMatches(onClearSearch = { onSearchQueryChange("") })
+            }
         } else {
-            items(state.sessions, key = DialogueSessionDto::key) { session ->
+            items(visibleSessions, key = DialogueSessionDto::key) { session ->
                 SessionCard(
                     session = session,
                     run = state.runs.firstOrNull { it.runId == session.runId },
@@ -268,6 +292,86 @@ private fun SessionsContent(
                     onDelete = { onDelete(session) },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SessionListControls(
+    query: String,
+    sort: SessionsSort,
+    visibleCount: Int,
+    totalCount: Int,
+    onQueryChange: (String) -> Unit,
+    onSelectSort: (SessionsSort) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = if (query.isNotBlank()) {
+                {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                    }
+                }
+            } else {
+                null
+            },
+            label = { Text("搜索会话") },
+            placeholder = { Text("书名、人物或最近消息") },
+            singleLine = true,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (query.isBlank()) "$totalCount 个会话" else "找到 $visibleCount 个",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SessionsSort.values().forEach { option ->
+                FilterChip(
+                    selected = sort == option,
+                    onClick = { onSelectSort(option) },
+                    label = { Text(option.label) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoSessionMatches(onClearSearch: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                Icons.Default.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("没有找到相关会话", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "可以换个书名、人物名或消息关键词。",
+                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onClearSearch) { Text("清空搜索") }
         }
     }
 }
@@ -330,7 +434,7 @@ private fun SessionCard(
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = session.updatedAt.toLocalDateTimeDisplay(),
+                    text = "最近活跃 · ${session.updatedAt.toLocalDateTimeDisplay()}",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

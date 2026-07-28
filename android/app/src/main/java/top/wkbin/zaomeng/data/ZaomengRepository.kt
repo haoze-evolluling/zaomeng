@@ -2,21 +2,28 @@ package top.wkbin.zaomeng.data
 
 import android.util.Base64
 import java.io.File
+import java.io.OutputStream
 import top.wkbin.zaomeng.backend.BackendState
 import top.wkbin.zaomeng.backend.EmbeddedBackendController
+import top.wkbin.zaomeng.backend.ModelApiKeyStore
 import top.wkbin.zaomeng.data.api.CreateDialogueSessionRequest
 import top.wkbin.zaomeng.data.api.CreateRunRequest
 import top.wkbin.zaomeng.data.api.BuiltinNovelDto
 import top.wkbin.zaomeng.data.api.BranchDialogueTurnRequest
 import top.wkbin.zaomeng.data.api.BranchDialogueSceneRequest
+import top.wkbin.zaomeng.data.api.ArchiveDialogueChapterRequest
+import top.wkbin.zaomeng.data.api.ChapterDto
 import top.wkbin.zaomeng.data.api.DeleteRunResponse
 import top.wkbin.zaomeng.data.api.DialogueAssociationsRequest
 import top.wkbin.zaomeng.data.api.DialogueDirectorRequest
 import top.wkbin.zaomeng.data.api.DialogueMemoryDto
 import top.wkbin.zaomeng.data.api.DialogueReplyRequest
 import top.wkbin.zaomeng.data.api.DialogueSessionDto
+import top.wkbin.zaomeng.data.api.DialogueStreamEvent
 import top.wkbin.zaomeng.data.api.DialogueSuggestionRequest
+import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
+import top.wkbin.zaomeng.data.api.ExportedChapterManuscript
 import top.wkbin.zaomeng.data.api.ImportRunPackageRequest
 import top.wkbin.zaomeng.data.api.ModelSettingsDto
 import top.wkbin.zaomeng.data.api.PersonaQualityReportDto
@@ -27,8 +34,12 @@ import top.wkbin.zaomeng.data.api.ReusableCardDto
 import top.wkbin.zaomeng.data.api.RecommendSceneCardsRequest
 import top.wkbin.zaomeng.data.api.RestartRunRequest
 import top.wkbin.zaomeng.data.api.RedistillSuggestionsDto
+import top.wkbin.zaomeng.data.api.ReorderChapterRequest
 import top.wkbin.zaomeng.data.api.RunManifestDto
 import top.wkbin.zaomeng.data.api.SaveModelSettingsRequest
+import top.wkbin.zaomeng.data.api.TestModelSettingsRequest
+import top.wkbin.zaomeng.data.api.SaveChapterRequest
+import top.wkbin.zaomeng.data.api.SearchResultDto
 import top.wkbin.zaomeng.data.api.SuggestPersonaFieldRequest
 import top.wkbin.zaomeng.data.api.SuggestPersonaFieldResponse
 import top.wkbin.zaomeng.data.api.SuggestRedistillSegmentsRequest
@@ -43,7 +54,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -57,6 +73,7 @@ import retrofit2.HttpException
 class ZaomengRepository(
     private val backend: EmbeddedBackendController,
     private val appPreferences: AppPreferencesRepository,
+    private val modelApiKeyStore: ModelApiKeyStore,
 ) {
     val backendState: StateFlow<BackendState> = backend.state
     val preferences: Flow<AppPreferences> = appPreferences.preferences
@@ -69,7 +86,34 @@ class ZaomengRepository(
     }
 
     suspend fun saveModelSettings(request: SaveModelSettingsRequest): ModelSettingsDto = request {
-        backend.requireApi().saveModelSettings(request)
+        backend.requireApi().saveModelSettings(request).also { saved ->
+            modelApiKeyStore.saveForProfile(saved.activeProfileId.ifBlank { request.profileId }, request.apiKey)
+        }
+    }
+
+    suspend fun testModelSettings(request: TestModelSettingsRequest) = request {
+        backend.requireApi().testModelSettings(request)
+    }
+
+    suspend fun activateModelProfile(profileId: String): ModelSettingsDto = request {
+        backend.requireApi().activateModelProfile(profileId)
+    }
+
+    suspend fun deleteModelProfile(profileId: String): ModelSettingsDto = request {
+        backend.requireApi().deleteModelProfile(profileId).also {
+            modelApiKeyStore.deleteForProfile(profileId)
+        }
+    }
+
+    suspend fun exportDiagnostics(destination: OutputStream): Long = request {
+        val response = backend.requireApi().exportDiagnostics()
+        if (!response.isSuccessful) {
+            throw ApiRequestException(errorDetail(response.errorBody()?.string(), response.code()))
+        }
+        val body = response.body() ?: throw ApiRequestException("诊断信息为空。")
+        body.use { source ->
+            source.byteStream().buffered().use { input -> input.copyTo(destination) }
+        }
     }
 
     suspend fun listRuns(): List<RunManifestDto> = request {
@@ -220,6 +264,71 @@ class ZaomengRepository(
             filename = filename,
             file = streamed.file,
             byteCount = streamed.byteCount,
+        )
+    }
+
+    suspend fun listChapters(runId: String): List<ChapterDto> = request {
+        backend.requireApi().listChapters(runId).items
+    }
+
+    suspend fun searchRunContent(runId: String, query: String): List<SearchResultDto> = request {
+        backend.requireApi().searchRunContent(runId, query).items
+    }
+
+    suspend fun saveChapter(
+        runId: String,
+        chapterId: String = "",
+        payload: SaveChapterRequest,
+    ): ChapterDto = request {
+        if (chapterId.isBlank()) {
+            backend.requireApi().createChapter(runId, payload)
+        } else {
+            backend.requireApi().updateChapter(runId, chapterId, payload)
+        }
+    }
+
+    suspend fun archiveSessionAsChapter(runId: String, sessionId: String, title: String = ""): ChapterDto = request {
+        backend.requireApi().archiveSessionAsChapter(runId, ArchiveDialogueChapterRequest(sessionId, title))
+    }
+
+    suspend fun deleteChapter(runId: String, chapterId: String) = request {
+        backend.requireApi().deleteChapter(runId, chapterId)
+    }
+
+    suspend fun continueChapter(runId: String, chapterId: String): DialogueSessionDto = request {
+        backend.requireApi().continueChapter(runId, chapterId)
+    }
+
+    suspend fun syncChapterSession(runId: String, chapterId: String): ChapterDto = request {
+        backend.requireApi().syncChapterSession(runId, chapterId)
+    }
+
+    suspend fun reorderChapter(runId: String, chapterId: String, targetOrder: Int): List<ChapterDto> = request {
+        backend.requireApi().reorderChapter(runId, chapterId, ReorderChapterRequest(targetOrder)).items
+    }
+
+    suspend fun exportChapters(
+        runId: String,
+        format: String,
+        cacheDirectory: File,
+    ): ExportedChapterManuscript = request {
+        val response = backend.requireApi().exportChapters(runId, format)
+        if (!response.isSuccessful) {
+            throw ApiRequestException(errorDetail(response.errorBody()?.string(), response.code()))
+        }
+        val body = response.body() ?: throw ApiRequestException("章节导出内容为空。")
+        val normalizedFormat = if (format == "text") "text" else "markdown"
+        val streamed = body.use {
+            streamToTempFile(
+                it.byteStream(),
+                cacheDirectory,
+                prefix = "zaomeng-manuscript-",
+                suffix = if (normalizedFormat == "text") ".txt" else ".md",
+            )
+        }
+        ExportedChapterManuscript(
+            filename = "$runId-manuscript.${if (normalizedFormat == "text") "txt" else "md"}",
+            file = streamed.file,
         )
     }
 
@@ -388,6 +497,20 @@ class ZaomengRepository(
         backend.requireApi().getDialogueSession(runId, sessionId)
     }
 
+    suspend fun searchSession(
+        runId: String,
+        sessionId: String,
+        query: String,
+        limit: Int = 50,
+    ): List<ChatSearchResultDto> = request {
+        backend.requireApi().searchDialogueSession(
+            runId = runId,
+            sessionId = sessionId,
+            query = query.trim(),
+            limit = limit.coerceIn(1, 100),
+        ).items
+    }
+
     suspend fun recoverSession(runId: String, sessionId: String): DialogueSessionDto = request {
         backend.requireApi().recoverDialogueSession(runId, sessionId)
     }
@@ -407,6 +530,133 @@ class ZaomengRepository(
                 suppressTranscriptMessage = messageKind == "plot",
             ),
         )
+    }
+
+    fun streamReply(
+        runId: String,
+        sessionId: String,
+        message: String,
+        messageKind: String,
+        operationId: String,
+    ): Flow<DialogueStreamEvent> = flow {
+        try {
+            val response = backend.requireApi().streamDialogueReply(
+                runId = runId,
+                sessionId = sessionId,
+                operationId = operationId,
+                request = DialogueReplyRequest(
+                    message = message,
+                    messageKind = messageKind,
+                    suppressTranscriptMessage = messageKind == "plot",
+                    operationId = operationId,
+                ),
+            )
+            if (!response.isSuccessful) {
+                throw ApiRequestException(
+                    errorDetail(response.errorBody()?.string(), response.code()),
+                    statusCode = response.code(),
+                )
+            }
+            val body = response.body() ?: throw ApiRequestException("流式回复内容为空。")
+            var eventName = "message"
+            val dataLines = mutableListOf<String>()
+            var terminalReceived = false
+
+            body.use { responseBody ->
+                responseBody.charStream().buffered().use { reader ->
+                    while (!terminalReceived) {
+                        val line = reader.readLine() ?: break
+                        when {
+                            line.isEmpty() && dataLines.isNotEmpty() -> {
+                                val event = parseDialogueStreamEvent(
+                                    eventName,
+                                    dataLines.joinToString("\n"),
+                                )
+                                dataLines.clear()
+                                eventName = "message"
+                                if (event != null) {
+                                    emit(event)
+                                    terminalReceived = event is DialogueStreamEvent.Complete ||
+                                        event is DialogueStreamEvent.Failure
+                                }
+                            }
+                            line.startsWith("event:") -> eventName = line.substringAfter(':').trim()
+                            line.startsWith("data:") -> dataLines += line.substringAfter(':').trimStart()
+                            line.startsWith(":") -> Unit
+                        }
+                    }
+                    if (!terminalReceived && dataLines.isNotEmpty()) {
+                        val event = parseDialogueStreamEvent(
+                            eventName,
+                            dataLines.joinToString("\n"),
+                        )
+                        if (event != null) {
+                            emit(event)
+                            terminalReceived = event is DialogueStreamEvent.Complete ||
+                                event is DialogueStreamEvent.Failure
+                        }
+                    }
+                }
+            }
+            if (!terminalReceived) {
+                throw ApiRequestException("流式连接提前结束，可安全重试这次发送。")
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: ApiRequestException) {
+            throw error
+        } catch (error: HttpException) {
+            throw ApiRequestException(
+                errorDetail(error.response()?.errorBody()?.string(), error.code()),
+                error,
+                statusCode = error.code(),
+            )
+        } catch (error: Throwable) {
+            val message = generateSequence(error) { it.cause }
+                .mapNotNull { it.message?.trim() }
+                .firstOrNull { it.isNotBlank() }
+                ?: "流式连接失败。"
+            throw ApiRequestException(message, error)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun parseDialogueStreamEvent(
+        eventName: String,
+        data: String,
+    ): DialogueStreamEvent? {
+        val payload = runCatching { json.parseToJsonElement(data).jsonObject }.getOrElse {
+            throw ApiRequestException("无法解析流式回复。", it)
+        }
+        return when (eventName.ifBlank { payload["event"]?.jsonPrimitive?.contentOrNull.orEmpty() }) {
+            "status" -> DialogueStreamEvent.Status(
+                phase = payload["phase"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                message = payload["message"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            )
+            "delta" -> DialogueStreamEvent.Delta(
+                index = payload["index"]?.jsonPrimitive?.intOrNull ?: 0,
+                speaker = payload["speaker"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                role = payload["role"]?.jsonPrimitive?.contentOrNull ?: "character",
+                text = payload["text"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["delta"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            )
+            "reset" -> DialogueStreamEvent.Reset(
+                message = payload["message"]?.jsonPrimitive?.contentOrNull
+                    ?: "正在重新整理回复…",
+            )
+            "complete" -> payload["session"]?.let { session ->
+                DialogueStreamEvent.Complete(
+                    session = json.decodeFromJsonElement(session),
+                    replayed = payload["replayed"]?.jsonPrimitive?.booleanOrNull ?: false,
+                )
+            }
+            "error" -> DialogueStreamEvent.Failure(
+                message = payload["message"]?.jsonPrimitive?.contentOrNull
+                    ?: payload["detail"]?.jsonPrimitive?.contentOrNull
+                    ?: "回复生成失败。",
+                retryable = payload["retryable"]?.jsonPrimitive?.booleanOrNull ?: true,
+            )
+            else -> null
+        }
     }
 
     suspend fun suggestReply(
@@ -616,7 +866,11 @@ class ZaomengRepository(
     }
 }
 
-class ApiRequestException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class ApiRequestException(
+    message: String,
+    cause: Throwable? = null,
+    val statusCode: Int? = null,
+) : Exception(message, cause)
 
 enum class ReusableCardKind {
     Scene,

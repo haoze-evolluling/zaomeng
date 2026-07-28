@@ -29,6 +29,7 @@ sealed interface BackendState {
 class EmbeddedBackendController(
     context: Context,
     private val tokenStore: InstallationTokenStore,
+    private val modelApiKeyStore: ModelApiKeyStore,
     private val apiFactory: LocalApiFactory,
 ) {
     private val applicationContext = context.applicationContext
@@ -53,9 +54,14 @@ class EmbeddedBackendController(
                 mutableState.value = BackendState.Starting("正在启动手机内的 FastAPI 服务…")
                 val token = tokenStore.getOrCreate()
                 val storageRoot = File(applicationContext.filesDir, "zaomeng").apply { mkdirs() }
-                val port = Python.getInstance()
-                    .getModule("zaomeng_android.server")
-                    .callAttr("start", storageRoot.absolutePath, token)
+                val serverModule = Python.getInstance().getModule("zaomeng_android.server")
+                val legacySecrets = serverModule
+                    .callAttr("read_legacy_model_secrets", storageRoot.absolutePath)
+                    .toString()
+                modelApiKeyStore.importLegacyJson(legacySecrets)
+                serverModule.callAttr("purge_legacy_model_secrets", storageRoot.absolutePath)
+                val port = serverModule
+                    .callAttr("start", storageRoot.absolutePath, token, modelApiKeyStore.snapshotJson())
                     .toInt()
                 val baseUrl = "http://127.0.0.1:$port"
                 val api = apiFactory.create(baseUrl, token)

@@ -55,6 +55,8 @@ def generate_dialogue_responses_for_run(
     generate_dialogue_responses: Callable[..., list[dict[str, str]]],
     build_dialogue_llm_messages: Callable[[dict[str, Any], bool], list[dict[str, Any]]],
     parse_dialogue_responses: Callable[[str, list[str]], list[dict[str, str]]],
+    on_delta: Callable[[str], None] | None = None,
+    on_attempt: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     config = build_runtime_config_for_run(run_dir=run_dir)
     parts = build_runtime_parts(config)
@@ -66,16 +68,45 @@ def generate_dialogue_responses_for_run(
     ]
     allowed_speakers.extend(["旁白", "场景提示"])
     completions: list[dict[str, Any]] = []
+    attempt_index = 0
+
+    def complete(
+        messages: list[dict[str, Any]],
+        temperature: float,
+        max_tokens: int,
+    ) -> dict[str, Any]:
+        nonlocal attempt_index
+        current_attempt = attempt_index
+        attempt_index += 1
+        if callable(on_attempt):
+            on_attempt(current_attempt)
+
+        stream_completion = getattr(parts.llm, "chat_completion_stream", None)
+        if callable(on_delta) and callable(stream_completion):
+            return stream_completion(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                on_delta=on_delta,
+            )
+
+        result = parts.llm.chat_completion(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if callable(on_delta):
+            content = str((result or {}).get("content", ""))
+            if content:
+                on_delta(content)
+        return result
+
     responses = generate_dialogue_responses(
         payload=payload,
         allowed_speakers=allowed_speakers,
         temperature=float(config.get("llm.temperature", 0.35) or 0.35),
         max_tokens=int(config.get("llm.max_tokens", 900) or 900),
-        chat_completion=lambda messages, temperature, max_tokens: parts.llm.chat_completion(
-            messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        ),
+        chat_completion=complete,
         build_messages=lambda current_payload, retry_on_empty: build_dialogue_llm_messages(
             current_payload,
             retry_on_empty,

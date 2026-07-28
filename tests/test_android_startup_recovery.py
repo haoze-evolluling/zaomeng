@@ -6,12 +6,26 @@ import unittest
 from pathlib import Path
 
 from android.app.src.main.python.zaomeng_android.recovery import (
+    audit_runtime_storage,
     INTERRUPTED_MESSAGE,
     recover_interrupted_runs,
 )
 
 
 class AndroidStartupRecoveryTests(unittest.TestCase):
+    def test_startup_audit_reports_invalid_run_without_reading_user_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            broken_run = root / "runs" / "run-broken"
+            broken_run.mkdir(parents=True)
+            (broken_run / "run_manifest.json").write_text("not-json", encoding="utf-8")
+
+            report = audit_runtime_storage(root)
+
+            self.assertEqual(report["run_count"], 1)
+            self.assertEqual(report["issues"], [{"kind": "invalid_manifest", "run_id": "run-broken"}])
+            self.assertTrue((root / "android_startup_report.json").exists())
+
     def test_running_manifest_is_marked_interrupted_and_stopped(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from src.web.api.compat import model_to_dict
 from src.web.api.deps import get_run_service
@@ -21,8 +23,26 @@ from src.web.api.schemas import (
     UpsertDialogueMemoryRequest,
 )
 from src.web.workflow import WebRunService
+from src.web.chat.reply_operations import ReplyOperationConflict
+from src.web.chat.streaming import encode_sse
 
 router = APIRouter()
+
+
+def _reply_operation_id(
+    payload_operation_id: str,
+    header_operation_id: str | None,
+    *,
+    generate: bool,
+) -> str:
+    body_value = str(payload_operation_id or "").strip()
+    header_value = str(header_operation_id or "").strip()
+    if body_value and header_value and body_value != header_value:
+        raise HTTPException(
+            status_code=400,
+            detail="operation_id and Idempotency-Key must match.",
+        )
+    return body_value or header_value or (str(uuid4()) if generate else "")
 
 
 @router.get("/api/web/runs/{run_id}/dialogue/sessions")
@@ -66,6 +86,27 @@ def get_dialogue_session(
 ) -> dict[str, Any]:
     try:
         return run_service.get_dialogue_session(run_id, session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+
+@router.get("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/search")
+def search_dialogue_session(
+    run_id: str,
+    session_id: str,
+    q: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(default=50, ge=1, le=100),
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return {
+            "items": run_service.search_dialogue_session(
+                run_id,
+                session_id=session_id,
+                query=q,
+                limit=limit,
+            )
+        }
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
 
@@ -273,9 +314,17 @@ def reply_dialogue_turn(
     run_id: str,
     session_id: str,
     payload: PrepareDialogueTurnRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     run_service: WebRunService = Depends(get_run_service),
 ) -> dict[str, Any]:
     try:
+        operation_id = _reply_operation_id(
+            payload.operation_id,
+            idempotency_key,
+            generate=False,
+        )
+        if operation_id:
+            run_service.reply_operations.normalize_operation_id(operation_id)
         return run_service.reply_dialogue_turn(
             run_id,
             session_id=session_id,
@@ -283,11 +332,90 @@ def reply_dialogue_turn(
             message_kind=payload.message_kind,
             suppress_transcript_message=payload.suppress_transcript_message,
             fast_response=True,
+            operation_id=operation_id,
         )
+    except ReplyOperationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/reply/stream")
+def stream_dialogue_turn(
+    run_id: str,
+    session_id: str,
+    payload: PrepareDialogueTurnRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    run_service: WebRunService = Depends(get_run_service),
+) -> StreamingResponse:
+    try:
+        operation_id = _reply_operation_id(
+            payload.operation_id,
+            idempotency_key,
+            generate=True,
+        )
+        run_service.reply_operations.normalize_operation_id(operation_id)
+        run_service.get_dialogue_session(run_id, session_id)
+        fingerprint = run_service.reply_operations.request_fingerprint(
+            message=payload.message,
+            message_kind=payload.message_kind,
+            suppress_transcript_message=payload.suppress_transcript_message,
+        )
+        run_service.reply_operations.load(
+            run_id,
+            session_id,
+            operation_id,
+            fingerprint=fingerprint,
+        )
+    except ReplyOperationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def event_stream():
+        try:
+            events = run_service.stream_dialogue_reply_events(
+                run_id,
+                session_id=session_id,
+                message=payload.message,
+                message_kind=payload.message_kind,
+                suppress_transcript_message=payload.suppress_transcript_message,
+                operation_id=operation_id,
+            )
+            for event, data in events:
+                yield encode_sse(event, data)
+        except ReplyOperationConflict as exc:
+            yield encode_sse(
+                "error",
+                {
+                    "message": str(exc),
+                    "retryable": False,
+                    "operation_id": operation_id,
+                },
+            )
+        except Exception as exc:
+            yield encode_sse(
+                "error",
+                {
+                    "message": str(exc) or "回复生成失败。",
+                    "retryable": True,
+                    "operation_id": operation_id,
+                },
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/api/web/runs/{run_id}/dialogue/sessions/{session_id}/suggest")

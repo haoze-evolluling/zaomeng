@@ -1,6 +1,9 @@
 package top.wkbin.zaomeng.feature.importbook
 
+import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -49,6 +52,28 @@ class ImportDocumentLoaderTest {
 
         assertEquals("GB18030", document.sourceEncoding)
         assertEquals(text, document.bytes.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `epub is extracted into normalized utf8 novel text`() {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { archive ->
+            archive.putNextEntry(ZipEntry("OEBPS/chapter-1.xhtml"))
+            archive.write(
+                "<html><body><h1>第一章</h1><p>宝玉来了。</p></body></html>".toByteArray(),
+            )
+            archive.closeEntry()
+        }
+
+        val document = ImportDocumentLoader.prepareImportDocument(
+            displayName = "红楼梦.epub",
+            bytes = output.toByteArray(),
+            expectedKind = ImportDocumentKind.NovelText,
+        )
+
+        assertEquals("红楼梦.txt", document.fileName)
+        assertEquals("EPUB", document.sourceEncoding)
+        assertEquals("第一章\n宝玉来了。", document.bytes.toString(Charsets.UTF_8))
     }
 
     @Test

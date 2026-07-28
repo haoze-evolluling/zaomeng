@@ -143,4 +143,14 @@ class ApiModelsTest {
         assertEquals("false", payload["auto_run"]!!.jsonPrimitive.content)
         assertEquals("true", payload["defer_run"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun observeSessionExplicitlyEncodesDefaultMode() {
+        val encoded = json.encodeToString(
+            CreateDialogueSessionRequest(participants = listOf("甲", "乙")),
+        )
+
+        val payload = json.parseToJsonElement(encoded).jsonObject
+        assertEquals("observe", payload["mode"]!!.jsonPrimitive.content)
+    }
 }

@@ -3,13 +3,19 @@ package top.wkbin.zaomeng.feature.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import top.wkbin.zaomeng.data.ReusableCardKind
+import top.wkbin.zaomeng.data.ApiRequestException
 import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.DialogueMemoryDto
 import top.wkbin.zaomeng.data.api.DialogueSessionDto
+import top.wkbin.zaomeng.data.api.DialogueStreamEvent
+import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.ReusableCardDto
 import top.wkbin.zaomeng.data.api.TranscriptItemDto
+import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
+import top.wkbin.zaomeng.data.preferences.ChatDisplayPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +27,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.UUID
 
 data class ChatToolOption(
     val label: String,
@@ -28,6 +35,13 @@ data class ChatToolOption(
     val description: String = "",
     val messageKind: String = "plot",
     val suggestionDirection: String = "",
+)
+
+data class StreamingReplyPart(
+    val index: Int,
+    val speaker: String = "",
+    val role: String = "character",
+    val text: String = "",
 )
 
 data class ChatUiState(
@@ -39,6 +53,11 @@ data class ChatUiState(
     val recovering: Boolean = false,
     val sendOutcomeUnknown: Boolean = false,
     val sendBaselineTranscript: List<TranscriptItemDto>? = null,
+    val failedOperationId: String = "",
+    val failedMessage: String = "",
+    val failedMessageKind: String = "dialogue",
+    val streamStatus: String = "",
+    val streamingReplies: List<StreamingReplyPart> = emptyList(),
     val toolBusy: String = "",
     val session: DialogueSessionDto? = null,
     val sceneCards: List<ReusableCardDto> = emptyList(),
@@ -50,6 +69,10 @@ data class ChatUiState(
     val memorySaveRevision: Long = 0,
     val draft: String = "",
     val messageKind: String = "dialogue",
+    val searchQuery: String = "",
+    val searching: Boolean = false,
+    val searchResults: List<ChatSearchResultDto> = emptyList(),
+    val chatDisplay: ChatDisplayPreferences = ChatDisplayPreferences(),
     val notice: String = "",
     val error: String = "",
 ) {
@@ -59,6 +82,7 @@ data class ChatUiState(
             !sending &&
             !recovering &&
             !sendOutcomeUnknown &&
+            failedOperationId.isBlank() &&
             toolBusy.isBlank() &&
             session?.status == "ready" &&
             draft.isNotBlank()
@@ -69,6 +93,7 @@ data class ChatUiState(
             !sending &&
             !recovering &&
             !sendOutcomeUnknown &&
+            failedOperationId.isBlank() &&
             toolBusy.isBlank() &&
             session?.status == "ready"
 
@@ -82,6 +107,7 @@ data class ChatUiState(
 
 class ChatViewModel(
     private val repository: ZaomengRepository,
+    preferencesRepository: AppPreferencesRepository,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = mutableState.asStateFlow()
@@ -91,6 +117,18 @@ class ChatViewModel(
     private var toolJob: Job? = null
     private var nextToolRequestId = 0L
     private var activeToolRequest: ToolRequest? = null
+    private var sendJob: Job? = null
+    private var searchJob: Job? = null
+    private var recoveryJob: Job? = null
+    private var nextRecoveryRequestId = 0L
+
+    init {
+        viewModelScope.launch {
+            preferencesRepository.chatDisplayPreferences.collect { preferences ->
+                mutableState.update { it.copy(chatDisplay = preferences) }
+            }
+        }
+    }
 
     private data class ToolRequest(
         val id: Long,
@@ -115,10 +153,14 @@ class ChatViewModel(
         if (normalizedRunId.isBlank() || normalizedSessionId.isBlank()) {
             cancelLoadRequest()
             cancelToolRequest()
+            sendJob?.cancel()
+            searchJob?.cancel()
+            cancelRecoveryRequest()
             mutableState.value = ChatUiState(
                 runId = normalizedRunId,
                 sessionId = normalizedSessionId,
                 loading = false,
+                chatDisplay = current.chatDisplay,
                 error = "会话地址不完整，无法打开聊天。",
             )
             return
@@ -126,15 +168,21 @@ class ChatViewModel(
 
         cancelLoadRequest()
         cancelToolRequest()
-        val requestId = ++loadRequestId
         val targetChanged = current.runId != normalizedRunId ||
             current.sessionId != normalizedSessionId
+        if (targetChanged) {
+            sendJob?.cancel()
+            searchJob?.cancel()
+            cancelRecoveryRequest()
+        }
+        val requestId = ++loadRequestId
         mutableState.update {
             if (targetChanged) {
                 ChatUiState(
                     runId = normalizedRunId,
                     sessionId = normalizedSessionId,
                     loading = true,
+                    chatDisplay = current.chatDisplay,
                 )
             } else {
                 it.copy(
@@ -182,15 +230,69 @@ class ChatViewModel(
     }
 
     fun updateDraft(value: String) {
-        if (state.value.sendOutcomeUnknown) return
+        if (state.value.sendOutcomeUnknown || state.value.failedOperationId.isNotBlank()) return
         mutableState.update { it.copy(draft = value, error = "", notice = "") }
+    }
+
+    fun updateSearchQuery(value: String) {
+        val query = value.take(120)
+        val snapshot = state.value
+        searchJob?.cancel()
+        mutableState.update {
+            it.copy(
+                searchQuery = query,
+                searching = query.isNotBlank(),
+                searchResults = if (query.isBlank()) emptyList() else it.searchResults,
+            )
+        }
+        if (query.isBlank() || snapshot.runId.isBlank() || snapshot.sessionId.isBlank()) return
+        searchJob = viewModelScope.launch {
+            delay(250)
+            try {
+                val results = repository.searchSession(snapshot.runId, snapshot.sessionId, query)
+                if (state.value.searchQuery == query) {
+                    mutableState.update { it.copy(searching = false, searchResults = results) }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (state.value.searchQuery == query) {
+                    val fallback = snapshot.session?.transcript.orEmpty()
+                        .filter { item ->
+                            item.message.contains(query, ignoreCase = true) ||
+                                item.speaker.contains(query, ignoreCase = true)
+                        }
+                        .map { item ->
+                            ChatSearchResultDto(
+                                speaker = item.speaker,
+                                message = item.message,
+                                role = item.role,
+                                turnId = item.turnId,
+                                timestamp = item.timestamp,
+                            )
+                        }
+                    mutableState.update {
+                        it.copy(
+                            searching = false,
+                            searchResults = fallback,
+                            error = if (fallback.isEmpty()) {
+                                error.readableMessage("聊天记录搜索失败，请稍后重试。")
+                            } else {
+                                ""
+                            },
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun selectMessageKind(kind: String) {
         val current = state.value
         if (
             kind !in messageKinds || current.sending || current.recovering ||
-            current.sendOutcomeUnknown || current.toolBusy.isNotBlank()
+            current.sendOutcomeUnknown || current.failedOperationId.isNotBlank() ||
+            current.toolBusy.isNotBlank()
         ) return
         mutableState.update { it.copy(messageKind = kind, error = "") }
     }
@@ -217,57 +319,193 @@ class ChatViewModel(
             return
         }
 
-        viewModelScope.launch {
-            mutableState.update { it.copy(sending = true, error = "") }
+        startStreamingSend(
+            snapshot = snapshot,
+            message = message,
+            messageKind = snapshot.messageKind,
+            operationId = UUID.randomUUID().toString(),
+        )
+    }
+
+    fun retryLastSend() {
+        val snapshot = state.value
+        if (
+            snapshot.failedOperationId.isBlank() || snapshot.failedMessage.isBlank() ||
+            snapshot.sending || snapshot.recovering
+        ) return
+        startStreamingSend(
+            snapshot = snapshot,
+            message = snapshot.failedMessage,
+            messageKind = snapshot.failedMessageKind,
+            operationId = snapshot.failedOperationId,
+        )
+    }
+
+    private fun startStreamingSend(
+        snapshot: ChatUiState,
+        message: String,
+        messageKind: String,
+        operationId: String,
+    ) {
+        sendJob?.cancel()
+        sendJob = viewModelScope.launch {
+            mutableState.update { current ->
+                if (
+                    current.runId != snapshot.runId ||
+                    current.sessionId != snapshot.sessionId
+                ) {
+                    current
+                } else current.copy(
+                    sending = true,
+                    error = "",
+                    streamStatus = "正在连接模型…",
+                    streamingReplies = emptyList(),
+                    sendOutcomeUnknown = false,
+                    failedOperationId = operationId,
+                    failedMessage = message,
+                    failedMessageKind = messageKind,
+                    sendBaselineTranscript = snapshot.session?.transcript,
+                )
+            }
+            if (
+                state.value.runId != snapshot.runId ||
+                state.value.sessionId != snapshot.sessionId ||
+                state.value.failedOperationId != operationId
+            ) {
+                return@launch
+            }
             try {
-                // /reply 内部会完成 prepare + 模型生成 + ingest；这里绝不能预先调用 prepare。
-                val replied = repository.reply(
+                repository.streamReply(
                     runId = snapshot.runId,
                     sessionId = snapshot.sessionId,
                     message = message,
-                    messageKind = snapshot.messageKind,
-                )
-                mutableState.update {
-                    it.copy(
-                        sending = false,
-                        session = replied,
-                        draft = "",
-                        sendOutcomeUnknown = false,
-                        sendBaselineTranscript = null,
-                        error = "",
-                    )
+                    messageKind = messageKind,
+                    operationId = operationId,
+                ).collect { event ->
+                    when (event) {
+                        is DialogueStreamEvent.Status -> updateSendState(snapshot, operationId) {
+                            it.copy(streamStatus = event.message.ifBlank { event.phase })
+                        }
+                        is DialogueStreamEvent.Delta -> updateSendState(snapshot, operationId) { current ->
+                            val existing = current.streamingReplies
+                                .firstOrNull { it.index == event.index }
+                            val updated = StreamingReplyPart(
+                                index = event.index,
+                                speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
+                                role = event.role.ifBlank { existing?.role ?: "character" },
+                                text = existing?.text.orEmpty() + event.text,
+                            )
+                            current.copy(
+                                streamStatus = "回复正在生成…",
+                                streamingReplies = current.streamingReplies
+                                    .filterNot { it.index == event.index }
+                                    .plus(updated)
+                                    .sortedBy(StreamingReplyPart::index),
+                            )
+                        }
+                        is DialogueStreamEvent.Reset -> updateSendState(snapshot, operationId) {
+                            it.copy(
+                                streamStatus = event.message,
+                                streamingReplies = emptyList(),
+                            )
+                        }
+                        is DialogueStreamEvent.Complete -> updateSendState(snapshot, operationId) {
+                            it.copy(
+                                sending = false,
+                                session = event.session,
+                                draft = "",
+                                sendOutcomeUnknown = false,
+                                sendBaselineTranscript = null,
+                                failedOperationId = "",
+                                failedMessage = "",
+                                streamStatus = "",
+                                streamingReplies = emptyList(),
+                                notice = if (event.replayed) "已恢复这次发送的本地结果。" else it.notice,
+                                error = "",
+                            )
+                        }
+                        is DialogueStreamEvent.Failure -> throw StreamReplyException(
+                            event.message,
+                            event.retryable,
+                        )
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                val originalMessage = error.readableMessage("回复生成失败，请稍后重试。")
-                val refreshed = runCatching {
-                    repository.getSession(snapshot.runId, snapshot.sessionId)
-                }.getOrNull()
-                val previous = snapshot.session
-                val responseWasCommitted = refreshed?.status == "ready" &&
-                    refreshed.transcript != previous.transcript
-                val outcomeUnknown = !responseWasCommitted &&
-                    (refreshed == null || refreshed.status != "ready")
-                mutableState.update {
-                    it.copy(
-                        sending = false,
-                        session = refreshed ?: it.session,
-                        draft = if (responseWasCommitted) "" else it.draft,
-                        sendOutcomeUnknown = outcomeUnknown,
-                        sendBaselineTranscript = if (outcomeUnknown) {
-                            previous.transcript
+                handleStreamingFailure(snapshot, operationId, message, messageKind, error)
+            }
+        }
+    }
+
+    private suspend fun handleStreamingFailure(
+        snapshot: ChatUiState,
+        operationId: String,
+        message: String,
+        messageKind: String,
+        error: Throwable,
+    ) {
+        val refreshed = try {
+            repository.getSession(snapshot.runId, snapshot.sessionId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
+        val baseline = snapshot.session?.transcript.orEmpty()
+        val responseWasCommitted = refreshed?.status == "ready" &&
+            refreshed.transcript != baseline
+        val retryable = when (error) {
+            is StreamReplyException -> error.retryable
+            is ApiRequestException -> error.statusCode == null ||
+                error.statusCode == 408 || error.statusCode == 429 || error.statusCode >= 500
+            else -> true
+        }
+        val outcomeUnknown = !responseWasCommitted &&
+            error !is StreamReplyException && retryable
+        updateSendState(snapshot, operationId) {
+            it.copy(
+                sending = false,
+                session = refreshed ?: it.session,
+                draft = if (responseWasCommitted) "" else it.draft,
+                sendOutcomeUnknown = outcomeUnknown,
+                sendBaselineTranscript = if (outcomeUnknown) baseline else null,
+                failedOperationId = if (responseWasCommitted || !retryable) "" else operationId,
+                failedMessage = if (responseWasCommitted || !retryable) "" else message,
+                failedMessageKind = messageKind,
+                streamStatus = "",
+                streamingReplies = emptyList(),
+                error = if (responseWasCommitted) {
+                    "连接中断，但已从本地恢复最新回复。"
+                } else {
+                    error.readableMessage(
+                        if (retryable) {
+                            "回复生成失败，可安全重试这次发送。"
                         } else {
-                            null
-                        },
-                        error = if (responseWasCommitted) {
-                            "连接中断，但已从本地恢复最新回复。"
-                        } else {
-                            originalMessage
+                            "回复请求失败，请检查消息或模型配置。"
                         },
                     )
-                }
-            }
+                },
+            )
+        }
+    }
+
+    fun discardFailedSend() {
+        val snapshot = state.value
+        if (
+            snapshot.sending || snapshot.recovering || snapshot.sendOutcomeUnknown ||
+            snapshot.failedOperationId.isBlank() || snapshot.session?.status != "ready"
+        ) {
+            return
+        }
+        mutableState.update {
+            it.copy(
+                failedOperationId = "",
+                failedMessage = "",
+                sendBaselineTranscript = null,
+                error = "",
+                notice = "已保留输入，可以修改后重新发送。",
+            )
         }
     }
 
@@ -284,8 +522,10 @@ class ChatViewModel(
         }
 
         cancelLoadRequest()
-        viewModelScope.launch {
-            mutableState.update {
+        cancelRecoveryRequest()
+        val requestId = ++nextRecoveryRequestId
+        recoveryJob = viewModelScope.launch {
+            updateRecoveryState(requestId, snapshot) {
                 it.copy(refreshing = false, recovering = true, error = "")
             }
             try {
@@ -294,13 +534,15 @@ class ChatViewModel(
                     recovered.status == "ready" && recovered.transcript != it
                 } == true
                 val resolved = recovered.status == "ready"
-                mutableState.update {
+                updateRecoveryState(requestId, snapshot) {
                     it.copy(
                         recovering = false,
                         session = recovered,
                         draft = if (responseWasCommitted) "" else it.draft,
                         sendOutcomeUnknown = snapshot.sendOutcomeUnknown && !resolved,
                         sendBaselineTranscript = if (resolved) null else it.sendBaselineTranscript,
+                        failedOperationId = if (resolved) "" else it.failedOperationId,
+                        failedMessage = if (resolved) "" else it.failedMessage,
                         error = if (responseWasCommitted) {
                             "已从本地恢复上一次发送的回复。"
                         } else {
@@ -311,7 +553,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                mutableState.update {
+                updateRecoveryState(requestId, snapshot) {
                     it.copy(
                         recovering = false,
                         error = error.readableMessage("会话恢复失败，请稍后重试。"),
@@ -333,8 +575,10 @@ class ChatViewModel(
         }
 
         cancelLoadRequest()
-        viewModelScope.launch {
-            mutableState.update {
+        cancelRecoveryRequest()
+        val requestId = ++nextRecoveryRequestId
+        recoveryJob = viewModelScope.launch {
+            updateRecoveryState(requestId, snapshot) {
                 it.copy(refreshing = false, recovering = true, error = "")
             }
             try {
@@ -343,16 +587,18 @@ class ChatViewModel(
                     refreshed.status == "ready" && refreshed.transcript != it
                 } == true
                 val resolved = refreshed.status == "ready"
-                mutableState.update {
+                updateRecoveryState(requestId, snapshot) {
                     it.copy(
                         recovering = false,
                         session = refreshed,
                         draft = if (responseWasCommitted) "" else it.draft,
                         sendOutcomeUnknown = !resolved,
                         sendBaselineTranscript = if (resolved) null else it.sendBaselineTranscript,
+                        failedOperationId = if (responseWasCommitted) "" else it.failedOperationId,
+                        failedMessage = if (responseWasCommitted) "" else it.failedMessage,
                         error = when {
                             responseWasCommitted -> "已从本地恢复上一次发送的回复。"
-                            resolved -> "本地没有发现新回复，可以重新发送。"
+                            resolved -> "本地没有发现新回复，可以安全重试同一次发送。"
                             else -> "这轮仍在处理中，可以稍后核对或恢复会话。"
                         },
                     )
@@ -360,7 +606,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                mutableState.update {
+                updateRecoveryState(requestId, snapshot) {
                     it.copy(
                         recovering = false,
                         error = error.readableMessage("暂时无法核对发送结果，请稍后重试。"),
@@ -833,6 +1079,48 @@ class ChatViewModel(
         }
     }
 
+    private fun cancelRecoveryRequest() {
+        nextRecoveryRequestId += 1
+        recoveryJob?.cancel()
+        recoveryJob = null
+    }
+
+    private fun updateRecoveryState(
+        requestId: Long,
+        snapshot: ChatUiState,
+        transform: (ChatUiState) -> ChatUiState,
+    ) {
+        mutableState.update { current ->
+            if (
+                nextRecoveryRequestId == requestId &&
+                current.runId == snapshot.runId &&
+                current.sessionId == snapshot.sessionId
+            ) {
+                transform(current)
+            } else {
+                current
+            }
+        }
+    }
+
+    private fun updateSendState(
+        snapshot: ChatUiState,
+        operationId: String,
+        transform: (ChatUiState) -> ChatUiState,
+    ) {
+        mutableState.update { current ->
+            if (
+                current.runId == snapshot.runId &&
+                current.sessionId == snapshot.sessionId &&
+                current.failedOperationId == operationId
+            ) {
+                transform(current)
+            } else {
+                current
+            }
+        }
+    }
+
     private companion object {
         val messageKinds = setOf("dialogue", "narration", "plot")
     }
@@ -909,3 +1197,8 @@ private fun Throwable.readableMessage(fallback: String): String = message
     ?.trim()
     ?.takeIf(String::isNotEmpty)
     ?: fallback
+
+private class StreamReplyException(
+    message: String,
+    val retryable: Boolean,
+) : Exception(message)

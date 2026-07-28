@@ -1,8 +1,11 @@
 package top.wkbin.zaomeng.feature.chat
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,21 +21,31 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,23 +60,38 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.data.api.DialogueSessionDto
+import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.TranscriptItemDto
+import top.wkbin.zaomeng.data.preferences.ChatDisplayPreferences
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 
 private data class MessageKindOption(
     val value: String,
@@ -87,6 +115,7 @@ fun ChatScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(runId, sessionId) {
         viewModel.load(runId, sessionId)
@@ -154,9 +183,14 @@ fun ChatScreen(
                 refreshing = state.refreshing,
                 refreshEnabled = state.canRefresh,
                 toolsEnabled = state.canUseTools,
+                searchOpen = searchOpen,
                 onBack = onBack,
                 onRefresh = viewModel::refresh,
                 onOpenTools = { toolsOpen = true },
+                onToggleSearch = {
+                    searchOpen = !searchOpen
+                    if (!searchOpen) viewModel.updateSearchQuery("")
+                },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -169,6 +203,8 @@ fun ChatScreen(
                     onSend = viewModel::send,
                     onRecover = viewModel::recoverPending,
                     onReconcile = viewModel::reconcileUnknownSend,
+                    onRetry = viewModel::retryLastSend,
+                    onDiscardRetry = viewModel::discardFailedSend,
                 )
             }
         },
@@ -180,11 +216,40 @@ fun ChatScreen(
                 onRetry = viewModel::refresh,
                 modifier = Modifier.padding(innerPadding),
             )
-            else -> Transcript(
-                session = requireNotNull(state.session),
-                sending = state.sending,
-                modifier = Modifier.padding(innerPadding),
-            )
+            else -> Column(Modifier.padding(innerPadding).fillMaxSize()) {
+                if (searchOpen) {
+                    ChatSearchBar(
+                        query = state.searchQuery,
+                        onQueryChange = viewModel::updateSearchQuery,
+                        onClose = {
+                            searchOpen = false
+                            viewModel.updateSearchQuery("")
+                        },
+                    )
+                }
+                if (searchOpen && state.searchQuery.isNotBlank()) {
+                    ChatSearchResults(
+                        query = state.searchQuery,
+                        searching = state.searching,
+                        results = state.searchResults,
+                        actionsEnabled = state.canUseTools,
+                        onBranch = viewModel::branchFromTurn,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Transcript(
+                        session = requireNotNull(state.session),
+                        sending = state.sending,
+                        streamStatus = state.streamStatus,
+                        streamingReplies = state.streamingReplies,
+                        displayPreferences = state.chatDisplay,
+                        actionsEnabled = state.canUseTools,
+                        onRegenerate = viewModel::correctLatest,
+                        onBranch = viewModel::branchFromTurn,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
     }
 }
@@ -196,9 +261,11 @@ private fun ChatTopBar(
     refreshing: Boolean,
     refreshEnabled: Boolean,
     toolsEnabled: Boolean,
+    searchOpen: Boolean,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenTools: () -> Unit,
+    onToggleSearch: () -> Unit,
 ) {
     TopAppBar(
         title = {
@@ -225,6 +292,12 @@ private fun ChatTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onToggleSearch) {
+                Icon(
+                    if (searchOpen) Icons.Default.Close else Icons.Default.Search,
+                    contentDescription = if (searchOpen) "关闭聊天搜索" else "搜索聊天记录",
+                )
+            }
             IconButton(onClick = onOpenTools, enabled = toolsEnabled) {
                 Icon(Icons.Default.MoreVert, contentDescription = "会话工具")
             }
@@ -327,61 +400,115 @@ private fun MissingChat(error: String, onRetry: () -> Unit, modifier: Modifier =
 }
 
 @Composable
-private fun Transcript(
-    session: DialogueSessionDto,
-    sending: Boolean,
+private fun ChatSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = {
+                if (query.isNotBlank()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                    }
+                }
+            },
+            placeholder = { Text("搜索台词、动作或人物") },
+            shape = RoundedCornerShape(20.dp),
+        )
+        IconButton(onClick = onClose) {
+            Icon(Icons.Default.Close, contentDescription = "关闭搜索")
+        }
+    }
+}
+
+@Composable
+private fun ChatSearchResults(
+    query: String,
+    searching: Boolean,
+    results: List<ChatSearchResultDto>,
+    actionsEnabled: Boolean,
+    onBranch: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberLazyListState()
-    val transcript = session.transcript
-
-    LaunchedEffect(transcript.size, transcript.lastOrNull()?.message, sending) {
-        val target = transcript.lastIndex + if (sending) 1 else 0
-        if (target >= 0) listState.animateScrollToItem(target)
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (transcript.isEmpty()) {
+    when {
+        searching -> Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        results.isEmpty() -> Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "没有找到相关聊天记录",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        else -> LazyColumn(
+            modifier = modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             item {
+                Text(
+                    "找到 ${results.size} 条结果",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            itemsIndexed(
+                items = results,
+                key = { index, item ->
+                    "${item.turnId}-${item.timestamp}-${item.message.hashCode()}-$index"
+                },
+            ) { _, result ->
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     ),
                 ) {
-                    Text(
-                        "这一幕还没有留下台词。写下第一句话，让故事继续。",
-                        modifier = Modifier.fillMaxWidth().padding(20.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        itemsIndexed(
-            items = transcript,
-            key = { index, item -> "$index-${item.speaker}-${item.message.hashCode()}" },
-        ) { _, item ->
-            TranscriptBubble(item)
-        }
-
-        if (sending) {
-            item(key = "generating") {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text(
-                        "人物正在斟酌回应…",
-                        modifier = Modifier.padding(start = 10.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                result.speaker.ifBlank { "人物" },
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (result.archived) {
+                                Text(
+                                    "较早记录",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        HighlightedSearchText(result.message, query)
+                        if (result.turnId.isNotBlank()) {
+                            TextButton(
+                                onClick = { onBranch(result.turnId) },
+                                enabled = actionsEnabled,
+                                modifier = Modifier.align(Alignment.End),
+                            ) {
+                                Icon(
+                                    Icons.Default.CallSplit,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(17.dp),
+                                )
+                                Text("从此处分支", modifier = Modifier.padding(start = 5.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -389,28 +516,259 @@ private fun Transcript(
 }
 
 @Composable
-private fun TranscriptBubble(item: TranscriptItemDto) {
+private fun HighlightedSearchText(text: String, query: String) {
+    val highlightColor = MaterialTheme.colorScheme.tertiaryContainer
+    val annotated = remember(text, query, highlightColor) {
+        buildAnnotatedString {
+            var cursor = 0
+            Regex(Regex.escape(query), RegexOption.IGNORE_CASE).findAll(text).forEach { match ->
+                append(text.substring(cursor, match.range.first))
+                pushStyle(SpanStyle(background = highlightColor, fontWeight = FontWeight.SemiBold))
+                append(match.value)
+                pop()
+                cursor = match.range.last + 1
+            }
+            append(text.substring(cursor))
+        }
+    }
+    Text(annotated, style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+private fun Transcript(
+    session: DialogueSessionDto,
+    sending: Boolean,
+    streamStatus: String,
+    streamingReplies: List<StreamingReplyPart>,
+    displayPreferences: ChatDisplayPreferences,
+    actionsEnabled: Boolean,
+    onRegenerate: () -> Unit,
+    onBranch: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+    val bottomThresholdPx = with(LocalDensity.current) { 24.dp.roundToPx() }
+    val transcript = session.transcript
+    val latestAssistantIndex = transcript.indexOfLast { item ->
+        item.role != "user" && item.role != "scene" && item.role != "director"
+    }
+    var followNewMessages by remember(session.sessionId) { mutableStateOf(true) }
+    var unseenMessages by remember(session.sessionId) { mutableIntStateOf(0) }
+    var previousVisibleCount by remember(session.sessionId) {
+        mutableIntStateOf(transcript.size + streamingReplies.size)
+    }
+    val isAtBottom by remember(listState, bottomThresholdPx) {
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            val lastVisible = layout.visibleItemsInfo.lastOrNull()
+            layout.totalItemsCount == 0 || (
+                lastVisible?.index == layout.totalItemsCount - 1 &&
+                    lastVisible.offset + lastVisible.size <=
+                    layout.viewportEndOffset + bottomThresholdPx
+                )
+        }
+    }
+
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress to isAtBottom }
+            .distinctUntilChanged()
+            .collect { (scrolling, atBottom) ->
+                if (scrolling) followNewMessages = atBottom
+                if (atBottom) unseenMessages = 0
+            }
+    }
+
+    val visibleCount = transcript.size + streamingReplies.size
+    val lastContentIndex = when {
+        sending && streamingReplies.isEmpty() -> if (transcript.isEmpty()) 1 else transcript.size
+        visibleCount > 0 -> visibleCount - 1
+        else -> 0
+    }
+    val contentSignature = transcript.lastOrNull()?.message.orEmpty() +
+        streamingReplies.joinToString(separator = "|") { it.text }
+    LaunchedEffect(visibleCount, contentSignature, sending) {
+        val added = (visibleCount - previousVisibleCount).coerceAtLeast(0)
+        previousVisibleCount = visibleCount
+        if (followNewMessages) {
+            listState.scrollToBottom(lastContentIndex, animated = false)
+            unseenMessages = 0
+        } else if (added > 0) {
+            unseenMessages = (unseenMessages + added).coerceAtMost(99)
+        }
+    }
+
+    Box(modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                horizontal = 16.dp,
+                vertical = if (displayPreferences.compactMode) 6.dp else 10.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(
+                if (displayPreferences.compactMode) 3.dp else 8.dp,
+            ),
+        ) {
+            if (transcript.isEmpty() && streamingReplies.isEmpty()) {
+                item {
+                    Text(
+                        "这一幕还没有留下台词。写下第一句话，让故事继续。",
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            itemsIndexed(
+                items = transcript,
+                key = { index, item ->
+                    item.turnId.ifBlank { "$index-${item.speaker}-${item.message.hashCode()}" } +
+                        "-$index"
+                },
+            ) { index, item ->
+                TranscriptBubble(
+                    item = item,
+                    displayPreferences = displayPreferences,
+                    actionsEnabled = actionsEnabled,
+                    canRegenerate = index == latestAssistantIndex && !sending,
+                    onCopy = { clipboard.setText(AnnotatedString(item.message)) },
+                    onRegenerate = onRegenerate,
+                    onBranch = { onBranch(item.turnId) },
+                )
+            }
+
+            items(
+                items = streamingReplies,
+                key = { "stream-${it.index}" },
+            ) { item ->
+                TranscriptBubble(
+                    item = TranscriptItemDto(
+                        speaker = item.speaker.ifBlank { "生成中" },
+                        message = item.text,
+                        role = item.role,
+                    ),
+                    displayPreferences = displayPreferences,
+                    actionsEnabled = false,
+                    streaming = true,
+                    onCopy = {},
+                    onRegenerate = {},
+                    onBranch = {},
+                )
+            }
+
+            if (sending && streamingReplies.isEmpty()) {
+                item(key = "generating") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(
+                            streamStatus.ifBlank { "人物正在斟酌回应…" },
+                            modifier = Modifier.padding(start = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (!isAtBottom || unseenMessages > 0) {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    followNewMessages = true
+                    unseenMessages = 0
+                    scrollScope.launch {
+                        listState.scrollToBottom(lastContentIndex, animated = true)
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp),
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                icon = {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                },
+                text = {
+                    Text(
+                        if (unseenMessages > 0) "$unseenMessages 条新消息" else "回到底部",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                },
+            )
+        }
+    }
+}
+
+private suspend fun LazyListState.scrollToBottom(itemIndex: Int, animated: Boolean) {
+    val targetIndex = itemIndex.coerceAtLeast(0)
+    var target = layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+    if (target == null) {
+        if (animated) {
+            animateScrollToItem(targetIndex)
+        } else {
+            scrollToItem(targetIndex)
+        }
+        target = layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+    }
+    val overflow = target?.let {
+        it.offset + it.size - layoutInfo.viewportEndOffset
+    } ?: return
+    if (overflow > 0) {
+        if (animated) {
+            animateScrollBy(overflow.toFloat())
+        } else {
+            scrollBy(overflow.toFloat())
+        }
+    }
+}
+
+@Composable
+private fun TranscriptBubble(
+    item: TranscriptItemDto,
+    displayPreferences: ChatDisplayPreferences,
+    actionsEnabled: Boolean,
+    streaming: Boolean = false,
+    canRegenerate: Boolean = false,
+    onCopy: () -> Unit,
+    onRegenerate: () -> Unit,
+    onBranch: () -> Unit,
+) {
     val isUser = item.role == "user"
     val isScene = item.role == "scene" || item.role == "director"
+    val verticalPadding = if (displayPreferences.compactMode) 6.dp else 9.dp
+    val messageStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontSize = MaterialTheme.typography.bodyMedium.fontSize * displayPreferences.fontSize.scale,
+    )
 
     if (isScene) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Surface(
                 modifier = Modifier.widthIn(max = 520.dp),
-                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
-                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(8.dp),
             ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = verticalPadding)) {
                     Text(
-                        text = item.speaker.ifBlank { "场景提示" },
-                            style = MaterialTheme.typography.labelSmall,
+                        text = item.speaker.ifBlank { "旁白" },
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                         fontWeight = FontWeight.SemiBold,
                     )
                     ParentheticalMessageText(
                         text = item.message,
                         modifier = Modifier.padding(top = 3.dp),
-                        style = MaterialTheme.typography.bodySmall,
+                        style = messageStyle.copy(fontStyle = FontStyle.Italic),
+                        baseColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    if (!streaming) MessageActions(
+                        actionsEnabled = actionsEnabled,
+                        canRegenerate = false,
+                        canBranch = item.turnId.isNotBlank(),
+                        onCopy = onCopy,
+                        onRegenerate = onRegenerate,
+                        onBranch = onBranch,
                     )
                 }
             }
@@ -436,7 +794,7 @@ private fun TranscriptBubble(item: TranscriptItemDto) {
                 bottomEnd = if (isUser) 4.dp else 18.dp,
             ),
         ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = verticalPadding)) {
                 Text(
                     text = if (isUser) "你 · ${item.speaker}" else item.speaker.ifBlank { "人物" },
                     style = MaterialTheme.typography.labelSmall,
@@ -450,7 +808,82 @@ private fun TranscriptBubble(item: TranscriptItemDto) {
                 ParentheticalMessageText(
                     text = item.message,
                     modifier = Modifier.padding(top = 3.dp),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = messageStyle,
+                    baseColor = if (isUser) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                if (streaming) {
+                    Text(
+                        "正在生成",
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    MessageActions(
+                        actionsEnabled = actionsEnabled,
+                        canRegenerate = canRegenerate,
+                        canBranch = item.turnId.isNotBlank(),
+                        onCopy = onCopy,
+                        onRegenerate = onRegenerate,
+                        onBranch = onBranch,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageActions(
+    actionsEnabled: Boolean,
+    canRegenerate: Boolean,
+    canBranch: Boolean,
+    onCopy: () -> Unit,
+    onRegenerate: () -> Unit,
+    onBranch: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.padding(top = 2.dp).heightIn(min = 30.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
+            Icon(
+                Icons.Default.ContentCopy,
+                contentDescription = "复制消息",
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (canRegenerate) {
+            IconButton(
+                onClick = onRegenerate,
+                enabled = actionsEnabled,
+                modifier = Modifier.size(30.dp),
+            ) {
+                Icon(
+                    Icons.Default.Replay,
+                    contentDescription = "重新生成",
+                    modifier = Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (canBranch) {
+            IconButton(
+                onClick = onBranch,
+                enabled = actionsEnabled,
+                modifier = Modifier.size(30.dp),
+            ) {
+                Icon(
+                    Icons.Default.CallSplit,
+                    contentDescription = "从此处分支",
+                    modifier = Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -464,20 +897,21 @@ private fun ParentheticalMessageText(
     text: String,
     modifier: Modifier = Modifier,
     style: TextStyle,
+    baseColor: androidx.compose.ui.graphics.Color,
 ) {
-    val asideColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
+    val asideColor = MaterialTheme.colorScheme.secondary
     val annotated = buildAnnotatedString {
         var cursor = 0
         parentheticalPattern.findAll(text).forEach { match ->
             append(text.substring(cursor, match.range.first))
-            pushStyle(SpanStyle(color = asideColor))
+            pushStyle(SpanStyle(color = asideColor, fontStyle = FontStyle.Italic))
             append(match.value)
             pop()
             cursor = match.range.last + 1
         }
         append(text.substring(cursor))
     }
-    Text(text = annotated, modifier = modifier, style = style)
+    Text(text = annotated, modifier = modifier, style = style, color = baseColor)
 }
 
 @Composable
@@ -488,21 +922,47 @@ private fun ChatComposer(
     onSend: () -> Unit,
     onRecover: () -> Unit,
     onReconcile: () -> Unit,
+    onRetry: () -> Unit,
+    onDiscardRetry: () -> Unit,
 ) {
+    var mentionsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
+    val participants = remember(state.session) {
+        val session = state.session ?: return@remember emptyList()
+        val present = session.sceneProgress["present_participants"]
+            ?.let { value ->
+                runCatching {
+                    value.jsonArray.mapNotNull { item ->
+                        item.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+                    }
+                }.getOrNull()
+            }
+            .orEmpty()
+        (present.ifEmpty { session.participants })
+            .filter { it.isNotBlank() && it != session.controlledCharacter }
+            .distinct()
+    }
+    val inputEnabled = !state.sending && !state.recovering &&
+        !state.sendOutcomeUnknown && state.failedOperationId.isBlank()
+    LaunchedEffect(state.draft) {
+        if (state.draft.trimEnd().endsWith("@")) mentionsOpen = true
+    }
     Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
+                ),
         ) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(messageKindOptions, key = MessageKindOption::value) { option ->
                     FilterChip(
                         selected = state.messageKind == option.value,
                         onClick = { onMessageKindChange(option.value) },
-                        enabled = !state.sending && !state.recovering && !state.sendOutcomeUnknown,
+                        enabled = inputEnabled,
                         label = { Text(option.label) },
                     )
                 }
@@ -517,12 +977,54 @@ private fun ChatComposer(
                 )
             }
 
+            if (participants.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AssistChip(
+                        onClick = { mentionsOpen = !mentionsOpen },
+                        enabled = inputEnabled,
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.AlternateEmail,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        },
+                        label = { Text("提及人物") },
+                    )
+                    if (!mentionsOpen) {
+                        Text(
+                            "@ 可指定回应人物",
+                            modifier = Modifier.padding(start = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (mentionsOpen) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(bottom = 5.dp),
+                    ) {
+                        items(participants, key = { it }) { participant ->
+                            FilterChip(
+                                selected = state.draft.hasMention(participant),
+                                onClick = {
+                                    onDraftChange(state.draft.toggleMention(participant))
+                                },
+                                enabled = inputEnabled,
+                                label = { Text(participant) },
+                            )
+                        }
+                    }
+                }
+            }
+
             Row(verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
                     value = state.draft,
                     onValueChange = onDraftChange,
                     modifier = Modifier.weight(1f),
-                    enabled = !state.sending && !state.recovering && !state.sendOutcomeUnknown,
+                    enabled = inputEnabled,
                     placeholder = {
                         Text(
                             when (state.messageKind) {
@@ -563,7 +1065,56 @@ private fun ChatComposer(
                 }
             }
 
-            if (state.sendOutcomeUnknown) {
+            if (state.sending && state.streamStatus.isNotBlank()) {
+                Text(
+                    state.streamStatus,
+                    modifier = Modifier.padding(start = 8.dp, top = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            if (state.failedOperationId.isNotBlank() && !state.sending) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        when {
+                            state.sendOutcomeUnknown ->
+                                "连接中断，先核对本地结果；重试会沿用本次发送标识，不会重复生成。"
+                            state.session?.status != "ready" ->
+                                "回复在本机仍处于待处理状态，可重试同一次生成或恢复会话。"
+                            else ->
+                                "本次生成失败。重试会沿用原发送标识，也可以保留输入后修改。"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                        if (state.sendOutcomeUnknown || state.session?.status != "ready") {
+                            TextButton(
+                                onClick = if (state.session?.status == "ready") onReconcile else onRecover,
+                                enabled = !state.recovering,
+                            ) {
+                                Text(if (state.session?.status == "ready") "核对状态" else "恢复会话")
+                            }
+                        } else {
+                            TextButton(onClick = onDiscardRetry, enabled = !state.recovering) {
+                                Text("编辑消息")
+                            }
+                        }
+                        Button(onClick = onRetry, enabled = !state.recovering) {
+                            Icon(
+                                Icons.Default.Replay,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp),
+                            )
+                            Text("重试", modifier = Modifier.padding(start = 5.dp))
+                        }
+                    }
+                }
+            } else if (state.sendOutcomeUnknown) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -614,6 +1165,32 @@ private fun ChatComposer(
             }
         }
     }
+}
+
+private fun String.appendMention(participant: String): String {
+    val name = participant.trim()
+    if (name.isBlank()) return this
+    val trimmedEnd = trimEnd()
+    return when {
+        trimmedEnd.endsWith("@") -> trimmedEnd.dropLast(1) + "@$name "
+        trimmedEnd.isBlank() -> "@$name "
+        else -> "$trimmedEnd @$name "
+    }
+}
+
+private fun String.hasMention(participant: String): Boolean {
+    val name = participant.trim()
+    if (name.isBlank()) return false
+    return Regex("(^|\\s)@${Regex.escape(name)}(?=\\s|$)").containsMatchIn(this)
+}
+
+private fun String.toggleMention(participant: String): String {
+    val name = participant.trim()
+    if (name.isBlank() || !hasMention(name)) return appendMention(name)
+    val pattern = Regex("(^|\\s)@${Regex.escape(name)}(?=\\s|$)")
+    return pattern.replace(this) { match -> match.groupValues[1] }
+        .replace(Regex(" {2,}"), " ")
+        .trimStart()
 }
 
 private fun String.chineseMode(): String = when (this) {

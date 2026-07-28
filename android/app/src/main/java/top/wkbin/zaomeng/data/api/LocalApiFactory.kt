@@ -22,9 +22,13 @@ class LocalApiFactory {
             .readTimeout(5, TimeUnit.MINUTES)
             .writeTimeout(1, TimeUnit.MINUTES)
             .addInterceptor { chain ->
+                val acceptsEventStream = chain.request().url.encodedPath.endsWith("/reply/stream")
                 val authenticated = chain.request().newBuilder()
                     .header("Authorization", "Bearer $token")
-                    .header("Accept", "application/json")
+                    .header(
+                        "Accept",
+                        if (acceptsEventStream) "text/event-stream" else "application/json",
+                    )
                     .build()
                 chain.proceed(authenticated)
             }

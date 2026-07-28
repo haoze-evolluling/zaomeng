@@ -98,7 +98,7 @@ class RunPackageTests(unittest.TestCase):
             self.assertEqual(imported["novel_id"], run["novel_id"])
             self.assertEqual(imported["status"], "ready")
             self.assertEqual(len(imported["artifact_index"]["characters"]), 2)
-            self.assertFalse((Path(imported["webui"]["run_dir"]) / "dialogue").exists())
+            self.assertTrue((Path(imported["webui"]["run_dir"]) / "dialogue").exists())
 
     def test_export_does_not_require_permission_to_copy_file_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:

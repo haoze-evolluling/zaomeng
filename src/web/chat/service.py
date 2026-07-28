@@ -545,6 +545,113 @@ class DialogueService:
         payload = self._read_json(self._session_file(run_id, session_id))
         return self._serialize_session(run_id, payload)
 
+    def search_session_transcript(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        query: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            return []
+        result_limit = max(1, min(int(limit or 50), 100))
+        with self.session_lock(run_id, session_id):
+            session = self._read_json(self._session_file(run_id, session_id))
+            serialized = self._serialize_session(run_id, session)
+            completed_records = self._completed_turn_records(run_id, session_id)
+        query_key = normalized_query.casefold()
+        items: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+
+        for entry in reversed(list(serialized.get("transcript", []) or [])):
+            speaker = str(entry.get("speaker", "")).strip()
+            message = str(entry.get("message", "")).strip()
+            if query_key not in speaker.casefold() and query_key not in message.casefold():
+                continue
+            key = (speaker, message)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                {
+                    "speaker": speaker,
+                    "message": message,
+                    "role": str(entry.get("role", "character")).strip() or "character",
+                    "turn_id": str(entry.get("turn_id", "")).strip(),
+                    "timestamp": str(entry.get("timestamp", "")).strip(),
+                    "archived": False,
+                    "score": 1.0,
+                }
+            )
+            if len(items) >= result_limit:
+                return items
+
+        memory_store = self._resolve_memory_store(run_id)
+        if memory_store is None:
+            return items
+        memory_hits = memory_store.search_long_term_memory(
+            session_id,
+            normalized_query,
+            top_k=min(50, result_limit),
+        )
+        turn_lookup: dict[tuple[str, str], str] = {}
+        for record in completed_records:
+            turn_id = str(record.get("turn_id", "")).strip()
+            payload = dict(record.get("payload", {}) or {})
+            input_payload = dict(payload.get("input", {}) or {})
+            candidates = [input_payload]
+            candidates.extend(
+                item
+                for item in list(dict(record.get("result", {}) or {}).get("responses", []) or [])
+                if isinstance(item, dict)
+            )
+            for candidate in candidates:
+                speaker = str(candidate.get("speaker", "")).strip()
+                message = str(candidate.get("message", "")).strip()
+                if speaker and message and turn_id:
+                    turn_lookup[(speaker, message)] = turn_id
+
+        controlled = str(session.get("controlled_character", "")).strip()
+        self_insert_name = str(
+            dict(session.get("self_insert", {}) or {}).get("display_name", "")
+        ).strip()
+        mode = str(session.get("mode", "observe")).strip() or "observe"
+        for hit in memory_hits:
+            metadata = dict(hit.get("metadata", {}) or {})
+            speaker = str(metadata.get("speaker", hit.get("speaker", ""))).strip()
+            text = str(hit.get("text", "")).strip()
+            message = text.split(": ", 1)[1].strip() if ": " in text else text
+            key = (speaker, message)
+            if not message or key in seen:
+                continue
+            seen.add(key)
+            role = "character"
+            if speaker in {"旁白", "场景提示"}:
+                role = "director" if mode == "observe" else "scene"
+            elif mode == "act" and speaker == controlled:
+                role = "user"
+            elif mode == "insert" and speaker == self_insert_name:
+                role = "user"
+            elif mode == "observe" and speaker == "User":
+                role = "director"
+            items.append(
+                {
+                    "speaker": speaker,
+                    "message": message,
+                    "role": role,
+                    "turn_id": str(metadata.get("turn_id", hit.get("turn_id", ""))).strip()
+                    or turn_lookup.get(key, ""),
+                    "timestamp": str(metadata.get("ts", hit.get("ts", ""))).strip(),
+                    "archived": True,
+                    "score": float(hit.get("score", 0.0) or 0.0),
+                }
+            )
+            if len(items) >= result_limit:
+                break
+        return items
+
     @with_session_lock
     def delete_session(self, run_id: str, session_id: str) -> None:
         session_dir = self._session_dir(run_id, session_id)
@@ -1577,6 +1684,79 @@ class DialogueService:
         return self._serialize_session(run_id, session)
 
     @with_session_lock
+    def reconcile_turn_result(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        turn_id: str,
+    ) -> dict[str, Any] | None:
+        """Return or restore a turn which crossed the result/session commit boundary."""
+
+        normalized_turn_id = validate_storage_id(turn_id, field_name="turn_id")
+        session = self._read_json(self._session_file(run_id, session_id))
+        history = [
+            dict(item or {})
+            for item in list(session.get("history", []) or [])
+            if isinstance(item, dict)
+        ]
+        if any(
+            str(item.get("turn_id", "")).strip() == normalized_turn_id
+            for item in history
+        ):
+            return self._serialize_session(run_id, session)
+
+        pending = dict(session.get("pending_turn", {}) or {})
+        if str(pending.get("turn_id", "")).strip() != normalized_turn_id:
+            return None
+        result_path = self._turn_file(
+            run_id,
+            session_id,
+            normalized_turn_id,
+            "result",
+        )
+        if not result_path.is_file():
+            return None
+        result = self._read_json(result_path)
+        if str(result.get("turn_id", "")).strip() != normalized_turn_id:
+            return None
+        checkpoint = dict(result.get("checkpoint", {}) or {})
+        checkpoint_history = list(checkpoint.get("history", []) or [])
+        if not checkpoint_history or not any(
+            str(dict(item or {}).get("turn_id", "")).strip() == normalized_turn_id
+            for item in checkpoint_history
+            if isinstance(item, dict)
+        ):
+            return None
+
+        for key in (
+            "history",
+            "scene_card",
+            "scene_card_id",
+            "scene_history",
+            "scene_progress",
+            "character_snapshots",
+            "relation_delta",
+            "relation_matrix",
+            "event_signals",
+            "memory_summary_state",
+            "consistency_monitor",
+            "relation_locks",
+            "memory_ledger",
+            "inherited_event_timeline",
+            "inherited_relation_timeline",
+            "generation_cache_stats",
+        ):
+            if key in checkpoint:
+                session[key] = checkpoint[key]
+        session["pending_turn"] = {}
+        session["latest_context_usage"] = dict(result.get("context_usage", {}) or {})
+        session["status"] = "ready"
+        session["updated_at"] = str(result.get("updated_at", "")).strip() or _utc_now()
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
+    @with_session_lock
     def build_suggestion_payload(
         self,
         run_manifest: dict[str, Any],
@@ -1835,12 +2015,14 @@ class DialogueService:
         transcript_message = str(
             pending.get("transcript_message", pending.get("user_message", ""))
         ).strip()
+        pending_turn_id = str(pending.get("turn_id", "")).strip()
         if transcript_message:
             user_entry = {
                 "speaker": pending.get("speaker", "User"),
                 "message": transcript_message,
                 "target": "",
                 "ts": pending.get("created_at", _utc_now()),
+                "turn_id": pending_turn_id,
             }
             if session_store is not None:
                 session_store.append_long_term_memory(
@@ -1854,6 +2036,7 @@ class DialogueService:
                         "speaker": str(user_entry.get("speaker", "")).strip(),
                         "target": "",
                         "ts": user_entry.get("ts", ""),
+                        "turn_id": pending_turn_id,
                     },
                 )
                 user_entry["memory_archived"] = True
@@ -1865,6 +2048,8 @@ class DialogueService:
             for item in pending.get("active_participants", [])
             if str(item).strip()
         ]
+        for response in clean_responses:
+            response["turn_id"] = pending_turn_id
         session["history"].extend(clean_responses)
         for item in clean_responses:
             response_entry = item
@@ -1891,6 +2076,7 @@ class DialogueService:
                         "speaker": str(response_entry.get("speaker", "")).strip(),
                         "target": target,
                         "ts": response_entry.get("ts", ""),
+                        "turn_id": pending_turn_id,
                     },
                 )
                 response_entry["memory_archived"] = True
@@ -1956,6 +2142,9 @@ class DialogueService:
                 for item in list(session.get("memory_ledger", []) or [])
                 if isinstance(item, dict)
             ],
+            "generation_cache_stats": dict(
+                session.get("generation_cache_stats", {}) or {}
+            ),
             "inherited_event_timeline": [
                 dict(item or {})
                 for item in list(session.get("inherited_event_timeline", []) or [])
@@ -2748,6 +2937,7 @@ class DialogueService:
             str(session.get("mode", "")).strip()
         )
         transcript = self._serialize_transcript(session)
+        self._attach_turn_ids_to_transcript(transcript, turn_records)
         session["transcript"] = transcript
         session["scene_progress"] = self._session_scene_progress(session)
         session["relation_delta"] = self._session_relation_delta(session)
@@ -2835,6 +3025,57 @@ class DialogueService:
             monitor["metrics"] = _consistency.build_monitor_metrics(monitor_history)
             session["consistency_monitor"] = monitor
         return session
+
+    @staticmethod
+    def _attach_turn_ids_to_transcript(
+        transcript: list[dict[str, Any]],
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Backfill turn ids for sessions created before history entries carried them."""
+
+        search_from = 0
+        for record in records:
+            turn_id = str(record.get("turn_id", "")).strip()
+            if not turn_id:
+                continue
+            payload = dict(record.get("payload", {}) or {})
+            result = dict(record.get("result", {}) or {})
+            input_payload = dict(payload.get("input", {}) or {})
+            candidates = [
+                (
+                    str(input_payload.get("speaker", "")).strip(),
+                    str(input_payload.get("message", "")).strip(),
+                    str(record.get("updated_at", "")).strip(),
+                )
+            ]
+            candidates.extend(
+                (
+                    str(item.get("speaker", "")).strip(),
+                    str(item.get("message", "")).strip(),
+                    str(item.get("ts", record.get("updated_at", ""))).strip(),
+                )
+                for item in list(result.get("responses", []) or [])
+                if isinstance(item, dict)
+            )
+            for speaker, message, timestamp in candidates:
+                if not speaker or not message:
+                    continue
+                matched_index = next(
+                    (
+                        index
+                        for index in range(search_from, len(transcript))
+                        if not str(transcript[index].get("turn_id", "")).strip()
+                        and str(transcript[index].get("speaker", "")).strip() == speaker
+                        and str(transcript[index].get("message", "")).strip() == message
+                    ),
+                    -1,
+                )
+                if matched_index < 0:
+                    continue
+                transcript[matched_index]["turn_id"] = turn_id
+                if not str(transcript[matched_index].get("timestamp", "")).strip():
+                    transcript[matched_index]["timestamp"] = timestamp
+                search_from = matched_index + 1
 
     def _completed_turn_records(
         self, run_id: str, session_id: str

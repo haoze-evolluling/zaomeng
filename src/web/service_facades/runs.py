@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
+from src.core.config import Config
+from src.core.llm_client import LLMClient
 from src.web.time_utils import utc_now as _utc_now
 from src.web.run_ops import (
     build_model_settings_response,
@@ -19,10 +23,13 @@ from src.web.run_ops import (
 
 class RunServiceMixin:
     def get_model_settings(self) -> dict[str, Any]:
+        document = self._load_model_settings_document()
         payload = self._load_model_settings_payload()
         return build_model_settings_response(
             payload,
             configured=self._is_model_configured_payload(payload),
+            active_profile_id=str(document.get("active_profile_id", "")).strip(),
+            profiles=[self._model_profile_summary(item) for item in list(document.get("profiles", []) or [])],
         )
 
     def save_model_settings(
@@ -33,9 +40,26 @@ class RunServiceMixin:
         base_url: str = "",
         api_key: str = "",
         max_tokens: int = 0,
+        profile_id: str = "",
+        profile_name: str = "",
+        create_profile: bool = False,
     ) -> dict[str, Any]:
+        document = self._load_model_settings_document()
+        profiles = list(document.get("profiles", []) or [])
+        requested_profile_id = str(profile_id or "").strip()
+        active_profile_id = str(document.get("active_profile_id", "")).strip()
+        if create_profile:
+            requested_profile_id = f"profile-{uuid4().hex[:12]}"
+            existing: dict[str, Any] = {}
+        else:
+            requested_profile_id = requested_profile_id or active_profile_id or "default"
+            existing = next(
+                (dict(item) for item in profiles if str(item.get("profile_id", "")).strip() == requested_profile_id),
+                {},
+            )
+        existing["api_key"] = self._secret_store.read(self._model_profile_secret_name(existing))
         normalized = normalize_model_settings(
-            existing=self._load_model_settings_payload(),
+            existing=existing,
             provider=provider,
             model=model,
             base_url=base_url,
@@ -43,12 +67,127 @@ class RunServiceMixin:
             max_tokens=max_tokens,
             utc_now=_utc_now,
         )
+        normalized["profile_id"] = requested_profile_id
+        normalized["name"] = str(profile_name or existing.get("name", "")).strip() or str(model).strip()
+        secret_name = self._model_profile_secret_name(normalized)
         api_key_value = str(normalized.pop("api_key", "")).strip()
         if api_key_value:
-            self._secret_store.write(self._model_api_key_secret_name, api_key_value)
-            normalized["api_key_ref"] = self._model_api_key_secret_name
-        self._write_json(self.settings_path, normalized)
+            self._secret_store.write(secret_name, api_key_value)
+        normalized["api_key_ref"] = secret_name
+        replaced = False
+        next_profiles: list[dict[str, Any]] = []
+        for item in profiles:
+            if str(item.get("profile_id", "")).strip() == requested_profile_id:
+                next_profiles.append(normalized)
+                replaced = True
+            else:
+                next_profiles.append(item)
+        if not replaced:
+            next_profiles.append(normalized)
+        self._write_json(
+            self.settings_path,
+            {"version": 2, "active_profile_id": requested_profile_id, "profiles": next_profiles},
+        )
         return self.get_model_settings()
+
+    def activate_model_profile(self, profile_id: str) -> dict[str, Any]:
+        document = self._load_model_settings_document()
+        selected = str(profile_id or "").strip()
+        if not any(str(item.get("profile_id", "")).strip() == selected for item in document.get("profiles", [])):
+            raise FileNotFoundError(selected)
+        document["active_profile_id"] = selected
+        self._write_json(self.settings_path, document)
+        return self.get_model_settings()
+
+    def test_model_connection(
+        self,
+        *,
+        provider: str,
+        model: str,
+        base_url: str = "",
+        api_key: str = "",
+        max_tokens: int = 0,
+        profile_id: str = "",
+    ) -> dict[str, Any]:
+        document = self._load_model_settings_document()
+        requested_profile_id = str(profile_id or "").strip()
+        existing = next(
+            (
+                dict(item)
+                for item in document.get("profiles", [])
+                if str(item.get("profile_id", "")).strip() == requested_profile_id
+            ),
+            {},
+        )
+        existing["api_key"] = self._secret_store.read(self._model_profile_secret_name(existing))
+        payload = normalize_model_settings(
+            existing=existing,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            utc_now=_utc_now,
+        )
+        config = Config()
+        config.update(
+            {
+                "llm": {
+                    "provider": payload["provider"],
+                    "model": payload["model"],
+                    "base_url": payload["base_url"],
+                    "api_key": payload["api_key"],
+                    "max_tokens": min(max(1, int(payload["max_tokens"] or 0)), 32) or 16,
+                    "timeout_seconds": 20,
+                    "retry_attempts": 0,
+                }
+            }
+        )
+        started = perf_counter()
+        result = LLMClient(config).chat_completion(
+            [{"role": "user", "content": "Reply with exactly: OK"}],
+            temperature=0,
+            max_tokens=16,
+        )
+        return {
+            "ok": True,
+            "provider": str(result.get("provider", payload["provider"])).strip(),
+            "model": str(result.get("model", payload["model"])).strip(),
+            "latency_ms": round((perf_counter() - started) * 1000),
+            "message": "连接成功。",
+        }
+
+    def delete_model_profile(self, profile_id: str) -> dict[str, Any]:
+        document = self._load_model_settings_document()
+        selected = str(profile_id or "").strip()
+        profiles = list(document.get("profiles", []) or [])
+        target = next((item for item in profiles if str(item.get("profile_id", "")).strip() == selected), None)
+        if target is None:
+            raise FileNotFoundError(selected)
+        if len(profiles) <= 1:
+            raise ValueError("At least one model profile must remain.")
+        self._secret_store.delete(self._model_profile_secret_name(target))
+        remaining = [item for item in profiles if str(item.get("profile_id", "")).strip() != selected]
+        active = str(document.get("active_profile_id", "")).strip()
+        document["profiles"] = remaining
+        document["active_profile_id"] = active if active != selected else str(remaining[0].get("profile_id", "")).strip()
+        self._write_json(self.settings_path, document)
+        return self.get_model_settings()
+
+    def _model_profile_summary(self, profile: dict[str, Any]) -> dict[str, Any]:
+        secret_name = self._model_profile_secret_name(profile)
+        return {
+            "profile_id": str(profile.get("profile_id", "")).strip(),
+            "name": str(profile.get("name", "")).strip(),
+            "provider": str(profile.get("provider", "")).strip(),
+            "model": str(profile.get("model", "")).strip(),
+            "base_url": str(profile.get("base_url", "")).strip(),
+            "max_tokens": max(0, int(profile.get("max_tokens", 0) or 0)),
+            "api_key_configured": bool(self._secret_store.read(secret_name)),
+            "configured": self._is_model_configured_payload(
+                {**profile, "api_key": self._secret_store.read(secret_name)}
+            ),
+        }
 
     def model_is_configured(self) -> bool:
         return is_model_configured_payload(self._load_model_settings_payload())

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.core.runtime_factory import build_runtime_parts
 from src.web.chat import DialogueService
+from src.web.chat.reply_operations import ReplyOperationStore
 from src.web.secrets import ProtectedSecretStore
 from src.web.review import (
     PERSONA_REVIEW_FIELDS,
@@ -16,7 +17,9 @@ from src.web.service_facades import (
     AutomaticPipelineMixin,
     ArtifactServiceMixin,
     CoreServiceMixin,
+    ChapterServiceMixin,
     DialogueServiceMixin,
+    DiagnosticsServiceMixin,
     OpeningPresetServiceMixin,
     PackageServiceMixin,
     PipelineHelpersMixin,
@@ -63,11 +66,13 @@ class WebRunService(
     RunPreparationMixin,
     RunServiceMixin,
     PackageServiceMixin,
+    ChapterServiceMixin,
     ArtifactServiceMixin,
     OpeningPresetServiceMixin,
     SceneCardServiceMixin,
     SelfCardServiceMixin,
     DialogueServiceMixin,
+    DiagnosticsServiceMixin,
     ReviewHelpersMixin,
     PipelineHelpersMixin,
 ):
@@ -212,7 +217,7 @@ class WebRunService(
     RELATION_REPAIR_MAX_TOKENS = 1000
     STOPPED_ERROR_TYPE = RunStoppedError
 
-    def __init__(self, storage_root: str | Path | None = None) -> None:
+    def __init__(self, storage_root: str | Path | None = None, *, secret_store: Any | None = None) -> None:
         self.project_root = _project_root()
         env_storage_root = str(os.getenv("ZAOMENG_WEB_STORAGE_ROOT", "") or os.getenv("ZAOMENG_STORAGE_DIR", "")).strip()
         has_explicit_storage_root = bool(storage_root or env_storage_root)
@@ -233,7 +238,7 @@ class WebRunService(
         self.self_cards_root = self.storage_root / "self-cards"
         self.opening_presets_root = self.storage_root / "opening-presets"
         self.settings_path = self.storage_root / "model_settings.json"
-        self._secret_store = ProtectedSecretStore(self.storage_root / "secrets")
+        self._secret_store = secret_store or ProtectedSecretStore(self.storage_root / "secrets")
         self._model_api_key_secret_name = "model_api_key"
         self.runs_root.mkdir(parents=True, exist_ok=True)
         self.builtin_novels_root.mkdir(parents=True, exist_ok=True)
@@ -244,6 +249,7 @@ class WebRunService(
             self.runs_root,
             memory_store_resolver=self._dialogue_memory_store_for_run,
         )
+        self.reply_operations = ReplyOperationStore(self.runs_root)
         self._active_run_threads: dict[str, threading.Thread] = {}
         self._run_manifest_locks_guard = threading.Lock()
         self._run_manifest_locks: dict[str, threading.RLock] = {}

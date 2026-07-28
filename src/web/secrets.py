@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from threading import RLock
 
 
 class ProtectedSecretStore:
@@ -47,6 +48,13 @@ class ProtectedSecretStore:
                 if temp_path.exists():
                     temp_path.unlink()
 
+    def delete(self, name: str) -> None:
+        path = self._path(name)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+
     def _path(self, name: str) -> Path:
         normalized = str(name or "").strip()
         if not normalized or not normalized.replace("_", "").replace("-", "").isalnum():
@@ -62,4 +70,32 @@ class ProtectedSecretStore:
             pass
 
 
-__all__ = ["ProtectedSecretStore"]
+class InMemorySecretStore:
+    """Process-local secret store used by embedded clients with a native vault."""
+
+    def __init__(self, values: dict[str, str] | None = None) -> None:
+        self._lock = RLock()
+        self._values = {
+            str(name).strip(): str(value).strip()
+            for name, value in dict(values or {}).items()
+            if str(name).strip() and str(value).strip()
+        }
+
+    def read(self, name: str) -> str:
+        with self._lock:
+            return self._values.get(str(name or "").strip(), "")
+
+    def write(self, name: str, value: str) -> None:
+        normalized_name = str(name or "").strip()
+        normalized_value = str(value or "").strip()
+        if not normalized_name or not normalized_value:
+            return
+        with self._lock:
+            self._values[normalized_name] = normalized_value
+
+    def delete(self, name: str) -> None:
+        with self._lock:
+            self._values.pop(str(name or "").strip(), None)
+
+
+__all__ = ["InMemorySecretStore", "ProtectedSecretStore"]
