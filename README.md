@@ -39,8 +39,8 @@
 
 群号：**1090225658**
 
-<p align="center">
-  <img src="docs/assets/qq-group.jpg" alt="造梦 QQ 交流群二维码，群号 1090225658" width="360">
+<p>
+  <img src="docs/assets/qq-group.png" alt="造梦 QQ 交流群二维码，群号 1090225658" width="360">
 </p>
 
 ## 安装 🚀
