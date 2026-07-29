@@ -12,6 +12,18 @@ data object ImportBookDestination
 data object ModelSettingsDestination
 
 @Serializable
+data object ModelConfigurationDestination
+
+@Serializable
+data object ChatDisplaySettingsDestination
+
+@Serializable
+data object AppearanceSettingsDestination
+
+@Serializable
+data object AppSupportSettingsDestination
+
+@Serializable
 data class RunDetailDestination(val runId: String)
 
 @Serializable

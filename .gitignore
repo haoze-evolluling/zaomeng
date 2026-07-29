@@ -67,3 +67,7 @@ logs/
 outputs/
 clawhub-zaomeng-skill/runtime/data/
 .tools/
+
+# IDE/TOOLS
+.trae/
+.reasonix/

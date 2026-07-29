@@ -1,0 +1,90 @@
+package top.wkbin.zaomeng.feature.settings
+
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val diagnosticsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> if (uri != null) viewModel.exportDiagnostics(uri) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("应用与支持") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        SettingsSupportGroup(
+            modifier = Modifier.fillMaxWidth().padding(innerPadding).padding(horizontal = 16.dp, vertical = 16.dp),
+            state = state,
+            onCheck = viewModel::checkForAppUpdate,
+            onDownload = viewModel::downloadUpdate,
+            onExportDiagnostics = { diagnosticsLauncher.launch("zaomeng-diagnostics.json") },
+            onOpenProject = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/wkbin/zaomeng")))
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsSupportGroup(
+    modifier: Modifier,
+    state: SettingsUiState,
+    onCheck: () -> Unit,
+    onDownload: () -> Unit,
+    onExportDiagnostics: () -> Unit,
+    onOpenProject: () -> Unit,
+) {
+    androidx.compose.material3.Card(
+        modifier = modifier,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        androidx.compose.foundation.layout.Column {
+            AppUpdateRow(state, onCheck, onDownload)
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            SettingsRow(
+                title = "运行诊断",
+                subtitle = "导出启动自检、任务状态与模型连接摘要，不包含密钥或小说内容。",
+                value = if (state.exportingDiagnostics) "导出中" else "导出",
+                enabled = !state.exportingDiagnostics,
+                onClick = onExportDiagnostics,
+            )
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            SettingsRow(
+                title = "项目地址",
+                subtitle = "github.com/wkbin/zaomeng",
+                onClick = onOpenProject,
+            )
+        }
+    }
+}

@@ -37,6 +37,10 @@ import top.wkbin.zaomeng.feature.sessions.SessionsScreen
 import top.wkbin.zaomeng.feature.sessions.SessionsViewModel
 import top.wkbin.zaomeng.feature.settings.ModelSettingsScreen
 import top.wkbin.zaomeng.feature.settings.SettingsViewModel
+import top.wkbin.zaomeng.feature.settings.AppearanceSettingsScreen
+import top.wkbin.zaomeng.feature.settings.ChatDisplaySettingsScreen
+import top.wkbin.zaomeng.feature.settings.SettingsHomeScreen
+import top.wkbin.zaomeng.feature.settings.AppSupportSettingsScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import org.koin.androidx.compose.koinViewModel
@@ -105,8 +109,31 @@ fun ZaomengApp(
         }
 
         composable<ModelSettingsDestination> {
+            SettingsHomeScreen(
+                onBack = navController::navigateUp,
+                onOpenModelSettings = { navController.navigate(ModelConfigurationDestination) },
+                onOpenChatDisplay = { navController.navigate(ChatDisplaySettingsDestination) },
+                onOpenAppearance = { navController.navigate(AppearanceSettingsDestination) },
+                onOpenAppSupport = { navController.navigate(AppSupportSettingsDestination) },
+            )
+        }
+
+        composable<ModelConfigurationDestination> {
             val viewModel: SettingsViewModel = koinViewModel()
             ModelSettingsScreen(viewModel = viewModel, onBack = navController::navigateUp)
+        }
+
+        composable<ChatDisplaySettingsDestination> {
+            ChatDisplaySettingsScreen(onBack = navController::navigateUp)
+        }
+
+        composable<AppearanceSettingsDestination> {
+            AppearanceSettingsScreen(onBack = navController::navigateUp)
+        }
+
+        composable<AppSupportSettingsDestination> {
+            val viewModel: SettingsViewModel = koinViewModel()
+            AppSupportSettingsScreen(viewModel = viewModel, onBack = navController::navigateUp)
         }
 
         composable<RunDetailDestination> { entry ->
