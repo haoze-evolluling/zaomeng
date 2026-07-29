@@ -26,6 +26,18 @@ class ImportDocumentLoaderTest {
     }
 
     @Test
+    fun `novel document reports normalized character and sentence counts`() {
+        val document = ImportDocumentLoader.prepareImportDocument(
+            displayName = "sample.txt",
+            bytes = "One. Two! Three;\nFour?".toByteArray(),
+            expectedKind = ImportDocumentKind.NovelText,
+        )
+
+        assertEquals(22, document.charCount)
+        assertEquals(4, document.sentenceCount)
+    }
+
+    @Test
     fun `utf16 novel is normalized to utf8`() {
         val text = "宝玉说道：好。"
         val utf16 = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + text.toByteArray(Charsets.UTF_16LE)

@@ -44,6 +44,26 @@ data class StreamingReplyPart(
     val text: String = "",
 )
 
+enum class PendingUserMessageStatus {
+    Sending,
+    Failed,
+    OutcomeUnknown,
+}
+
+data class PendingUserMessage(
+    val operationId: String,
+    val message: String,
+    val messageKind: String,
+    val status: PendingUserMessageStatus,
+    val statusText: String = "",
+    val retryable: Boolean = true,
+)
+
+data class DirectorReceipt(
+    val operationId: String,
+    val message: String,
+)
+
 data class ChatUiState(
     val runId: String = "",
     val sessionId: String = "",
@@ -58,6 +78,9 @@ data class ChatUiState(
     val failedMessageKind: String = "dialogue",
     val streamStatus: String = "",
     val streamingReplies: List<StreamingReplyPart> = emptyList(),
+    val pendingUserMessage: PendingUserMessage? = null,
+    val directorReceipts: List<DirectorReceipt> = emptyList(),
+    val continuousObserveEnabled: Boolean = false,
     val toolBusy: String = "",
     val session: DialogueSessionDto? = null,
     val sceneCards: List<ReusableCardDto> = emptyList(),
@@ -80,6 +103,7 @@ data class ChatUiState(
         get() = !loading &&
             !refreshing &&
             !sending &&
+            !continuousObserveEnabled &&
             !recovering &&
             !sendOutcomeUnknown &&
             failedOperationId.isBlank() &&
@@ -91,6 +115,7 @@ data class ChatUiState(
         get() = !loading &&
             !refreshing &&
             !sending &&
+            !continuousObserveEnabled &&
             !recovering &&
             !sendOutcomeUnknown &&
             failedOperationId.isBlank() &&
@@ -101,8 +126,24 @@ data class ChatUiState(
         get() = !loading &&
             !refreshing &&
             !sending &&
+            !continuousObserveEnabled &&
             !recovering &&
             toolBusy.isBlank()
+
+    val canToggleContinuousObserve: Boolean
+        get() = if (continuousObserveEnabled) {
+            true
+        } else {
+            !loading &&
+                !refreshing &&
+                !sending &&
+                !recovering &&
+                !sendOutcomeUnknown &&
+                failedOperationId.isBlank() &&
+                toolBusy.isBlank() &&
+                session?.status == "ready" &&
+                session?.mode == "observe"
+        }
 }
 
 class ChatViewModel(
@@ -118,6 +159,8 @@ class ChatViewModel(
     private var nextToolRequestId = 0L
     private var activeToolRequest: ToolRequest? = null
     private var sendJob: Job? = null
+    private var continuousObserveJob: Job? = null
+    private var continuousObserveSessionId = ""
     private var searchJob: Job? = null
     private var recoveryJob: Job? = null
     private var nextRecoveryRequestId = 0L
@@ -154,6 +197,7 @@ class ChatViewModel(
             cancelLoadRequest()
             cancelToolRequest()
             sendJob?.cancel()
+            stopContinuousObserve(notice = "")
             searchJob?.cancel()
             cancelRecoveryRequest()
             mutableState.value = ChatUiState(
@@ -172,6 +216,7 @@ class ChatViewModel(
             current.sessionId != normalizedSessionId
         if (targetChanged) {
             sendJob?.cancel()
+            stopContinuousObserve(notice = "")
             searchJob?.cancel()
             cancelRecoveryRequest()
         }
@@ -301,7 +346,7 @@ class ChatViewModel(
         val snapshot = state.value
         if (
             snapshot.loading || snapshot.refreshing || snapshot.sending || snapshot.recovering ||
-            snapshot.toolBusy.isNotBlank()
+            snapshot.toolBusy.isNotBlank() || snapshot.continuousObserveEnabled
         ) return
         if (snapshot.sendOutcomeUnknown) {
             mutableState.update { it.copy(error = "先核对上一次发送结果，再继续聊天。") }
@@ -327,11 +372,109 @@ class ChatViewModel(
         )
     }
 
+    fun toggleContinuousObserve() {
+        val snapshot = state.value
+        if (snapshot.continuousObserveEnabled) {
+            stopContinuousObserve("已暂停连续旁观。")
+            return
+        }
+        if (!snapshot.canToggleContinuousObserve) {
+            mutableState.update { it.copy(error = "仅可在就绪的旁观会话中开启连续旁观。") }
+            return
+        }
+        continuousObserveSessionId = snapshot.sessionId
+        mutableState.update {
+            it.copy(
+                continuousObserveEnabled = true,
+                notice = "连续旁观已开启。",
+                error = "",
+            )
+        }
+        startContinuousObserveRound()
+    }
+
+    fun pauseContinuousObserve() {
+        stopContinuousObserve(notice = "")
+    }
+
+    private fun startContinuousObserveRound() {
+        val snapshot = state.value
+        val session = snapshot.session
+        if (
+            !snapshot.continuousObserveEnabled ||
+            snapshot.sessionId != continuousObserveSessionId ||
+            session?.mode != "observe" ||
+            session?.status != "ready" ||
+            snapshot.sending
+        ) {
+            if (snapshot.continuousObserveEnabled) {
+                stopContinuousObserve("连续旁观已暂停：会话状态已变化。")
+            }
+            return
+        }
+        startStreamingSend(
+            snapshot = snapshot,
+            message = buildContinuousObservePrompt(requireNotNull(session)),
+            messageKind = "narration",
+            operationId = UUID.randomUUID().toString(),
+            suppressTranscriptMessage = true,
+            showPendingUserMessage = false,
+            onComplete = {
+                if (
+                    state.value.continuousObserveEnabled &&
+                    state.value.sessionId == continuousObserveSessionId
+                ) {
+                    continuousObserveJob?.cancel()
+                    continuousObserveJob = viewModelScope.launch {
+                        delay(CONTINUOUS_OBSERVE_DELAY_MS)
+                        startContinuousObserveRound()
+                    }
+                }
+            },
+            onFailure = {
+                stopContinuousObserve("连续旁观已暂停：刚才这一轮生成失败。")
+            },
+        )
+    }
+
+    private fun stopContinuousObserve(notice: String) {
+        continuousObserveJob?.cancel()
+        continuousObserveJob = null
+        continuousObserveSessionId = ""
+        mutableState.update { current ->
+            if (!current.continuousObserveEnabled) current else current.copy(
+                continuousObserveEnabled = false,
+                notice = notice.ifBlank { current.notice },
+            )
+        }
+    }
+
+    private fun buildContinuousObservePrompt(session: DialogueSessionDto): String {
+        val nextHint = session.runtimeStateOverview["next_hint"]
+            ?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+            ?.trim()
+            .orEmpty()
+        if (nextHint.isNotBlank()) return nextHint
+
+        val recentPrompt = session.transcript.asReversed()
+            .firstOrNull { item -> item.role in setOf("scene", "director", "user") }
+            ?.message
+            ?.trim()
+            .orEmpty()
+        return if (recentPrompt.isNotBlank()) {
+            "承接刚才的场景：$recentPrompt"
+        } else {
+            "让当前场景自然延续，保持人物关系和情绪变化一致。"
+        }
+    }
+
     fun retryLastSend() {
         val snapshot = state.value
+        val pending = snapshot.pendingUserMessage
         if (
             snapshot.failedOperationId.isBlank() || snapshot.failedMessage.isBlank() ||
-            snapshot.sending || snapshot.recovering
+            snapshot.sending || snapshot.recovering || snapshot.sendOutcomeUnknown ||
+            pending?.status != PendingUserMessageStatus.Failed || !pending.retryable
         ) return
         startStreamingSend(
             snapshot = snapshot,
@@ -346,6 +489,10 @@ class ChatViewModel(
         message: String,
         messageKind: String,
         operationId: String,
+        suppressTranscriptMessage: Boolean = messageKind == "plot",
+        showPendingUserMessage: Boolean = true,
+        onComplete: (() -> Unit)? = null,
+        onFailure: (() -> Unit)? = null,
     ) {
         sendJob?.cancel()
         sendJob = viewModelScope.launch {
@@ -357,6 +504,7 @@ class ChatViewModel(
                     current
                 } else current.copy(
                     sending = true,
+                    draft = "",
                     error = "",
                     streamStatus = "正在连接模型…",
                     streamingReplies = emptyList(),
@@ -365,6 +513,17 @@ class ChatViewModel(
                     failedMessage = message,
                     failedMessageKind = messageKind,
                     sendBaselineTranscript = snapshot.session?.transcript,
+                    pendingUserMessage = if (showPendingUserMessage) {
+                        PendingUserMessage(
+                            operationId = operationId,
+                            message = message,
+                            messageKind = messageKind,
+                            status = PendingUserMessageStatus.Sending,
+                            statusText = "正在发送",
+                        )
+                    } else {
+                        null
+                    },
                 )
             }
             if (
@@ -381,10 +540,15 @@ class ChatViewModel(
                     message = message,
                     messageKind = messageKind,
                     operationId = operationId,
+                    suppressTranscriptMessage = suppressTranscriptMessage,
                 ).collect { event ->
                     when (event) {
                         is DialogueStreamEvent.Status -> updateSendState(snapshot, operationId) {
-                            it.copy(streamStatus = event.message.ifBlank { event.phase })
+                            val status = event.message.ifBlank { event.phase }
+                            it.copy(
+                                streamStatus = status,
+                                pendingUserMessage = it.pendingUserMessage?.copy(statusText = status),
+                            )
                         }
                         is DialogueStreamEvent.Delta -> updateSendState(snapshot, operationId) { current ->
                             val existing = current.streamingReplies
@@ -397,6 +561,9 @@ class ChatViewModel(
                             )
                             current.copy(
                                 streamStatus = "回复正在生成…",
+                                pendingUserMessage = current.pendingUserMessage?.copy(
+                                    statusText = "正在生成回复",
+                                ),
                                 streamingReplies = current.streamingReplies
                                     .filterNot { it.index == event.index }
                                     .plus(updated)
@@ -409,20 +576,35 @@ class ChatViewModel(
                                 streamingReplies = emptyList(),
                             )
                         }
-                        is DialogueStreamEvent.Complete -> updateSendState(snapshot, operationId) {
-                            it.copy(
-                                sending = false,
-                                session = event.session,
-                                draft = "",
-                                sendOutcomeUnknown = false,
-                                sendBaselineTranscript = null,
-                                failedOperationId = "",
-                                failedMessage = "",
-                                streamStatus = "",
-                                streamingReplies = emptyList(),
-                                notice = if (event.replayed) "已恢复这次发送的本地结果。" else it.notice,
-                                error = "",
-                            )
+                        is DialogueStreamEvent.Complete -> {
+                            updateSendState(snapshot, operationId) {
+                                val receipts = if (messageKind == "plot" &&
+                                    it.directorReceipts.none { receipt ->
+                                        receipt.operationId == operationId
+                                    }
+                                ) {
+                                    (it.directorReceipts + DirectorReceipt(operationId, message))
+                                        .takeLast(12)
+                                } else {
+                                    it.directorReceipts
+                                }
+                                it.copy(
+                                    sending = false,
+                                    session = event.session,
+                                    draft = "",
+                                    sendOutcomeUnknown = false,
+                                    sendBaselineTranscript = null,
+                                    failedOperationId = "",
+                                    failedMessage = "",
+                                    streamStatus = "",
+                                    streamingReplies = emptyList(),
+                                    pendingUserMessage = null,
+                                    directorReceipts = receipts,
+                                    notice = if (event.replayed) "已恢复这次发送的本地结果。" else it.notice,
+                                    error = "",
+                                )
+                            }
+                            onComplete?.invoke()
                         }
                         is DialogueStreamEvent.Failure -> throw StreamReplyException(
                             event.message,
@@ -433,7 +615,15 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                handleStreamingFailure(snapshot, operationId, message, messageKind, error)
+                handleStreamingFailure(
+                    snapshot,
+                    operationId,
+                    message,
+                    messageKind,
+                    error,
+                    showPendingUserMessage,
+                )
+                onFailure?.invoke()
             }
         }
     }
@@ -444,6 +634,7 @@ class ChatViewModel(
         message: String,
         messageKind: String,
         error: Throwable,
+        showPendingUserMessage: Boolean = true,
     ) {
         val refreshed = try {
             repository.getSession(snapshot.runId, snapshot.sessionId)
@@ -454,7 +645,7 @@ class ChatViewModel(
         }
         val baseline = snapshot.session?.transcript.orEmpty()
         val responseWasCommitted = refreshed?.status == "ready" &&
-            refreshed.transcript != baseline
+            hasCommittedReply(baseline, refreshed.transcript)
         val retryable = when (error) {
             is StreamReplyException -> error.retryable
             is ApiRequestException -> error.statusCode == null ||
@@ -464,27 +655,48 @@ class ChatViewModel(
         val outcomeUnknown = !responseWasCommitted &&
             error !is StreamReplyException && retryable
         updateSendState(snapshot, operationId) {
+            val failureText = if (responseWasCommitted) {
+                ""
+            } else {
+                error.readableMessage(
+                    if (retryable) {
+                        "回复生成失败，可安全重试这次发送。"
+                    } else {
+                        "回复请求失败，请检查消息或模型配置。"
+                    },
+                )
+            }
             it.copy(
                 sending = false,
                 session = refreshed ?: it.session,
                 draft = if (responseWasCommitted) "" else it.draft,
                 sendOutcomeUnknown = outcomeUnknown,
                 sendBaselineTranscript = if (outcomeUnknown) baseline else null,
-                failedOperationId = if (responseWasCommitted || !retryable) "" else operationId,
-                failedMessage = if (responseWasCommitted || !retryable) "" else message,
+                failedOperationId = if (responseWasCommitted || !showPendingUserMessage) "" else operationId,
+                failedMessage = if (responseWasCommitted || !showPendingUserMessage) "" else message,
                 failedMessageKind = messageKind,
                 streamStatus = "",
                 streamingReplies = emptyList(),
+                pendingUserMessage = if (responseWasCommitted || !showPendingUserMessage) {
+                    null
+                } else {
+                    PendingUserMessage(
+                        operationId = operationId,
+                        message = message,
+                        messageKind = messageKind,
+                        status = if (outcomeUnknown) {
+                            PendingUserMessageStatus.OutcomeUnknown
+                        } else {
+                            PendingUserMessageStatus.Failed
+                        },
+                        statusText = failureText,
+                        retryable = retryable,
+                    )
+                },
                 error = if (responseWasCommitted) {
                     "连接中断，但已从本地恢复最新回复。"
                 } else {
-                    error.readableMessage(
-                        if (retryable) {
-                            "回复生成失败，可安全重试这次发送。"
-                        } else {
-                            "回复请求失败，请检查消息或模型配置。"
-                        },
-                    )
+                    failureText
                 },
             )
         }
@@ -503,6 +715,8 @@ class ChatViewModel(
                 failedOperationId = "",
                 failedMessage = "",
                 sendBaselineTranscript = null,
+                pendingUserMessage = null,
+                draft = snapshot.failedMessage,
                 error = "",
                 notice = "已保留输入，可以修改后重新发送。",
             )
@@ -530,8 +744,8 @@ class ChatViewModel(
             }
             try {
                 val recovered = repository.recoverSession(snapshot.runId, snapshot.sessionId)
-                val responseWasCommitted = snapshot.sendBaselineTranscript?.let {
-                    recovered.status == "ready" && recovered.transcript != it
+                val responseWasCommitted = snapshot.sendBaselineTranscript?.let { baseline ->
+                    recovered.status == "ready" && hasCommittedReply(baseline, recovered.transcript)
                 } == true
                 val resolved = recovered.status == "ready"
                 updateRecoveryState(requestId, snapshot) {
@@ -543,6 +757,15 @@ class ChatViewModel(
                         sendBaselineTranscript = if (resolved) null else it.sendBaselineTranscript,
                         failedOperationId = if (resolved) "" else it.failedOperationId,
                         failedMessage = if (resolved) "" else it.failedMessage,
+                        pendingUserMessage = when {
+                            responseWasCommitted -> null
+                            resolved -> it.pendingUserMessage?.copy(
+                                status = PendingUserMessageStatus.Failed,
+                                statusText = "本地未发现回复，可安全重试",
+                                retryable = true,
+                            )
+                            else -> it.pendingUserMessage
+                        },
                         error = if (responseWasCommitted) {
                             "已从本地恢复上一次发送的回复。"
                         } else {
@@ -583,8 +806,8 @@ class ChatViewModel(
             }
             try {
                 val refreshed = repository.getSession(snapshot.runId, snapshot.sessionId)
-                val responseWasCommitted = snapshot.sendBaselineTranscript?.let {
-                    refreshed.status == "ready" && refreshed.transcript != it
+                val responseWasCommitted = snapshot.sendBaselineTranscript?.let { baseline ->
+                    refreshed.status == "ready" && hasCommittedReply(baseline, refreshed.transcript)
                 } == true
                 val resolved = refreshed.status == "ready"
                 updateRecoveryState(requestId, snapshot) {
@@ -596,6 +819,15 @@ class ChatViewModel(
                         sendBaselineTranscript = if (resolved) null else it.sendBaselineTranscript,
                         failedOperationId = if (responseWasCommitted) "" else it.failedOperationId,
                         failedMessage = if (responseWasCommitted) "" else it.failedMessage,
+                        pendingUserMessage = when {
+                            responseWasCommitted -> null
+                            resolved -> it.pendingUserMessage?.copy(
+                                status = PendingUserMessageStatus.Failed,
+                                statusText = "本地未发现回复，可安全重试",
+                                retryable = true,
+                            )
+                            else -> it.pendingUserMessage
+                        },
                         error = when {
                             responseWasCommitted -> "已从本地恢复上一次发送的回复。"
                             resolved -> "本地没有发现新回复，可以安全重试同一次发送。"
@@ -1123,6 +1355,7 @@ class ChatViewModel(
 
     private companion object {
         val messageKinds = setOf("dialogue", "narration", "plot")
+        const val CONTINUOUS_OBSERVE_DELAY_MS = 480L
     }
 }
 
@@ -1130,6 +1363,16 @@ internal fun JsonObject.extractAssociationOptions(sessionMode: String): List<Cha
     ?.let { runCatching { it.jsonArray }.getOrNull() }
     ?.mapNotNull { element -> element.toAssociationOption(sessionMode) }
     .orEmpty()
+
+internal fun hasCommittedReply(
+    baseline: List<TranscriptItemDto>,
+    transcript: List<TranscriptItemDto>,
+): Boolean {
+    if (transcript.size <= baseline.size || transcript.take(baseline.size) != baseline) return false
+    return transcript.drop(baseline.size).any { item ->
+        item.role != "user" && item.message.isNotBlank()
+    }
+}
 
 private fun JsonElement.toAssociationOption(sessionMode: String): ChatToolOption? {
     val messageKind = if (sessionMode == "observe") "narration" else "dialogue"

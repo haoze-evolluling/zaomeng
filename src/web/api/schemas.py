@@ -25,6 +25,14 @@ class CreateRunRequest(BaseModel):
         return value
 
 
+class EstimateSamplingRequest(BaseModel):
+    char_count: int = Field(..., ge=1, le=24_000_000)
+    sentence_count: int = Field(..., ge=1, le=5_000_000)
+    character_count: int = Field(..., ge=1, le=100)
+    max_sentences: int = Field(default=120, ge=20, le=300)
+    max_chars: int = Field(default=50_000, ge=2_000, le=200_000)
+
+
 class RestartRunRequest(BaseModel):
     characters: list[str] = Field(default_factory=list)
     novel_name: str = Field(default="")

@@ -7,6 +7,7 @@ import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
@@ -48,6 +49,9 @@ interface ZaomengApi {
 
     @POST("api/web/runs")
     suspend fun createRun(@Body request: CreateRunRequest): RunManifestDto
+
+    @POST("api/web/runs/estimate")
+    suspend fun estimateSampling(@Body request: EstimateSamplingRequest): SamplingPlanDto
 
     @POST("api/web/runs/import")
     suspend fun importRun(@Body request: ImportRunPackageRequest): RunManifestDto
@@ -239,6 +243,9 @@ interface ZaomengApi {
 
     @GET("api/web/sessions")
     suspend fun listRecentSessions(): SessionsResponse
+
+    @HTTP(method = "DELETE", path = "api/web/sessions", hasBody = true)
+    suspend fun deleteSessions(@Body request: DeleteSessionsRequest): DeleteSessionsResponse
 
     @GET("api/web/runs/{runId}/dialogue/sessions")
     suspend fun listRunSessions(@Path("runId") runId: String): SessionsResponse

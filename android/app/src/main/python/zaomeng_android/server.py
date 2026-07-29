@@ -31,7 +31,7 @@ def _bundled_resource_root() -> Path:
 
 def _seed_missing_resources(storage_root: Path) -> None:
     bundled_root = _bundled_resource_root()
-    for directory_name in ("rules", "builtin_novels", "zaomeng-skill"):
+    for directory_name in ("rules", "zaomeng-skill"):
         source_root = bundled_root / directory_name
         if not source_root.is_dir():
             raise FileNotFoundError(f"Bundled resource directory is missing: {directory_name}")

@@ -24,7 +24,24 @@ data class ImportDocument(
     val bytes: ByteArray,
     val kind: ImportDocumentKind,
     val sourceEncoding: String = "",
+    val charCount: Int = 0,
+    val sentenceCount: Int = 0,
 )
+
+internal data class TextStatistics(
+    val charCount: Int,
+    val sentenceCount: Int,
+)
+
+internal fun textStatistics(text: String): TextStatistics {
+    val normalized = text.replace("\r\n", "\n").trim()
+    return TextStatistics(
+        charCount = normalized.length,
+        sentenceCount = normalized
+            .split(Regex("[。！？!?；;\\n]+"))
+            .count { it.trim().isNotEmpty() },
+    )
+}
 
 object ImportDocumentLoader {
     internal const val MAX_NOVEL_BYTES = 24 * 1024 * 1024
@@ -83,12 +100,7 @@ object ImportDocumentLoader {
                 throw IllegalArgumentException("EPUB 中没有可导入的正文。")
             }
             val fileName = sanitizedName.removeSuffixIgnoreCase(".epub").ifBlank { "novel" } + ".txt"
-            return ImportDocument(
-                fileName = fileName,
-                bytes = text.toByteArray(Charsets.UTF_8),
-                kind = ImportDocumentKind.NovelText,
-                sourceEncoding = "EPUB",
-            )
+            return novelDocument(fileName, text, "EPUB")
         }
         if (bytes.hasZipSignature()) {
             throw IllegalArgumentException("这个文件是压缩包，请使用“导入书卷包”。")
@@ -103,12 +115,7 @@ object ImportDocumentLoader {
         val fileName = sanitizedName.ifBlank { "novel.txt" }.let { name ->
             if (name.endsWith(".txt", ignoreCase = true)) name else "$name.txt"
         }
-        return ImportDocument(
-            fileName = fileName,
-            bytes = decoded.text.removePrefix("\uFEFF").toByteArray(Charsets.UTF_8),
-            kind = ImportDocumentKind.NovelText,
-            sourceEncoding = decoded.encoding,
-        )
+        return novelDocument(fileName, decoded.text.removePrefix("\uFEFF"), decoded.encoding)
     }
 
     private fun preparePackage(displayName: String, bytes: ByteArray): ImportDocument {
@@ -125,6 +132,18 @@ object ImportDocumentLoader {
             fileName = fileName,
             bytes = bytes,
             kind = ImportDocumentKind.RunPackage,
+        )
+    }
+
+    private fun novelDocument(fileName: String, text: String, encoding: String): ImportDocument {
+        val statistics = textStatistics(text)
+        return ImportDocument(
+            fileName = fileName,
+            bytes = text.toByteArray(Charsets.UTF_8),
+            kind = ImportDocumentKind.NovelText,
+            sourceEncoding = encoding,
+            charCount = statistics.charCount,
+            sentenceCount = statistics.sentenceCount,
         )
     }
 

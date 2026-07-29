@@ -11,6 +11,7 @@ from src.web.run_ops import (
     build_model_settings_response,
     delete_run_group,
     delete_sessions,
+    estimate_sampling_plan,
     is_model_configured_payload,
     list_recent_sessions,
     list_runs,
@@ -22,6 +23,27 @@ from src.web.run_ops import (
 
 
 class RunServiceMixin:
+    def estimate_sampling_plan(
+        self,
+        *,
+        char_count: int,
+        sentence_count: int,
+        character_count: int,
+        max_sentences: int = 120,
+        max_chars: int = 50_000,
+    ) -> dict[str, Any]:
+        return estimate_sampling_plan(
+            char_count=char_count,
+            sentence_count=sentence_count,
+            character_count=character_count,
+            max_sentences=max_sentences,
+            max_chars=max_chars,
+            distill_chunk_max_chars=self.DISTILL_CHUNK_MAX_CHARS,
+            distill_chunk_max_sentences=self.DISTILL_CHUNK_MAX_SENTENCES,
+            relation_chunk_max_chars=self.RELATION_CHUNK_MAX_CHARS,
+            relation_chunk_max_sentences=self.RELATION_CHUNK_MAX_SENTENCES,
+        )
+
     def get_model_settings(self) -> dict[str, Any]:
         document = self._load_model_settings_document()
         payload = self._load_model_settings_payload()

@@ -10,6 +10,7 @@ from src.web.api.deps import get_run_service
 from src.web.api.schemas import (
     CreateRunRequest,
     DeleteSessionsRequest,
+    EstimateSamplingRequest,
     ImportRunPackageRequest,
     IngestCharacterRequest,
     IngestRelationRequest,
@@ -79,6 +80,20 @@ def create_run_route(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/estimate")
+def estimate_sampling_route(
+    payload: EstimateSamplingRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    return run_service.estimate_sampling_plan(
+        char_count=payload.char_count,
+        sentence_count=payload.sentence_count,
+        character_count=payload.character_count,
+        max_sentences=payload.max_sentences,
+        max_chars=payload.max_chars,
+    )
 
 
 @router.post("/api/web/runs/import")

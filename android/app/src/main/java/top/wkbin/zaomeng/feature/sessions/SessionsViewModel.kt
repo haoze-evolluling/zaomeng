@@ -7,6 +7,7 @@ import top.wkbin.zaomeng.data.ReusableCardKind
 import top.wkbin.zaomeng.data.api.DialogueSessionDto
 import top.wkbin.zaomeng.data.api.ReusableCardDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
+import top.wkbin.zaomeng.data.api.SessionRefDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -57,6 +58,9 @@ data class SessionsUiState(
     val scopedRunId: String? = null,
     val createDialogVisible: Boolean = false,
     val draft: NewSessionDraft = NewSessionDraft(),
+    val selectionMode: Boolean = false,
+    val selectedSessionKeys: Set<String> = emptySet(),
+    val deletingSelection: Boolean = false,
     val deletingSessionKeys: Set<String> = emptySet(),
     val createdSession: DialogueSessionDto? = null,
     val error: String = "",
@@ -133,6 +137,8 @@ class SessionsViewModel(
                         sceneCards = loaded.sceneCards,
                         selfCards = loaded.selfCards,
                         openingPresets = loaded.openingPresets,
+                        selectionMode = false,
+                        selectedSessionKeys = emptySet(),
                         draft = if (old.createDialogVisible) {
                             old.draft
                         } else {
@@ -162,11 +168,71 @@ class SessionsViewModel(
     }
 
     fun updateSearchQuery(value: String) {
-        mutableState.update { it.copy(searchQuery = value.take(120)) }
+        mutableState.update { current ->
+            val updated = current.copy(searchQuery = value.take(120))
+            if (updated.selectionMode) {
+                updated.copy(
+                    selectedSessionKeys = visibleSelectionKeys(
+                        state = updated,
+                        candidateKeys = updated.selectedSessionKeys,
+                    ),
+                )
+            } else {
+                updated
+            }
+        }
     }
 
     fun selectSort(sort: SessionsSort) {
         mutableState.update { it.copy(sort = sort) }
+    }
+
+    fun enterSelectionMode() {
+        if (state.value.sessions.isEmpty() || state.value.deletingSessionKeys.isNotEmpty()) return
+        mutableState.update { it.copy(selectionMode = true, error = "") }
+    }
+
+    fun exitSelectionMode() {
+        if (state.value.deletingSelection) return
+        mutableState.update {
+            it.copy(
+                selectionMode = false,
+                selectedSessionKeys = emptySet(),
+            )
+        }
+    }
+
+    fun toggleSessionSelection(sessionKey: String) {
+        mutableState.update { current ->
+            if (!current.selectionMode || current.deletingSelection) {
+                current
+            } else {
+                current.copy(
+                    selectedSessionKeys = if (sessionKey in current.selectedSessionKeys) {
+                        current.selectedSessionKeys - sessionKey
+                    } else {
+                        current.selectedSessionKeys + sessionKey
+                    },
+                )
+            }
+        }
+    }
+
+    fun toggleAllVisibleSessions() {
+        mutableState.update { current ->
+            if (!current.selectionMode || current.deletingSelection) {
+                current
+            } else {
+                val visibleKeys = filterSessions(current)
+                    .mapTo(mutableSetOf(), DialogueSessionDto::key)
+                current.copy(
+                    selectedSessionKeys = toggleVisibleSelection(
+                        selectedKeys = current.selectedSessionKeys,
+                        visibleKeys = visibleKeys,
+                    ),
+                )
+            }
+        }
     }
 
     fun onScreenResumed() {
@@ -540,6 +606,90 @@ class SessionsViewModel(
         }
     }
 
+    fun deleteSelectedSessions() {
+        val snapshot = state.value
+        if (!snapshot.selectionMode || snapshot.deletingSelection) return
+        val selectedSessions = snapshot.sessions.filter { it.key in snapshot.selectedSessionKeys }
+        if (selectedSessions.isEmpty()) return
+
+        val selectedKeys = selectedSessions.mapTo(mutableSetOf(), DialogueSessionDto::key)
+        val refs = selectedSessions.map { SessionRefDto(runId = it.runId, sessionId = it.sessionId) }
+        loadJob?.cancel()
+        mutableState.update {
+            it.copy(
+                loading = false,
+                refreshing = false,
+                deletingSelection = true,
+                deletingSessionKeys = it.deletingSessionKeys + selectedKeys,
+                error = "",
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val result = repository.deleteSessions(refs)
+                val handledKeys = handledSessionKeys(
+                    selectedKeys = selectedKeys,
+                    refs = result.deleted + result.notFound,
+                )
+                val remainingKeys = selectedKeys - handledKeys
+                mutableState.update { current ->
+                    current.copy(
+                        sessions = current.sessions.filterNot { it.key in handledKeys },
+                        selectionMode = remainingKeys.isNotEmpty(),
+                        selectedSessionKeys = remainingKeys,
+                        deletingSelection = false,
+                        deletingSessionKeys = current.deletingSessionKeys - selectedKeys,
+                        error = if (remainingKeys.isEmpty()) {
+                            ""
+                        } else {
+                            "有 ${remainingKeys.size} 个会话未能删除，请重试。"
+                        },
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                val recovered = try {
+                    repository.listSessions(snapshot.scopedRunId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+                mutableState.update { current ->
+                    if (recovered == null) {
+                        current.copy(
+                            deletingSelection = false,
+                            deletingSessionKeys = current.deletingSessionKeys - selectedKeys,
+                            error = error.readableMessage("批量删除失败，请稍后重试。"),
+                        )
+                    } else {
+                        val remoteKeys = recovered.mapTo(mutableSetOf(), DialogueSessionDto::key)
+                        val remainingKeys = selectedKeys.intersect(remoteKeys)
+                        val recoveredState = current.copy(sessions = recovered)
+                        val visibleRemainingKeys = visibleSelectionKeys(
+                            state = recoveredState,
+                            candidateKeys = remainingKeys,
+                        )
+                        val deletedCount = selectedKeys.size - remainingKeys.size
+                        current.copy(
+                            sessions = recovered,
+                            selectionMode = visibleRemainingKeys.isNotEmpty(),
+                            selectedSessionKeys = visibleRemainingKeys,
+                            deletingSelection = false,
+                            deletingSessionKeys = current.deletingSessionKeys - selectedKeys,
+                            error = when {
+                                remainingKeys.isEmpty() -> ""
+                                deletedCount > 0 -> "已删除 $deletedCount 个，仍有 ${remainingKeys.size} 个未删除，请重试。"
+                                else -> error.readableMessage("批量删除失败，请稍后重试。")
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun clearError() {
         mutableState.update { it.copy(error = "") }
     }
@@ -657,6 +807,29 @@ internal fun filterSessions(state: SessionsUiState): List<DialogueSessionDto> {
         }
     }
 }
+
+internal fun toggleVisibleSelection(
+    selectedKeys: Set<String>,
+    visibleKeys: Set<String>,
+): Set<String> = if (visibleKeys.isNotEmpty() && visibleKeys.all(selectedKeys::contains)) {
+    selectedKeys - visibleKeys
+} else {
+    selectedKeys + visibleKeys
+}
+
+internal fun visibleSelectionKeys(
+    state: SessionsUiState,
+    candidateKeys: Set<String>,
+): Set<String> = candidateKeys.intersect(
+    filterSessions(state).mapTo(mutableSetOf(), DialogueSessionDto::key),
+)
+
+internal fun handledSessionKeys(
+    selectedKeys: Set<String>,
+    refs: List<SessionRefDto>,
+): Set<String> = refs
+    .mapTo(mutableSetOf()) { "${it.runId}::${it.sessionId}" }
+    .intersect(selectedKeys)
 
 private fun sessionTitle(
     session: DialogueSessionDto,

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BookmarkAdd
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.Movie
@@ -100,6 +101,7 @@ fun ChatToolsSheet(
     var directorAction by remember { mutableStateOf("advance") }
     var memoryDraft by remember { mutableStateOf<DialogueMemoryDto?>(null) }
     var memorySaveBaseline by remember { mutableStateOf<Long?>(null) }
+    var relationLockHelpDialog by remember { mutableStateOf(false) }
     var branchMetaDialog by remember { mutableStateOf(false) }
     var branchLabel by remember(state.session?.sessionId) {
         mutableStateOf(state.session?.branchMeta?.stringValue("label").orEmpty())
@@ -115,6 +117,8 @@ fun ChatToolsSheet(
     val speakerState = session?.let { speakerInsights(it.speakerActivity, it.speakerBalance) }
     val relationTimelines = session?.relationTimeline.orEmpty().relationTimelineInsights()
     val eventSignals = session?.eventSignals?.eventSignalInsights().orEmpty()
+    val generationStats = session?.generationCacheStats?.generationInsight()
+    val contextUsage = session?.latestContextUsage?.contextUsageInsight()
 
     LaunchedEffect(state.memorySaveRevision) {
         val baseline = memorySaveBaseline
@@ -166,6 +170,23 @@ fun ChatToolsSheet(
                 ) { Text("生成方案") }
             },
             dismissButton = { TextButton(onClick = { directorDialog = false }) { Text("取消") } },
+        )
+    }
+
+    if (relationLockHelpDialog) {
+        AlertDialog(
+            onDismissRequest = { relationLockHelpDialog = false },
+            title = { Text("会话关系锁") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("锁定后，这对人物在当前会话中的信任、好感、敌意、暧昧及相关关系事件，不会再随后续对话自动变化。")
+                    Text("人物仍会继续对话，剧情和人物状态也会正常推进。它不会改写书卷的基础关系资料。")
+                    Text("关系锁只作用于当前会话；从这里创建的分支会继承锁定状态。解除后从下一轮起恢复自动演化，锁定期间的变化不会补算。")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { relationLockHelpDialog = false }) { Text("知道了") }
+            },
         )
     }
 
@@ -389,7 +410,14 @@ fun ChatToolsSheet(
 
             state.session?.takeIf { it.relationMatrix.isNotEmpty() }?.let { session ->
                 item {
-                    ToolSection("会话关系锁") {
+                    ToolSection(
+                        title = "会话关系锁",
+                        action = {
+                            IconButton(onClick = { relationLockHelpDialog = true }) {
+                                Icon(Icons.Outlined.Info, contentDescription = "关系锁说明")
+                            }
+                        },
+                    ) {
                         session.relationMatrix.forEach { (matrixKey, element) ->
                             val relation = element as? JsonObject ?: JsonObject(emptyMap())
                             val pairKey = relation.stringValue("pair_key").ifBlank { matrixKey }
@@ -432,6 +460,14 @@ fun ChatToolsSheet(
                 SessionInsights(state.session?.runtimeStateOverview ?: JsonObject(emptyMap()))
             }
 
+            generationStats?.let { insight ->
+                item { GenerationInsights(insight) }
+            }
+
+            contextUsage?.let { insight ->
+                item { ContextUsageInsights(insight) }
+            }
+
             consistency?.let { insight ->
                 item { ConsistencyInsights(insight) }
             }
@@ -456,13 +492,25 @@ fun ChatToolsSheet(
 }
 
 @Composable
-private fun ToolSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun ToolSection(
+    title: String,
+    action: @Composable (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                action?.invoke()
+            }
             content()
         }
     }
@@ -886,6 +934,73 @@ private fun SessionInsights(overview: JsonObject) {
     }
 }
 
+@Composable
+private fun GenerationInsights(insight: GenerationInsight) {
+    ToolSection("模型调用") {
+        val modelLabel = listOf(insight.provider, insight.model)
+            .filter(String::isNotBlank)
+            .joinToString(" · ")
+        if (modelLabel.isNotBlank()) {
+            Text(modelLabel, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+        }
+        val latestMetrics = buildList {
+            if (insight.promptTokens > 0) add("输入 ${insight.promptTokens.compactCount()}")
+            if (insight.completionTokens > 0) add("输出 ${insight.completionTokens.compactCount()}")
+            if (insight.totalTokens > 0) add("合计 ${insight.totalTokens.compactCount()} Token")
+            if (insight.elapsedSeconds > 0.0) add("耗时 ${insight.elapsedSeconds.displaySeconds()}")
+            if (insight.attemptCount > 1) add("${insight.attemptCount} 次尝试")
+        }
+        if (latestMetrics.isNotEmpty()) {
+            Text("本轮：${latestMetrics.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall)
+        }
+        val cacheText = insight.cacheDescription()
+        if (cacheText.isNotBlank()) {
+            Text(
+                cacheText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        val sessionMetrics = buildList {
+            if (insight.sessionTurns > 0) add("${insight.sessionTurns} 轮")
+            if (insight.sessionTokens > 0) add("${insight.sessionTokens.compactCount()} Token")
+            if (insight.sessionElapsedSeconds > 0.0) add("${insight.sessionElapsedSeconds.displaySeconds()}")
+            if (insight.sessionRetryCount > 0) add("重试 ${insight.sessionRetryCount} 次")
+        }
+        if (sessionMetrics.isNotEmpty()) {
+            Text(
+                "本会话：${sessionMetrics.joinToString(" · ")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContextUsageInsights(insight: ContextUsageInsight) {
+    ToolSection("本轮上下文") {
+        insight.speaker.takeIf(String::isNotBlank)?.let { speaker ->
+            Text("由 $speaker 发起", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+        }
+        insight.sources.forEachIndexed { index, source ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("${source.label} · ${source.count} 项", fontWeight = FontWeight.Medium)
+                if (source.items.isNotEmpty()) {
+                    Text(
+                        source.items.joinToString("；"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (index != insight.sources.lastIndex) HorizontalDivider(Modifier.padding(vertical = 3.dp))
+        }
+    }
+}
+
 internal data class BranchNodeInsight(
     val sessionId: String,
     val label: String,
@@ -939,6 +1054,34 @@ internal data class EventSignalInsight(
     val kindLabel: String,
     val cue: String,
     val context: String,
+)
+
+internal data class GenerationInsight(
+    val provider: String,
+    val model: String,
+    val promptTokens: Int,
+    val completionTokens: Int,
+    val totalTokens: Int,
+    val elapsedSeconds: Double,
+    val attemptCount: Int,
+    val cacheObserved: Boolean,
+    val cacheStatus: String,
+    val cacheHitRate: Double?,
+    val sessionTurns: Int,
+    val sessionTokens: Int,
+    val sessionElapsedSeconds: Double,
+    val sessionRetryCount: Int,
+)
+
+internal data class ContextUsageInsight(
+    val speaker: String,
+    val sources: List<ContextSourceInsight>,
+)
+
+internal data class ContextSourceInsight(
+    val label: String,
+    val count: Int,
+    val items: List<String>,
 )
 
 internal fun JsonObject.branchNodeInsights(): List<BranchNodeInsight> {
@@ -1109,6 +1252,71 @@ internal fun JsonObject.eventSignalInsights(): List<EventSignalInsight> = object
             ).filter(String::isNotBlank).joinToString(" · "),
         )
     }
+
+internal fun JsonObject.generationInsight(): GenerationInsight? {
+    val latest = objectValue("latest")
+    val session = objectValue("session")
+    if (latest.isEmpty() && session.isEmpty()) return null
+    val totalTokens = latest.intValue("total_tokens") ?: 0
+    val sessionTokens = session.intValue("total_tokens") ?: 0
+    val sessionTurns = session.intValue("total_turns") ?: 0
+    if (latest.isEmpty() && totalTokens == 0 && sessionTokens == 0 && sessionTurns == 0) return null
+    return GenerationInsight(
+        provider = latest.stringValue("provider"),
+        model = latest.stringValue("model"),
+        promptTokens = latest.intValue("prompt_tokens") ?: 0,
+        completionTokens = latest.intValue("completion_tokens") ?: 0,
+        totalTokens = totalTokens,
+        elapsedSeconds = latest.doubleValue("elapsed_seconds") ?: 0.0,
+        attemptCount = latest.intValue("attempt_count") ?: 0,
+        cacheObserved = latest.booleanValue("observed"),
+        cacheStatus = latest.stringValue("status"),
+        cacheHitRate = latest.doubleValue("hit_rate"),
+        sessionTurns = sessionTurns,
+        sessionTokens = sessionTokens,
+        sessionElapsedSeconds = session.doubleValue("elapsed_seconds") ?: 0.0,
+        sessionRetryCount = session.intValue("retry_count") ?: 0,
+    )
+}
+
+internal fun JsonObject.contextUsageInsight(): ContextUsageInsight? {
+    val sources = objectList("sources").mapNotNull { source ->
+        val label = source.stringValue("label")
+        val count = source.intValue("count") ?: 0
+        if (label.isBlank() || count <= 0) return@mapNotNull null
+        ContextSourceInsight(
+            label = label,
+            count = count,
+            items = source.stringList("items").take(2),
+        )
+    }
+    if (sources.isEmpty()) return null
+    return ContextUsageInsight(speaker = stringValue("speaker"), sources = sources)
+}
+
+private fun GenerationInsight.cacheDescription(): String = when {
+    !cacheObserved -> "缓存：当前模型未返回可观测数据"
+    cacheHitRate != null -> "缓存：${cacheStatus.cacheStatusLabel()}，命中 ${(cacheHitRate * 100).roundToInt()}%"
+    else -> "缓存：${cacheStatus.cacheStatusLabel()}"
+}
+
+private fun String.cacheStatusLabel(): String = when (this) {
+    "hit" -> "已命中"
+    "write" -> "已写入"
+    "miss" -> "未命中"
+    "partial" -> "部分可观测"
+    else -> "状态未知"
+}
+
+private fun Int.compactCount(): String = when {
+    this < 1_000 -> toString()
+    else -> "${this / 1_000}.${(this % 1_000) / 100}k"
+}
+
+private fun Double.displaySeconds(): String = when {
+    this >= 60.0 -> "${roundToInt()} 秒"
+    else -> "${((this * 10).roundToInt() / 10.0)} 秒"
+}
 
 private val characterStateLabels = listOf(
     "mood" to "情绪",

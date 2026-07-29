@@ -1,5 +1,6 @@
 package top.wkbin.zaomeng.feature.sessions
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,10 +21,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -89,6 +92,15 @@ fun SessionsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var pendingDeletion by remember { mutableStateOf<DialogueSessionDto?>(null) }
+    var pendingBatchDeletion by remember { mutableStateOf(false) }
+    val visibleSessions = filterSessions(state)
+    val visibleSessionKeys = visibleSessions.mapTo(mutableSetOf(), DialogueSessionDto::key)
+    val allVisibleSelected = visibleSessionKeys.isNotEmpty() &&
+        visibleSessionKeys.all(state.selectedSessionKeys::contains)
+
+    BackHandler(enabled = state.selectionMode) {
+        viewModel.exitSelectionMode()
+    }
 
     LaunchedEffect(runId) {
         viewModel.load(runId)
@@ -103,50 +115,94 @@ fun SessionsScreen(
             onOpenChat(session.runId, session.sessionId)
         }
     }
+    LaunchedEffect(state.selectedSessionKeys.size) {
+        if (state.selectedSessionKeys.isEmpty()) pendingBatchDeletion = false
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(if (runId.isNullOrBlank()) "全部会话" else "书中会话")
-                        if (!runId.isNullOrBlank()) {
-                            Text(
-                                text = state.runs.firstOrNull { it.runId == runId }?.title.orEmpty(),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                    if (state.selectionMode) {
+                        Text("已选择 ${state.selectedSessionKeys.size} 项")
+                    } else {
+                        Column {
+                            Text(if (runId.isNullOrBlank()) "全部会话" else "书中会话")
+                            if (!runId.isNullOrBlank()) {
+                                Text(
+                                    text = state.runs.firstOrNull { it.runId == runId }?.title.orEmpty(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    IconButton(
+                        onClick = if (state.selectionMode) viewModel::exitSelectionMode else onBack,
+                        enabled = !state.deletingSelection,
+                    ) {
+                        if (state.selectionMode) {
+                            Icon(Icons.Default.Close, contentDescription = "退出多选")
+                        } else {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = viewModel::refresh,
-                        enabled = !state.loading && !state.refreshing && !state.creating &&
-                            state.deletingSessionKeys.isEmpty(),
-                    ) {
-                        if (state.refreshing) {
-                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "刷新会话")
+                    if (state.selectionMode) {
+                        IconButton(
+                            onClick = viewModel::toggleAllVisibleSessions,
+                            enabled = visibleSessionKeys.isNotEmpty() && !state.deletingSelection,
+                        ) {
+                            Icon(
+                                Icons.Default.SelectAll,
+                                contentDescription = if (allVisibleSelected) "取消全选当前结果" else "全选当前结果",
+                            )
+                        }
+                        IconButton(
+                            onClick = { pendingBatchDeletion = true },
+                            enabled = state.selectedSessionKeys.isNotEmpty() && !state.deletingSelection,
+                        ) {
+                            if (state.deletingSelection) {
+                                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Delete, contentDescription = "删除选中会话")
+                            }
+                        }
+                    } else {
+                        IconButton(
+                            onClick = viewModel::enterSelectionMode,
+                            enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
+                        ) {
+                            Icon(Icons.Default.Checklist, contentDescription = "多选管理会话")
+                        }
+                        IconButton(
+                            onClick = viewModel::refresh,
+                            enabled = !state.loading && !state.refreshing && !state.creating &&
+                                state.deletingSessionKeys.isEmpty(),
+                        ) {
+                            if (state.refreshing) {
+                                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = "刷新会话")
+                            }
                         }
                     }
                 },
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = viewModel::openCreateDialog,
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("开始新会话") },
-            )
+            if (!state.selectionMode) {
+                ExtendedFloatingActionButton(
+                    onClick = viewModel::openCreateDialog,
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text("开始新会话") },
+                )
+            }
         },
     ) { innerPadding ->
         when {
@@ -155,6 +211,7 @@ fun SessionsScreen(
                 state = state,
                 onOpenChat = onOpenChat,
                 onDelete = { pendingDeletion = it },
+                onToggleSelection = viewModel::toggleSessionSelection,
                 onSearchQueryChange = viewModel::updateSearchQuery,
                 onSelectSort = viewModel::selectSort,
                 onDismissError = viewModel::clearError,
@@ -202,6 +259,28 @@ fun SessionsScreen(
             },
         )
     }
+
+    if (pendingBatchDeletion && state.selectedSessionKeys.isNotEmpty()) {
+        val selectedCount = state.selectedSessionKeys.size
+        AlertDialog(
+            onDismissRequest = { pendingBatchDeletion = false },
+            title = { Text("删除选中的 $selectedCount 个会话？") },
+            text = { Text("这些聊天记录会从这台手机上永久删除，人物资料和书卷不会受影响。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingBatchDeletion = false
+                        viewModel.deleteSelectedSessions()
+                    },
+                ) {
+                    Text("删除 $selectedCount 个")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBatchDeletion = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -220,6 +299,7 @@ private fun SessionsContent(
     state: SessionsUiState,
     onOpenChat: (String, String) -> Unit,
     onDelete: (DialogueSessionDto) -> Unit,
+    onToggleSelection: (String) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSelectSort: (SessionsSort) -> Unit,
     onDismissError: () -> Unit,
@@ -244,6 +324,7 @@ private fun SessionsContent(
                     sort = state.sort,
                     visibleCount = visibleSessions.size,
                     totalCount = state.sessions.size,
+                    enabled = !state.deletingSelection,
                     onQueryChange = onSearchQueryChange,
                     onSelectSort = onSelectSort,
                 )
@@ -288,8 +369,11 @@ private fun SessionsContent(
                     session = session,
                     run = state.runs.firstOrNull { it.runId == session.runId },
                     deleting = session.key in state.deletingSessionKeys,
+                    selectionMode = state.selectionMode,
+                    selected = session.key in state.selectedSessionKeys,
                     onOpen = { onOpenChat(session.runId, session.sessionId) },
                     onDelete = { onDelete(session) },
+                    onToggleSelection = { onToggleSelection(session.key) },
                 )
             }
         }
@@ -302,6 +386,7 @@ private fun SessionListControls(
     sort: SessionsSort,
     visibleCount: Int,
     totalCount: Int,
+    enabled: Boolean,
     onQueryChange: (String) -> Unit,
     onSelectSort: (SessionsSort) -> Unit,
 ) {
@@ -323,6 +408,7 @@ private fun SessionListControls(
             label = { Text("搜索会话") },
             placeholder = { Text("书名、人物或最近消息") },
             singleLine = true,
+            enabled = enabled,
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -339,6 +425,7 @@ private fun SessionListControls(
                 FilterChip(
                     selected = sort == option,
                     onClick = { onSelectSort(option) },
+                    enabled = enabled,
                     label = { Text(option.label) },
                 )
             }
@@ -381,17 +468,34 @@ private fun SessionCard(
     session: DialogueSessionDto,
     run: RunManifestDto?,
     deleting: Boolean,
+    selectionMode: Boolean,
+    selected: Boolean,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onToggleSelection: () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = selectionMode && !deleting, onClick = onToggleSelection),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            },
         ),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (selectionMode) {
+                    Checkbox(
+                        checked = selected,
+                        onCheckedChange = null,
+                        enabled = !deleting,
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = run?.title ?: session.novelId.ifBlank { "未命名书卷" },
@@ -439,15 +543,23 @@ private fun SessionCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                IconButton(onClick = onDelete, enabled = !deleting) {
-                    if (deleting) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Delete, contentDescription = "删除会话")
+                if (selectionMode) {
+                    Text(
+                        text = if (selected) "已选择" else "点击选择",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    IconButton(onClick = onDelete, enabled = !deleting) {
+                        if (deleting) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Delete, contentDescription = "删除会话")
+                        }
                     }
-                }
-                Button(onClick = onOpen, enabled = !deleting) {
-                    Text("继续聊天")
+                    Button(onClick = onOpen, enabled = !deleting) {
+                        Text("继续聊天")
+                    }
                 }
             }
         }

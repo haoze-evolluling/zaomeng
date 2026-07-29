@@ -8,6 +8,7 @@ import top.wkbin.zaomeng.backend.DistillationForegroundController
 import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.BuiltinNovelDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
+import top.wkbin.zaomeng.data.api.SamplingPlanDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 data class ImportBookUiState(
@@ -22,10 +24,17 @@ data class ImportBookUiState(
     val fileSize: Long = 0,
     val packageFile: Boolean = false,
     val sourceEncoding: String = "",
+    val charCount: Int = 0,
+    val sentenceCount: Int = 0,
     val characters: String = "",
     val autoDistill: Boolean = true,
     val maxSentences: String = "120",
     val maxChars: String = "50000",
+    val advancedSamplingVisible: Boolean = false,
+    val samplingDefaultsApplied: Boolean = false,
+    val estimatingSampling: Boolean = false,
+    val samplingPlan: SamplingPlanDto? = null,
+    val samplingEstimateError: String = "",
     val readingFile: Boolean = false,
     val submitting: Boolean = false,
     val modelConfigured: Boolean? = null,
@@ -48,6 +57,8 @@ class ImportBookViewModel(
     private var selectedKind: ImportDocumentKind? = null
     private var fileLoadJob: Job? = null
     private var modelConfigurationJob: Job? = null
+    private var samplingEstimateJob: Job? = null
+    private var samplingEstimateRequestId = 0L
 
     init {
         viewModelScope.launch {
@@ -60,7 +71,6 @@ class ImportBookViewModel(
             }
         }
         refreshModelConfiguration()
-        refreshBuiltinNovels()
     }
 
     fun beginFileSelection() {
@@ -95,25 +105,69 @@ class ImportBookViewModel(
     private fun selectDocument(document: ImportDocument) {
         selectedBytes = document.bytes
         selectedKind = document.kind
+        samplingEstimateJob?.cancel()
         mutableState.update {
             it.copy(
                 fileName = document.fileName,
                 fileSize = document.bytes.size.toLong(),
                 packageFile = document.kind == ImportDocumentKind.RunPackage,
                 sourceEncoding = document.sourceEncoding,
+                charCount = document.charCount,
+                sentenceCount = document.sentenceCount,
+                samplingDefaultsApplied = false,
+                estimatingSampling = false,
+                samplingPlan = null,
+                samplingEstimateError = "",
                 readingFile = false,
                 error = "",
             )
         }
+        scheduleSamplingEstimate()
     }
 
-    fun updateCharacters(value: String) = mutableState.update { it.copy(characters = value, error = "") }
-    fun updateAutoDistill(value: Boolean) = mutableState.update { it.copy(autoDistill = value, error = "") }
-    fun updateMaxSentences(value: String) = mutableState.update {
-        it.copy(maxSentences = value.filter(Char::isDigit), error = "")
+    fun updateCharacters(value: String) {
+        mutableState.update {
+            it.copy(
+                characters = value,
+                samplingPlan = null,
+                samplingEstimateError = "",
+                error = "",
+            )
+        }
+        scheduleSamplingEstimate()
     }
-    fun updateMaxChars(value: String) = mutableState.update {
-        it.copy(maxChars = value.filter(Char::isDigit), error = "")
+    fun updateAutoDistill(value: Boolean) = mutableState.update { it.copy(autoDistill = value, error = "") }
+    fun updateMaxSentences(value: String) {
+        mutableState.update {
+            it.copy(
+                maxSentences = value.filter(Char::isDigit),
+                samplingDefaultsApplied = true,
+                samplingPlan = null,
+                samplingEstimateError = "",
+                error = "",
+            )
+        }
+        scheduleSamplingEstimate()
+    }
+    fun updateMaxChars(value: String) {
+        mutableState.update {
+            it.copy(
+                maxChars = value.filter(Char::isDigit),
+                samplingDefaultsApplied = true,
+                samplingPlan = null,
+                samplingEstimateError = "",
+                error = "",
+            )
+        }
+        scheduleSamplingEstimate()
+    }
+
+    fun toggleAdvancedSampling() {
+        mutableState.update { it.copy(advancedSamplingVisible = !it.advancedSamplingVisible) }
+    }
+
+    fun refreshSamplingEstimate() {
+        scheduleSamplingEstimate()
     }
 
     fun refreshModelConfiguration() {
@@ -210,11 +264,7 @@ class ImportBookViewModel(
         val characters = if (packageFile) {
             emptyList()
         } else {
-            current.characters
-                .split(',', '，', '\n', ';', '；', '、')
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .distinct()
+            parseImportCharacters(current.characters)
         }
         val maxSentences = current.maxSentences.toIntOrNull() ?: 120
         val maxChars = current.maxChars.toIntOrNull() ?: 50_000
@@ -290,6 +340,85 @@ class ImportBookViewModel(
         mutableState.update { it.copy(submitting = false, createdRunId = run.runId) }
     }
 
+    private fun scheduleSamplingEstimate() {
+        val requestId = ++samplingEstimateRequestId
+        val snapshot = state.value
+        samplingEstimateJob?.cancel()
+        if (snapshot.packageFile || snapshot.charCount <= 0 || snapshot.sentenceCount <= 0) {
+            mutableState.update {
+                it.copy(
+                    estimatingSampling = false,
+                    samplingPlan = null,
+                    samplingEstimateError = "",
+                )
+            }
+            return
+        }
+        samplingEstimateJob = viewModelScope.launch {
+            delay(180)
+            if (requestId != samplingEstimateRequestId) return@launch
+            val current = state.value
+            val maxSentences = current.maxSentences.toIntOrNull()?.coerceIn(20, 300) ?: 120
+            val maxChars = current.maxChars.toIntOrNull()?.coerceIn(2_000, 200_000) ?: 50_000
+            val characterCount = parseImportCharacters(current.characters).size.coerceAtLeast(1)
+            mutableState.update {
+                if (requestId == samplingEstimateRequestId) {
+                    it.copy(estimatingSampling = true, samplingEstimateError = "")
+                } else {
+                    it
+                }
+            }
+            try {
+                val plan = repository.estimateSampling(
+                    charCount = current.charCount,
+                    sentenceCount = current.sentenceCount,
+                    characterCount = characterCount,
+                    maxSentences = maxSentences,
+                    maxChars = maxChars,
+                )
+                if (requestId != samplingEstimateRequestId) return@launch
+                var applySuggestedDefaults = false
+                mutableState.update { latest ->
+                    if (requestId != samplingEstimateRequestId) {
+                        latest
+                    } else {
+                        applySuggestedDefaults = !latest.samplingDefaultsApplied
+                        if (applySuggestedDefaults) {
+                            latest.copy(
+                                maxSentences = plan.suggestedMaxSentences.toString(),
+                                maxChars = plan.suggestedMaxChars.toString(),
+                                samplingDefaultsApplied = true,
+                                samplingPlan = null,
+                                samplingEstimateError = "",
+                            )
+                        } else {
+                            latest.copy(
+                                estimatingSampling = false,
+                                samplingPlan = plan,
+                                samplingEstimateError = "",
+                            )
+                        }
+                    }
+                }
+                if (applySuggestedDefaults) scheduleSamplingEstimate()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (requestId != samplingEstimateRequestId) return@launch
+                mutableState.update {
+                    if (requestId == samplingEstimateRequestId) {
+                        it.copy(
+                            estimatingSampling = false,
+                            samplingEstimateError = error.message ?: "无法生成取样预估。",
+                        )
+                    } else {
+                        it
+                    }
+                }
+            }
+        }
+    }
+
     private suspend fun captureKnownRunIds(): Set<String>? = try {
         repository.listRuns().mapTo(mutableSetOf()) { it.runId }
     } catch (cancelled: CancellationException) {
@@ -321,3 +450,9 @@ internal fun selectRecoveredRun(
     .filter { it.runId !in knownRunIds }
     .filter(matches)
     .singleOrNull()
+
+internal fun parseImportCharacters(value: String): List<String> = value
+    .split(',', '，', '\n', ';', '；', '、')
+    .map(String::trim)
+    .filter(String::isNotBlank)
+    .distinct()

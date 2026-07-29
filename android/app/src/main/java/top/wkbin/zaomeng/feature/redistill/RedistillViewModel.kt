@@ -9,10 +9,14 @@ import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.RedistillSegmentDto
 import top.wkbin.zaomeng.data.api.RedistillSuggestionsDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
+import top.wkbin.zaomeng.data.api.SamplingPlanDto
+import top.wkbin.zaomeng.feature.importbook.ImportDocument
 import top.wkbin.zaomeng.feature.importbook.ImportDocumentKind
 import top.wkbin.zaomeng.feature.importbook.ImportDocumentLoader
+import top.wkbin.zaomeng.feature.importbook.textStatistics
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,11 +31,16 @@ data class RedistillUiState(
     val maxChars: String = "50000",
     val fileName: String = "",
     val fileSize: Long = 0,
+    val sourceCharCount: Int = 0,
+    val sourceSentenceCount: Int = 0,
     val readingFile: Boolean = false,
     val recommendationCharacter: String = "",
     val recommending: Boolean = false,
     val suggestions: RedistillSuggestionsDto? = null,
     val selectedSegmentId: String = "",
+    val estimatingSampling: Boolean = false,
+    val samplingPlan: SamplingPlanDto? = null,
+    val samplingEstimateError: String = "",
     val submitting: Boolean = false,
     val completed: Boolean = false,
     val error: String = "",
@@ -49,6 +58,8 @@ class RedistillViewModel(
     val state: StateFlow<RedistillUiState> = mutableState.asStateFlow()
     private var selectedBytes: ByteArray? = null
     private var fileLoadJob: Job? = null
+    private var samplingEstimateJob: Job? = null
+    private var samplingEstimateRequestId = 0L
 
     init {
         require(runId.isNotBlank()) { "runId 不能为空。" }
@@ -89,7 +100,7 @@ class RedistillViewModel(
                     uri = uri,
                     expectedKind = ImportDocumentKind.NovelText,
                 )
-                selectFile(document.fileName, document.bytes)
+                selectFile(document)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -100,19 +111,39 @@ class RedistillViewModel(
         }
     }
 
-    private fun selectFile(filename: String, bytes: ByteArray) {
+    private fun selectFile(document: ImportDocument) {
+        val filename = document.fileName
+        val bytes = document.bytes
         if (!filename.lowercase().endsWith(".txt")) {
             selectedBytes = null
             mutableState.update {
-                it.copy(fileName = "", fileSize = 0, readingFile = false, error = "增量正文目前只支持 TXT。")
+                it.copy(
+                    fileName = "",
+                    fileSize = 0,
+                    sourceCharCount = 0,
+                    sourceSentenceCount = 0,
+                    readingFile = false,
+                    samplingPlan = null,
+                    error = "增量正文目前只支持 TXT。",
+                )
             }
+            scheduleSamplingEstimate()
             return
         }
         if (bytes.isEmpty()) {
             selectedBytes = null
             mutableState.update {
-                it.copy(fileName = "", fileSize = 0, readingFile = false, error = "所选 TXT 文件为空。")
+                it.copy(
+                    fileName = "",
+                    fileSize = 0,
+                    sourceCharCount = 0,
+                    sourceSentenceCount = 0,
+                    readingFile = false,
+                    samplingPlan = null,
+                    error = "所选 TXT 文件为空。",
+                )
             }
+            scheduleSamplingEstimate()
             return
         }
         selectedBytes = bytes
@@ -120,34 +151,78 @@ class RedistillViewModel(
             it.copy(
                 fileName = filename,
                 fileSize = bytes.size.toLong(),
+                sourceCharCount = document.charCount,
+                sourceSentenceCount = document.sentenceCount,
                 readingFile = false,
                 selectedSegmentId = "",
+                samplingPlan = null,
+                samplingEstimateError = "",
                 error = "",
             )
         }
+        scheduleSamplingEstimate()
     }
 
     fun clearFile() {
         selectedBytes = null
-        mutableState.update { it.copy(fileName = "", fileSize = 0, error = "") }
+        mutableState.update {
+            it.copy(
+                fileName = "",
+                fileSize = 0,
+                sourceCharCount = 0,
+                sourceSentenceCount = 0,
+                samplingPlan = null,
+                samplingEstimateError = "",
+                error = "",
+            )
+        }
+        scheduleSamplingEstimate()
     }
 
-    fun updateCharacters(value: String) = mutableState.update { it.copy(characters = value, error = "") }
-    fun updateMaxSentences(value: String) = mutableState.update {
-        it.copy(maxSentences = value.filter(Char::isDigit), error = "")
+    fun updateCharacters(value: String) {
+        mutableState.update { it.copy(characters = value, samplingPlan = null, error = "") }
+        scheduleSamplingEstimate()
     }
-    fun updateMaxChars(value: String) = mutableState.update {
-        it.copy(maxChars = value.filter(Char::isDigit), error = "")
+    fun updateMaxSentences(value: String) {
+        mutableState.update { it.copy(maxSentences = value.filter(Char::isDigit), samplingPlan = null, error = "") }
+        scheduleSamplingEstimate()
     }
-    fun selectRecommendationCharacter(value: String) = mutableState.update {
-        it.copy(recommendationCharacter = value, suggestions = null, selectedSegmentId = "", error = "")
+    fun updateMaxChars(value: String) {
+        mutableState.update { it.copy(maxChars = value.filter(Char::isDigit), samplingPlan = null, error = "") }
+        scheduleSamplingEstimate()
+    }
+    fun selectRecommendationCharacter(value: String) {
+        val fileSelected = selectedBytes != null
+        mutableState.update {
+            it.copy(
+                recommendationCharacter = value,
+                suggestions = null,
+                selectedSegmentId = "",
+                sourceCharCount = if (fileSelected) it.sourceCharCount else 0,
+                sourceSentenceCount = if (fileSelected) it.sourceSentenceCount else 0,
+                samplingPlan = null,
+                error = "",
+            )
+        }
+        scheduleSamplingEstimate()
     }
 
     fun recommendSegments() {
         val character = state.value.recommendationCharacter.trim()
         if (character.isBlank() || state.value.recommending) return
         viewModelScope.launch {
-            mutableState.update { it.copy(recommending = true, error = "", selectedSegmentId = "") }
+            val fileSelected = selectedBytes != null
+            mutableState.update {
+                it.copy(
+                    recommending = true,
+                    error = "",
+                    selectedSegmentId = "",
+                    sourceCharCount = if (fileSelected) it.sourceCharCount else 0,
+                    sourceSentenceCount = if (fileSelected) it.sourceSentenceCount else 0,
+                    samplingPlan = null,
+                )
+            }
+            scheduleSamplingEstimate()
             try {
                 val suggestions = repository.suggestRedistillSegments(runId, character)
                 mutableState.update {
@@ -166,12 +241,93 @@ class RedistillViewModel(
     fun selectSegment(segmentId: String) {
         selectedBytes = null
         mutableState.update {
+            val nextSegmentId = if (it.selectedSegmentId == segmentId) "" else segmentId
+            val statistics = it.suggestions?.segments
+                ?.firstOrNull { segment -> segment.segmentId == nextSegmentId }
+                ?.let { segment -> textStatistics(segment.fullText) }
             it.copy(
                 fileName = "",
                 fileSize = 0,
-                selectedSegmentId = if (it.selectedSegmentId == segmentId) "" else segmentId,
+                selectedSegmentId = nextSegmentId,
+                sourceCharCount = statistics?.charCount ?: 0,
+                sourceSentenceCount = statistics?.sentenceCount ?: 0,
+                samplingPlan = null,
+                samplingEstimateError = "",
                 error = "",
             )
+        }
+        scheduleSamplingEstimate()
+    }
+
+    fun refreshSamplingEstimate() = scheduleSamplingEstimate()
+
+    private fun scheduleSamplingEstimate() {
+        val requestId = ++samplingEstimateRequestId
+        val snapshot = state.value
+        samplingEstimateJob?.cancel()
+        if (snapshot.sourceCharCount <= 0 || snapshot.sourceSentenceCount <= 0) {
+            mutableState.update {
+                it.copy(
+                    estimatingSampling = false,
+                    samplingPlan = null,
+                    samplingEstimateError = "",
+                )
+            }
+            return
+        }
+        samplingEstimateJob = viewModelScope.launch {
+            delay(180)
+            if (requestId != samplingEstimateRequestId) return@launch
+            val current = state.value
+            val maxSentences = current.maxSentences.toIntOrNull()?.coerceIn(20, 300) ?: 120
+            val maxChars = current.maxChars.toIntOrNull()?.coerceIn(2_000, 200_000) ?: 50_000
+            val characterCount = current.characters
+                .split(',', '，', '、', ';', '；', '\n')
+                .map(String::trim)
+                .count(String::isNotBlank)
+                .coerceAtLeast(1)
+            mutableState.update {
+                if (requestId == samplingEstimateRequestId) {
+                    it.copy(estimatingSampling = true, samplingEstimateError = "")
+                } else {
+                    it
+                }
+            }
+            try {
+                val plan = repository.estimateSampling(
+                    charCount = current.sourceCharCount,
+                    sentenceCount = current.sourceSentenceCount,
+                    characterCount = characterCount,
+                    maxSentences = maxSentences,
+                    maxChars = maxChars,
+                )
+                if (requestId != samplingEstimateRequestId) return@launch
+                mutableState.update {
+                    if (requestId == samplingEstimateRequestId) {
+                        it.copy(
+                            estimatingSampling = false,
+                            samplingPlan = plan,
+                            samplingEstimateError = "",
+                        )
+                    } else {
+                        it
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (requestId != samplingEstimateRequestId) return@launch
+                mutableState.update {
+                    if (requestId == samplingEstimateRequestId) {
+                        it.copy(
+                            estimatingSampling = false,
+                            samplingEstimateError = error.message ?: "无法生成取样预估。",
+                        )
+                    } else {
+                        it
+                    }
+                }
+            }
         }
     }
 

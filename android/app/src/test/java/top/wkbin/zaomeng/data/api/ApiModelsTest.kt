@@ -153,4 +153,50 @@ class ApiModelsTest {
         val payload = json.parseToJsonElement(encoded).jsonObject
         assertEquals("observe", payload["mode"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun deleteSessionsUsesBackendFieldNames() {
+        val encoded = json.encodeToString(
+            DeleteSessionsRequest(
+                items = listOf(SessionRefDto(runId = "run-1", sessionId = "session-1")),
+            ),
+        )
+        val payload = json.parseToJsonElement(encoded).jsonObject
+        val item = payload["items"]!!.jsonArray.single().jsonObject
+
+        assertEquals("run-1", item["run_id"]!!.jsonPrimitive.content)
+        assertEquals("session-1", item["session_id"]!!.jsonPrimitive.content)
+
+        val response = json.decodeFromString<DeleteSessionsResponse>(
+            """{"status":"deleted","not_found":[{"run_id":"run-1","session_id":"missing"}]}""",
+        )
+        assertEquals("missing", response.notFound.single().sessionId)
+    }
+
+    @Test
+    fun samplingPlanUsesBackendFieldNames() {
+        val encoded = json.encodeToString(
+            EstimateSamplingRequest(
+                charCount = 12_400,
+                sentenceCount = 88,
+                characterCount = 2,
+                maxSentences = 80,
+                maxChars = 12_000,
+            ),
+        )
+        val payload = json.parseToJsonElement(encoded).jsonObject
+
+        assertEquals("12400", payload["char_count"]!!.jsonPrimitive.content)
+        assertEquals("88", payload["sentence_count"]!!.jsonPrimitive.content)
+        assertEquals("2", payload["character_count"]!!.jsonPrimitive.content)
+        assertEquals("80", payload["max_sentences"]!!.jsonPrimitive.content)
+        assertEquals("12000", payload["max_chars"]!!.jsonPrimitive.content)
+
+        val plan = json.decodeFromString<SamplingPlanDto>(
+            """{"suggested_max_chars":12000,"suggested_max_sentences":80,"total_calls":10,"token_low":22000,"token_high":32000,"time_low_seconds":95,"time_high_seconds":180}""",
+        )
+        assertEquals(12_000, plan.suggestedMaxChars)
+        assertEquals(10, plan.totalCalls)
+        assertEquals(180, plan.timeHighSeconds)
+    }
 }

@@ -1,11 +1,13 @@
 package top.wkbin.zaomeng.feature.chat
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,11 +30,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -43,6 +46,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -59,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -72,17 +77,25 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import top.wkbin.zaomeng.data.api.DialogueSessionDto
 import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.TranscriptItemDto
@@ -100,8 +113,8 @@ private data class MessageKindOption(
 
 private val messageKindOptions = listOf(
     MessageKindOption("dialogue", "对话"),
-    MessageKindOption("narration", "场景"),
-    MessageKindOption("plot", "推剧情"),
+    MessageKindOption("narration", "旁白"),
+    MessageKindOption("plot", "导演"),
 )
 
 @Composable
@@ -113,12 +126,23 @@ fun ChatScreen(
     onOpenBranch: (runId: String, sessionId: String) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(runId, sessionId) {
         viewModel.load(runId, sessionId)
+    }
+    DisposableEffect(lifecycleOwner, runId, sessionId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) viewModel.pauseContinuousObserve()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.pauseContinuousObserve()
+        }
     }
     LaunchedEffect(state.error) {
         if (state.error.isNotBlank()) {
@@ -201,6 +225,7 @@ fun ChatScreen(
                     onDraftChange = viewModel::updateDraft,
                     onMessageKindChange = viewModel::selectMessageKind,
                     onSend = viewModel::send,
+                    onToggleContinuousObserve = viewModel::toggleContinuousObserve,
                     onRecover = viewModel::recoverPending,
                     onReconcile = viewModel::reconcileUnknownSend,
                     onRetry = viewModel::retryLastSend,
@@ -242,10 +267,16 @@ fun ChatScreen(
                         sending = state.sending,
                         streamStatus = state.streamStatus,
                         streamingReplies = state.streamingReplies,
+                        pendingUserMessage = state.pendingUserMessage,
+                        directorReceipts = state.directorReceipts,
                         displayPreferences = state.chatDisplay,
                         actionsEnabled = state.canUseTools,
                         onRegenerate = viewModel::correctLatest,
                         onBranch = viewModel::branchFromTurn,
+                        onPendingRetry = viewModel::retryLastSend,
+                        onPendingEdit = viewModel::discardFailedSend,
+                        onPendingReconcile = viewModel::reconcileUnknownSend,
+                        onPendingRecover = viewModel::recoverPending,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -540,10 +571,16 @@ private fun Transcript(
     sending: Boolean,
     streamStatus: String,
     streamingReplies: List<StreamingReplyPart>,
+    pendingUserMessage: PendingUserMessage?,
+    directorReceipts: List<DirectorReceipt>,
     displayPreferences: ChatDisplayPreferences,
     actionsEnabled: Boolean,
     onRegenerate: () -> Unit,
     onBranch: (String) -> Unit,
+    onPendingRetry: () -> Unit,
+    onPendingEdit: () -> Unit,
+    onPendingReconcile: () -> Unit,
+    onPendingRecover: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -557,7 +594,10 @@ private fun Transcript(
     var followNewMessages by remember(session.sessionId) { mutableStateOf(true) }
     var unseenMessages by remember(session.sessionId) { mutableIntStateOf(0) }
     var previousVisibleCount by remember(session.sessionId) {
-        mutableIntStateOf(transcript.size + streamingReplies.size)
+        mutableIntStateOf(
+            transcript.size + streamingReplies.size + directorReceipts.size +
+                if (pendingUserMessage == null) 0 else 1,
+        )
     }
     val isAtBottom by remember(listState, bottomThresholdPx) {
         derivedStateOf {
@@ -580,14 +620,13 @@ private fun Transcript(
             }
     }
 
-    val visibleCount = transcript.size + streamingReplies.size
-    val lastContentIndex = when {
-        sending && streamingReplies.isEmpty() -> if (transcript.isEmpty()) 1 else transcript.size
-        visibleCount > 0 -> visibleCount - 1
-        else -> 0
-    }
+    val visibleCount = transcript.size + streamingReplies.size + directorReceipts.size +
+        if (pendingUserMessage == null) 0 else 1
+    val lastContentIndex = (visibleCount - 1).coerceAtLeast(0)
     val contentSignature = transcript.lastOrNull()?.message.orEmpty() +
-        streamingReplies.joinToString(separator = "|") { it.text }
+        streamingReplies.joinToString(separator = "|") { it.text } +
+        pendingUserMessage?.let { "${it.operationId}|${it.status}|${it.statusText}" }.orEmpty() +
+        directorReceipts.joinToString(separator = "|") { it.operationId }
     LaunchedEffect(visibleCount, contentSignature, sending) {
         val added = (visibleCount - previousVisibleCount).coerceAtLeast(0)
         previousVisibleCount = visibleCount
@@ -611,7 +650,9 @@ private fun Transcript(
                 if (displayPreferences.compactMode) 3.dp else 8.dp,
             ),
         ) {
-            if (transcript.isEmpty() && streamingReplies.isEmpty()) {
+            if (transcript.isEmpty() && streamingReplies.isEmpty() && pendingUserMessage == null &&
+                directorReceipts.isEmpty()
+            ) {
                 item {
                     Text(
                         "这一幕还没有留下台词。写下第一句话，让故事继续。",
@@ -639,6 +680,23 @@ private fun Transcript(
                 )
             }
 
+            pendingUserMessage?.let { pending ->
+                item(key = "pending-${pending.operationId}") {
+                    PendingUserMessageBubble(
+                        pending = pending,
+                        onRetry = onPendingRetry,
+                        onEdit = onPendingEdit,
+                        onReconcile = onPendingReconcile,
+                        onRecover = onPendingRecover,
+                        requiresRecovery = session.status != "ready",
+                    )
+                }
+            }
+
+            items(directorReceipts, key = { "director-${it.operationId}" }) { receipt ->
+                DirectorReceiptCard(receipt = receipt)
+            }
+
             items(
                 items = streamingReplies,
                 key = { "stream-${it.index}" },
@@ -658,22 +716,6 @@ private fun Transcript(
                 )
             }
 
-            if (sending && streamingReplies.isEmpty()) {
-                item(key = "generating") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(
-                            streamStatus.ifBlank { "人物正在斟酌回应…" },
-                            modifier = Modifier.padding(start = 10.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
         }
 
         if (!isAtBottom || unseenMessages > 0) {
@@ -697,6 +739,259 @@ private fun Transcript(
                     )
                 },
             )
+        }
+    }
+}
+
+@Composable
+private fun PendingUserMessageBubble(
+    pending: PendingUserMessage,
+    onRetry: () -> Unit,
+    onEdit: () -> Unit,
+    onReconcile: () -> Unit,
+    onRecover: () -> Unit,
+    requiresRecovery: Boolean,
+) {
+    if (pending.messageKind == "plot") {
+        PendingDirectorInstructionCard(
+            pending = pending,
+            onRetry = onRetry,
+            onEdit = onEdit,
+            onReconcile = onReconcile,
+            onRecover = onRecover,
+            requiresRecovery = requiresRecovery,
+        )
+        return
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+    ) {
+        Surface(
+            modifier = Modifier.widthIn(max = 340.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shape = RoundedCornerShape(
+                topStart = 18.dp,
+                topEnd = 18.dp,
+                bottomStart = 18.dp,
+                bottomEnd = 4.dp,
+            ),
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                Text(
+                    "你",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                ParentheticalMessageText(
+                    text = pending.message,
+                    modifier = Modifier.padding(top = 3.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    baseColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                when (pending.status) {
+                    PendingUserMessageStatus.Sending -> Row(
+                        modifier = Modifier.padding(top = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Text(
+                            pending.statusText.ifBlank { "正在发送" },
+                            modifier = Modifier.padding(start = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
+                        )
+                    }
+
+                    PendingUserMessageStatus.Failed -> {
+                        Text(
+                            pending.statusText.ifBlank { "发送失败" },
+                            modifier = Modifier.padding(top = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        if (requiresRecovery) {
+                            TextButton(
+                                onClick = onRecover,
+                                modifier = Modifier.align(Alignment.End),
+                            ) { Text("恢复会话") }
+                        } else {
+                            Row(
+                                modifier = Modifier.align(Alignment.End),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(onClick = onEdit) { Text("编辑") }
+                                if (pending.retryable) {
+                                    TextButton(onClick = onRetry) { Text("重试") }
+                                }
+                            }
+                        }
+                    }
+
+                    PendingUserMessageStatus.OutcomeUnknown -> {
+                        Text(
+                            pending.statusText.ifBlank { "连接中断，正在核对结果" },
+                            modifier = Modifier.padding(top = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        TextButton(
+                            onClick = if (requiresRecovery) onRecover else onReconcile,
+                            modifier = Modifier.align(Alignment.End),
+                        ) { Text(if (requiresRecovery) "恢复会话" else "核对结果") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectorReceiptCard(receipt: DirectorReceipt) {
+    var expanded by remember(receipt.operationId) { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 520.dp)
+                .clickable { expanded = !expanded },
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Text(
+                        "导演指令已应用",
+                        modifier = Modifier.padding(start = 5.dp).weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (expanded) "收起指令" else "展开指令",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                if (expanded) {
+                    ParentheticalMessageText(
+                        text = receipt.message,
+                        modifier = Modifier.padding(top = 5.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        baseColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                } else {
+                    Text(
+                        "作为下一拍的引导，不写入角色台词",
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingDirectorInstructionCard(
+    pending: PendingUserMessage,
+    onRetry: () -> Unit,
+    onEdit: () -> Unit,
+    onReconcile: () -> Unit,
+    onRecover: () -> Unit,
+    requiresRecovery: Boolean,
+) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier.widthIn(max = 520.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Text(
+                        "导演指令",
+                        modifier = Modifier.padding(start = 5.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                ParentheticalMessageText(
+                    text = pending.message,
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    baseColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                when (pending.status) {
+                    PendingUserMessageStatus.Sending -> Row(
+                        modifier = Modifier.padding(top = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Text(
+                            pending.statusText.ifBlank { "正在安排下一拍" },
+                            modifier = Modifier.padding(start = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                        )
+                    }
+
+                    PendingUserMessageStatus.Failed -> {
+                        Text(
+                            pending.statusText.ifBlank { "指令未生效" },
+                            modifier = Modifier.padding(top = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        if (requiresRecovery) {
+                            TextButton(onClick = onRecover, modifier = Modifier.align(Alignment.End)) {
+                                Text("恢复会话")
+                            }
+                        } else {
+                            Row(modifier = Modifier.align(Alignment.End)) {
+                                TextButton(onClick = onEdit) { Text("编辑") }
+                                if (pending.retryable) TextButton(onClick = onRetry) { Text("重试") }
+                            }
+                        }
+                    }
+
+                    PendingUserMessageStatus.OutcomeUnknown -> {
+                        Text(
+                            pending.statusText.ifBlank { "连接中断，正在核对结果" },
+                            modifier = Modifier.padding(top = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        TextButton(
+                            onClick = if (requiresRecovery) onRecover else onReconcile,
+                            modifier = Modifier.align(Alignment.End),
+                        ) { Text(if (requiresRecovery) "恢复会话" else "核对结果") }
+                    }
+                }
+            }
         }
     }
 }
@@ -725,6 +1020,7 @@ private suspend fun LazyListState.scrollToBottom(itemIndex: Int, animated: Boole
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun TranscriptBubble(
     item: TranscriptItemDto,
     displayPreferences: ChatDisplayPreferences,
@@ -736,7 +1032,10 @@ private fun TranscriptBubble(
     onBranch: () -> Unit,
 ) {
     val isUser = item.role == "user"
-    val isScene = item.role == "scene" || item.role == "director"
+    val isScene = item.role == "scene"
+    val isDirector = item.role == "director"
+    val canBranch = item.turnId.isNotBlank()
+    var menuExpanded by remember(item.turnId, item.message) { mutableStateOf(false) }
     val verticalPadding = if (displayPreferences.compactMode) 6.dp else 9.dp
     val messageStyle = MaterialTheme.typography.bodyMedium.copy(
         fontSize = MaterialTheme.typography.bodyMedium.fontSize * displayPreferences.fontSize.scale,
@@ -744,33 +1043,94 @@ private fun TranscriptBubble(
 
     if (isScene) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.widthIn(max = 520.dp),
-                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(8.dp),
-            ) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = verticalPadding)) {
-                    Text(
-                        text = item.speaker.ifBlank { "旁白" },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    ParentheticalMessageText(
-                        text = item.message,
-                        modifier = Modifier.padding(top = 3.dp),
-                        style = messageStyle.copy(fontStyle = FontStyle.Italic),
-                        baseColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                    )
-                    if (!streaming) MessageActions(
-                        actionsEnabled = actionsEnabled,
-                        canRegenerate = false,
-                        canBranch = item.turnId.isNotBlank(),
-                        onCopy = onCopy,
-                        onRegenerate = onRegenerate,
-                        onBranch = onBranch,
-                    )
+            Box {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(max = 520.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { if (!streaming) menuExpanded = true },
+                        ),
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = verticalPadding)) {
+                        Text(
+                            text = "旁白${item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        ParentheticalMessageText(
+                            text = item.message,
+                            modifier = Modifier.padding(top = 3.dp),
+                            style = messageStyle.copy(fontStyle = FontStyle.Italic),
+                            baseColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
                 }
+                MessageContextMenu(
+                    expanded = menuExpanded,
+                    onDismiss = { menuExpanded = false },
+                    actionsEnabled = actionsEnabled,
+                    canRegenerate = false,
+                    canBranch = canBranch,
+                    onCopy = onCopy,
+                    onRegenerate = onRegenerate,
+                    onBranch = onBranch,
+                )
+            }
+        }
+        return
+    }
+
+    if (isDirector) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(max = 520.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { if (!streaming) menuExpanded = true },
+                        ),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = verticalPadding)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                            Text(
+                                text = "导演${item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}",
+                                modifier = Modifier.padding(start = 5.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        ParentheticalMessageText(
+                            text = item.message,
+                            modifier = Modifier.padding(top = 3.dp),
+                            style = messageStyle,
+                            baseColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+                MessageContextMenu(
+                    expanded = menuExpanded,
+                    onDismiss = { menuExpanded = false },
+                    actionsEnabled = actionsEnabled,
+                    canRegenerate = false,
+                    canBranch = canBranch,
+                    onCopy = onCopy,
+                    onRegenerate = onRegenerate,
+                    onBranch = onBranch,
+                )
             }
         }
         return
@@ -780,56 +1140,136 @@ private fun TranscriptBubble(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
-        Surface(
-            modifier = Modifier.widthIn(max = 340.dp),
-            color = if (isUser) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            },
-            shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomStart = if (isUser) 18.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 18.dp,
-            ),
-        ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = verticalPadding)) {
-                Text(
-                    text = if (isUser) "你 · ${item.speaker}" else item.speaker.ifBlank { "人物" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isUser) {
-                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    fontWeight = FontWeight.SemiBold,
-                )
-                ParentheticalMessageText(
-                    text = item.message,
-                    modifier = Modifier.padding(top = 3.dp),
-                    style = messageStyle,
-                    baseColor = if (isUser) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                )
-                if (streaming) {
-                    Text(
-                        "正在生成",
-                        modifier = Modifier.padding(top = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+        Box {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 340.dp)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { if (!streaming) menuExpanded = true },
+                    ),
+                color = if (isUser) {
+                    MaterialTheme.colorScheme.primaryContainer
                 } else {
-                    MessageActions(
-                        actionsEnabled = actionsEnabled,
-                        canRegenerate = canRegenerate,
-                        canBranch = item.turnId.isNotBlank(),
-                        onCopy = onCopy,
-                        onRegenerate = onRegenerate,
-                        onBranch = onBranch,
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+                shape = RoundedCornerShape(
+                    topStart = 18.dp,
+                    topEnd = 18.dp,
+                    bottomStart = if (isUser) 18.dp else 4.dp,
+                    bottomEnd = if (isUser) 4.dp else 18.dp,
+                ),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = verticalPadding)) {
+                    Text(
+                        text = if (isUser) "你 · ${item.speaker}" else item.speaker.ifBlank { "人物" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isUser) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    ParentheticalMessageText(
+                        text = item.message,
+                        modifier = Modifier.padding(top = 3.dp),
+                        style = messageStyle,
+                        baseColor = if (isUser) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    if (streaming) {
+                        Text(
+                            "正在生成",
+                            modifier = Modifier.padding(top = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            MessageContextMenu(
+                expanded = menuExpanded,
+                onDismiss = { menuExpanded = false },
+                actionsEnabled = actionsEnabled,
+                canRegenerate = canRegenerate,
+                canBranch = canBranch,
+                onCopy = onCopy,
+                onRegenerate = onRegenerate,
+                onBranch = onBranch,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageContextMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    actionsEnabled: Boolean,
+    canRegenerate: Boolean,
+    canBranch: Boolean,
+    onCopy: () -> Unit,
+    onRegenerate: () -> Unit,
+    onBranch: () -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.inverseSurface,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MessageContextAction(
+                label = "复制",
+                enabled = true,
+                onClick = {
+                    onDismiss()
+                    onCopy()
+                },
+            ) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            if (canRegenerate) {
+                MessageContextAction(
+                    label = "重新生成",
+                    enabled = actionsEnabled,
+                    onClick = {
+                        onDismiss()
+                        onRegenerate()
+                    },
+                ) {
+                    Icon(
+                        Icons.Default.Replay,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (canBranch) {
+                MessageContextAction(
+                    label = "从此处分支",
+                    enabled = actionsEnabled,
+                    onClick = {
+                        onDismiss()
+                        onBranch()
+                    },
+                ) {
+                    Icon(
+                        Icons.Default.CallSplit,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
@@ -838,55 +1278,31 @@ private fun TranscriptBubble(
 }
 
 @Composable
-private fun MessageActions(
-    actionsEnabled: Boolean,
-    canRegenerate: Boolean,
-    canBranch: Boolean,
-    onCopy: () -> Unit,
-    onRegenerate: () -> Unit,
-    onBranch: () -> Unit,
+private fun MessageContextAction(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.padding(top = 2.dp).heightIn(min = 30.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val contentColor = MaterialTheme.colorScheme.inverseOnSurface
+    Column(
+        modifier = Modifier
+            .widthIn(min = 56.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
-            Icon(
-                Icons.Default.ContentCopy,
-                contentDescription = "复制消息",
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides contentColor,
+        ) {
+            icon()
         }
-        if (canRegenerate) {
-            IconButton(
-                onClick = onRegenerate,
-                enabled = actionsEnabled,
-                modifier = Modifier.size(30.dp),
-            ) {
-                Icon(
-                    Icons.Default.Replay,
-                    contentDescription = "重新生成",
-                    modifier = Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (canBranch) {
-            IconButton(
-                onClick = onBranch,
-                enabled = actionsEnabled,
-                modifier = Modifier.size(30.dp),
-            ) {
-                Icon(
-                    Icons.Default.CallSplit,
-                    contentDescription = "从此处分支",
-                    modifier = Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor.copy(alpha = if (enabled) 1f else 0.38f),
+            maxLines = 1,
+        )
     }
 }
 
@@ -920,12 +1336,16 @@ private fun ChatComposer(
     onDraftChange: (String) -> Unit,
     onMessageKindChange: (String) -> Unit,
     onSend: () -> Unit,
+    onToggleContinuousObserve: () -> Unit,
     onRecover: () -> Unit,
     onReconcile: () -> Unit,
     onRetry: () -> Unit,
     onDiscardRetry: () -> Unit,
 ) {
     var mentionsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
+    var draftValue by rememberSaveable(state.sessionId, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(state.draft))
+    }
     val participants = remember(state.session) {
         val session = state.session ?: return@remember emptyList()
         val present = session.sceneProgress["present_participants"]
@@ -943,8 +1363,14 @@ private fun ChatComposer(
     }
     val inputEnabled = !state.sending && !state.recovering &&
         !state.sendOutcomeUnknown && state.failedOperationId.isBlank()
+    val mentionColor = MaterialTheme.colorScheme.primary
+    val mentionTransformation = remember(participants, mentionColor) {
+        MentionVisualTransformation(participants, mentionColor)
+    }
     LaunchedEffect(state.draft) {
-        if (state.draft.trimEnd().endsWith("@")) mentionsOpen = true
+        if (state.draft != draftValue.text) {
+            draftValue = TextFieldValue(state.draft, TextRange(state.draft.length))
+        }
     }
     Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
         Column(
@@ -966,11 +1392,41 @@ private fun ChatComposer(
                         label = { Text(option.label) },
                     )
                 }
+                if (participants.isNotEmpty()) {
+                    item {
+                        AssistChip(
+                            onClick = { mentionsOpen = !mentionsOpen },
+                            enabled = inputEnabled,
+                            label = { Text("@") },
+                        )
+                    }
+                }
+                if (state.session?.mode == "observe") {
+                    item {
+                        FilterChip(
+                            selected = state.continuousObserveEnabled,
+                            onClick = onToggleContinuousObserve,
+                            enabled = state.canToggleContinuousObserve,
+                            leadingIcon = {
+                                Icon(
+                                    if (state.continuousObserveEnabled) {
+                                        Icons.Default.Pause
+                                    } else {
+                                        Icons.Default.PlayArrow
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                            label = { Text("旁观") },
+                        )
+                    }
+                }
             }
 
             if (state.messageKind == "plot") {
                 Text(
-                    "推动剧情的指令只用于导演下一幕，不会显示成你的台词。",
+                    "导演指令会引导下一拍，不会写成你的角色台词。",
                     modifier = Modifier.padding(bottom = 6.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -978,38 +1434,18 @@ private fun ChatComposer(
             }
 
             if (participants.isNotEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AssistChip(
-                        onClick = { mentionsOpen = !mentionsOpen },
-                        enabled = inputEnabled,
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.AlternateEmail,
-                                contentDescription = null,
-                                modifier = Modifier.size(17.dp),
-                            )
-                        },
-                        label = { Text("提及人物") },
-                    )
-                    if (!mentionsOpen) {
-                        Text(
-                            "@ 可指定回应人物",
-                            modifier = Modifier.padding(start = 8.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
                 if (mentionsOpen) {
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         contentPadding = PaddingValues(bottom = 5.dp),
                     ) {
                         items(participants, key = { it }) { participant ->
-                            FilterChip(
-                                selected = state.draft.hasMention(participant),
+                            AssistChip(
                                 onClick = {
-                                    onDraftChange(state.draft.toggleMention(participant))
+                                    val next = draftValue.insertMention(participant)
+                                    draftValue = next
+                                    onDraftChange(next.text)
+                                    mentionsOpen = false
                                 },
                                 enabled = inputEnabled,
                                 label = { Text(participant) },
@@ -1021,15 +1457,24 @@ private fun ChatComposer(
 
             Row(verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
-                    value = state.draft,
-                    onValueChange = onDraftChange,
+                    value = draftValue,
+                    onValueChange = { next ->
+                        val resolved = normalizeMentionDeletion(
+                            previous = draftValue,
+                            next = next,
+                            participants = participants,
+                        )
+                        draftValue = resolved
+                        onDraftChange(resolved.text)
+                    },
                     modifier = Modifier.weight(1f),
                     enabled = inputEnabled,
+                    visualTransformation = mentionTransformation,
                     placeholder = {
                         Text(
                             when (state.messageKind) {
                                 "narration" -> "描述一个场景变化…"
-                                "plot" -> "告诉人物接下来发生什么…"
+                                "plot" -> "交代希望下一拍怎样发展…"
                                 else -> "写下你想说的话…"
                             },
                         )
@@ -1045,36 +1490,19 @@ private fun ChatComposer(
                     onClick = onSend,
                     enabled = state.canSend,
                 ) {
-                    if (state.sending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(19.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "发送",
-                            tint = if (state.canSend) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                            },
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "发送",
+                        tint = if (state.canSend) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                        },
+                    )
                 }
             }
 
-            if (state.sending && state.streamStatus.isNotBlank()) {
-                Text(
-                    state.streamStatus,
-                    modifier = Modifier.padding(start = 8.dp, top = 3.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            if (state.failedOperationId.isNotBlank() && !state.sending) {
+            if (state.pendingUserMessage == null && state.failedOperationId.isNotBlank() && !state.sending) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1114,7 +1542,7 @@ private fun ChatComposer(
                         }
                     }
                 }
-            } else if (state.sendOutcomeUnknown) {
+            } else if (state.pendingUserMessage == null && state.sendOutcomeUnknown) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1167,30 +1595,104 @@ private fun ChatComposer(
     }
 }
 
-private fun String.appendMention(participant: String): String {
-    val name = participant.trim()
-    if (name.isBlank()) return this
-    val trimmedEnd = trimEnd()
-    return when {
-        trimmedEnd.endsWith("@") -> trimmedEnd.dropLast(1) + "@$name "
-        trimmedEnd.isBlank() -> "@$name "
-        else -> "$trimmedEnd @$name "
+private class MentionVisualTransformation(
+    private val participants: List<String>,
+    private val mentionColor: androidx.compose.ui.graphics.Color,
+) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val annotated = buildAnnotatedString {
+            append(text)
+            text.text.mentionRanges(participants).forEach { range ->
+                addStyle(
+                    SpanStyle(color = mentionColor, fontWeight = FontWeight.SemiBold),
+                    range.first,
+                    range.last + 1,
+                )
+            }
+        }
+        return TransformedText(annotated, OffsetMapping.Identity)
     }
 }
 
-private fun String.hasMention(participant: String): Boolean {
+internal fun TextFieldValue.insertMention(participant: String): TextFieldValue {
     val name = participant.trim()
-    if (name.isBlank()) return false
-    return Regex("(^|\\s)@${Regex.escape(name)}(?=\\s|$)").containsMatchIn(this)
+    if (name.isBlank() || text.mentionRanges(listOf(name)).isNotEmpty()) return this
+
+    val start = selection.min
+    val end = selection.max
+    val before = text.substring(0, start)
+    val after = text.substring(end)
+    val prefix = if (before.isNotEmpty() && !before.last().isWhitespace()) " " else ""
+    val suffix = if (after.isEmpty() || !after.first().isWhitespace()) " " else ""
+    val inserted = "$prefix@$name$suffix"
+    val nextText = before + inserted + after
+    val cursor = before.length + inserted.length
+    return TextFieldValue(nextText, TextRange(cursor))
 }
 
-private fun String.toggleMention(participant: String): String {
-    val name = participant.trim()
-    if (name.isBlank() || !hasMention(name)) return appendMention(name)
-    val pattern = Regex("(^|\\s)@${Regex.escape(name)}(?=\\s|$)")
-    return pattern.replace(this) { match -> match.groupValues[1] }
-        .replace(Regex(" {2,}"), " ")
-        .trimStart()
+internal fun normalizeMentionDeletion(
+    previous: TextFieldValue,
+    next: TextFieldValue,
+    participants: List<String>,
+): TextFieldValue {
+    if (next.text.length >= previous.text.length) return next
+
+    val change = textDeletionRange(previous.text, next.text) ?: return next
+    val affected = previous.text.mentionRanges(participants).filter { mention ->
+        (mention.first < change.end && mention.last + 1 > change.start) ||
+            (change.start == mention.last + 1 &&
+                change.end == mention.last + 2 &&
+                previous.text.getOrNull(mention.last + 1)?.isWhitespace() == true)
+    }
+    if (affected.isEmpty()) return next
+
+    val start = minOf(change.start, affected.minOf { it.first })
+    val end = maxOf(
+        change.end,
+        affected.maxOf { mention ->
+            val afterMention = mention.last + 1
+            if (previous.text.getOrNull(afterMention)?.isWhitespace() == true) {
+                afterMention + 1
+            } else {
+                afterMention
+            }
+        },
+    )
+    return TextFieldValue(
+        text = previous.text.removeRange(start, end),
+        selection = TextRange(start),
+    )
+}
+
+internal fun String.mentionRanges(participants: List<String>): List<IntRange> = participants
+    .asSequence()
+    .map(String::trim)
+    .filter(String::isNotBlank)
+    .distinct()
+    .flatMap { name ->
+        Regex("(?<!\\S)@${Regex.escape(name)}(?=\\s|$)")
+            .findAll(this)
+            .map { it.range }
+    }
+    .distinct()
+    .sortedBy { it.first }
+    .toList()
+
+private fun textDeletionRange(previous: String, next: String): TextRange? {
+    var start = 0
+    val sharedLength = minOf(previous.length, next.length)
+    while (start < sharedLength && previous[start] == next[start]) start += 1
+
+    var suffix = 0
+    while (
+        suffix < previous.length - start &&
+        suffix < next.length - start &&
+        previous[previous.length - suffix - 1] == next[next.length - suffix - 1]
+    ) {
+        suffix += 1
+    }
+    val end = previous.length - suffix
+    return if (start < end) TextRange(start, end) else null
 }
 
 private fun String.chineseMode(): String = when (this) {

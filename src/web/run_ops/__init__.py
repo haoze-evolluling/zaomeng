@@ -20,6 +20,7 @@ from .runtime_config import (
     estimate_text_length,
     is_model_configured_payload,
 )
+from .sampling import estimate_sampling_plan
 from .state import (
     derive_summary_graph_status,
     derive_summary_status_text,
@@ -49,6 +50,7 @@ __all__ = [
     "delete_sessions",
     "ensure_run_workspace",
     "estimate_text_length",
+    "estimate_sampling_plan",
     "export_run_package",
     "finalize_manifest_timing",
     "format_elapsed_text",

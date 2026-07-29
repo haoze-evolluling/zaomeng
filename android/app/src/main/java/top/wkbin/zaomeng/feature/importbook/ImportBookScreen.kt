@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,6 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +59,7 @@ fun ImportBookScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var requestedKindName by rememberSaveable { mutableStateOf("") }
+    var showEstimateConfirmation by rememberSaveable { mutableStateOf(false) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val kind = ImportDocumentKind.entries.firstOrNull { it.name == requestedKindName }
         requestedKindName = ""
@@ -81,6 +84,14 @@ fun ImportBookScreen(
             viewModel.submit()
         } else {
             notificationPermission.launch(DistillationForegroundController.NOTIFICATION_PERMISSION)
+        }
+    }
+
+    fun requestImport() {
+        if (!state.packageFile && state.autoDistill && state.samplingPlan != null) {
+            showEstimateConfirmation = true
+        } else {
+            submitImport()
         }
     }
 
@@ -115,6 +126,33 @@ fun ImportBookScreen(
         }
     }
 
+    LaunchedEffect(state.samplingPlan) {
+        if (state.samplingPlan == null) showEstimateConfirmation = false
+    }
+
+    if (showEstimateConfirmation) state.samplingPlan?.let { plan ->
+            AlertDialog(
+                onDismissRequest = { showEstimateConfirmation = false },
+                title = { Text("确认开始蒸馏") },
+                text = {
+                    Text(
+                        "本次预计调用约 ${plan.totalCalls} 次模型，消耗 ${plan.tokenLow.readableCount()}–${plan.tokenHigh.readableCount()} tokens，预计耗时 ${plan.timeLowSeconds.readableDuration()}–${plan.timeHighSeconds.readableDuration()}。",
+                    )
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEstimateConfirmation = false }) { Text("再检查一下") }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showEstimateConfirmation = false
+                            submitImport()
+                        },
+                    ) { Text("确认开始") }
+                },
+            )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -140,17 +178,7 @@ fun ImportBookScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            if (state.loadingBuiltins) {
-                item {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text("正在载入内置书卷…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            } else if (state.builtinNovels.isNotEmpty()) {
+            if (state.builtinNovels.isNotEmpty()) {
                 item {
                     Text("内置书卷", style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -227,7 +255,7 @@ fun ImportBookScreen(
                                 if (state.packageFile) {
                                     "造梦书卷包 · ${state.fileSize.readableFileSize()}"
                                 } else {
-                                    "正文 · ${state.fileSize.readableFileSize()} · ${state.sourceEncoding}"
+                                    "正文 · ${state.charCount.readableCount()} 字 · ${state.sentenceCount} 句 · ${state.sourceEncoding}"
                                 },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -283,24 +311,41 @@ fun ImportBookScreen(
                     )
                 }
                 item {
-                    OutlinedTextField(
-                        value = state.maxSentences,
-                        onValueChange = viewModel::updateMaxSentences,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("每批最多句数") },
-                        supportingText = { Text("20–300，默认 120") },
-                        singleLine = true,
+                    SamplingPlanCard(
+                        state = state,
+                        onRetry = viewModel::refreshSamplingEstimate,
                     )
                 }
                 item {
-                    OutlinedTextField(
-                        value = state.maxChars,
-                        onValueChange = viewModel::updateMaxChars,
+                    OutlinedButton(
+                        onClick = viewModel::toggleAdvancedSampling,
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("每批最多字符") },
-                        supportingText = { Text("2000–200000，默认 50000") },
-                        singleLine = true,
-                    )
+                        enabled = !state.submitting,
+                    ) {
+                        Text(if (state.advancedSamplingVisible) "收起高级取样" else "高级取样")
+                    }
+                }
+                if (state.advancedSamplingVisible) {
+                    item {
+                        OutlinedTextField(
+                            value = state.maxSentences,
+                            onValueChange = viewModel::updateMaxSentences,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("每批最多句数") },
+                            supportingText = { Text("20–300") },
+                            singleLine = true,
+                        )
+                    }
+                    item {
+                        OutlinedTextField(
+                            value = state.maxChars,
+                            onValueChange = viewModel::updateMaxChars,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("每批最多字符") },
+                            supportingText = { Text("2000–200000") },
+                            singleLine = true,
+                        )
+                    }
                 }
                 item {
                     Text(
@@ -319,7 +364,7 @@ fun ImportBookScreen(
             }
             item {
                 Button(
-                    onClick = ::submitImport,
+                    onClick = ::requestImport,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = state.fileName.isNotBlank() &&
                         !state.submitting &&
@@ -474,8 +519,84 @@ private fun ModelConfigurationNotice(
     }
 }
 
+@Composable
+private fun SamplingPlanCard(
+    state: ImportBookUiState,
+    onRetry: () -> Unit,
+) {
+    when {
+        state.estimatingSampling -> Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text("正在估算本次蒸馏…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        state.samplingPlan != null -> state.samplingPlan?.let { plan ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("本次蒸馏预估", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "推荐取样 ${plan.suggestedMaxSentences} 句 / ${plan.suggestedMaxChars.readableCount()} 字",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        if (plan.distillChunkCount > 1) {
+                            "每位人物约 ${plan.distillChunkCount} 块，含汇总 ${plan.distillCallsPerCharacter} 轮"
+                        } else {
+                            "每位人物约 1 轮"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "共约 ${plan.totalCalls} 次模型调用 · ${plan.tokenLow.readableCount()}–${plan.tokenHigh.readableCount()} tokens · ${plan.timeLowSeconds.readableDuration()}–${plan.timeHighSeconds.readableDuration()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        state.samplingEstimateError.isNotBlank() -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                state.samplingEstimateError,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = onRetry) { Text("重试") }
+        }
+    }
+}
+
 private fun Long.readableFileSize(): String = when {
     this >= 1024 * 1024 -> "%.1f MB".format(this / 1024f / 1024f)
     this >= 1024 -> "%.1f KB".format(this / 1024f)
     else -> "$this B"
+}
+
+private fun Int.readableCount(): String = when {
+    this >= 10_000 -> "%.1f 万".format(this / 10_000f)
+    else -> toString()
+}
+
+private fun Int.readableDuration(): String {
+    val minutes = coerceAtLeast(0) / 60
+    val seconds = coerceAtLeast(0) % 60
+    return when {
+        minutes == 0 -> "${seconds}秒"
+        seconds == 0 || minutes >= 10 -> "${minutes}分钟"
+        else -> "${minutes}分${seconds}秒"
+    }
 }

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -37,6 +38,7 @@ class DistillationForegroundService : Service(), KoinComponent {
     @Volatile private var stopRequested = false
     private val observedRunIds = linkedSetOf<String>()
     private var observedRunning = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -80,6 +82,7 @@ class DistillationForegroundService : Service(), KoinComponent {
     override fun onDestroy() {
         monitorJob = null
         serviceScope.cancel()
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -99,6 +102,7 @@ class DistillationForegroundService : Service(), KoinComponent {
                 if (running.isNotEmpty()) {
                     observedRunning = true
                     observedRunIds += running.map(RunManifestDto::runId)
+                    refreshWakeLock()
                 }
                 if (stopRequested && running.isNotEmpty()) {
                     updateNotification(buildStoppingNotification())
@@ -293,8 +297,26 @@ class DistillationForegroundService : Service(), KoinComponent {
         stopRequested = false
         monitorJob?.cancel()
         monitorJob = null
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun refreshWakeLock() {
+        val lock = wakeLock ?: (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:distillation")
+            .also { created ->
+                created.setReferenceCounted(false)
+                wakeLock = created
+            }
+        if (lock.isHeld) lock.release()
+        lock.acquire(WAKE_LOCK_LEASE_MS)
+    }
+
+    private fun releaseWakeLock() {
+        val lock = wakeLock ?: return
+        if (lock.isHeld) lock.release()
+        wakeLock = null
     }
 
     companion object {
@@ -310,6 +332,7 @@ class DistillationForegroundService : Service(), KoinComponent {
         private const val RESULT_NOTIFICATION_ID = 4102
         private const val RUNNING_STATUS = "running"
         private const val POLL_INTERVAL_MS = 2_000L
+        private const val WAKE_LOCK_LEASE_MS = 90_000L
     }
 }
 

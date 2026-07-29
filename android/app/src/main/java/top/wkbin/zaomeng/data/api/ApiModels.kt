@@ -192,6 +192,39 @@ data class ImportRunPackageRequest(
 )
 
 @Serializable
+data class EstimateSamplingRequest(
+    @SerialName("char_count") val charCount: Int,
+    @SerialName("sentence_count") val sentenceCount: Int,
+    @SerialName("character_count") val characterCount: Int,
+    @SerialName("max_sentences") val maxSentences: Int = 120,
+    @SerialName("max_chars") val maxChars: Int = 50_000,
+)
+
+@Serializable
+data class SamplingPlanDto(
+    @SerialName("char_count") val charCount: Int = 0,
+    @SerialName("sentence_count") val sentenceCount: Int = 0,
+    @SerialName("character_count") val characterCount: Int = 0,
+    @SerialName("suggested_max_chars") val suggestedMaxChars: Int = 50_000,
+    @SerialName("suggested_max_sentences") val suggestedMaxSentences: Int = 120,
+    @SerialName("effective_chars") val effectiveChars: Int = 0,
+    @SerialName("effective_sentences") val effectiveSentences: Int = 0,
+    @SerialName("distill_chunk_count") val distillChunkCount: Int = 1,
+    @SerialName("relation_chunk_count") val relationChunkCount: Int = 1,
+    @SerialName("distill_calls_per_character") val distillCallsPerCharacter: Int = 1,
+    @SerialName("relation_calls") val relationCalls: Int = 1,
+    @SerialName("total_calls") val totalCalls: Int = 0,
+    @SerialName("token_low") val tokenLow: Int = 0,
+    @SerialName("token_high") val tokenHigh: Int = 0,
+    @SerialName("distill_time_low_seconds") val distillTimeLowSeconds: Int = 0,
+    @SerialName("distill_time_high_seconds") val distillTimeHighSeconds: Int = 0,
+    @SerialName("relation_time_low_seconds") val relationTimeLowSeconds: Int = 0,
+    @SerialName("relation_time_high_seconds") val relationTimeHighSeconds: Int = 0,
+    @SerialName("time_low_seconds") val timeLowSeconds: Int = 0,
+    @SerialName("time_high_seconds") val timeHighSeconds: Int = 0,
+)
+
+@Serializable
 data class RestartRunRequest(
     val characters: List<String> = emptyList(),
     @SerialName("novel_name") val novelName: String = "",
@@ -340,6 +373,24 @@ data class SuggestPersonaFieldResponse(
 data class SessionsResponse(val items: List<DialogueSessionDto> = emptyList())
 
 @Serializable
+data class SessionRefDto(
+    @SerialName("run_id") val runId: String,
+    @SerialName("session_id") val sessionId: String,
+)
+
+@Serializable
+data class DeleteSessionsRequest(val items: List<SessionRefDto>)
+
+@Serializable
+data class DeleteSessionsResponse(
+    val status: String = "",
+    @SerialName("deleted_count") val deletedCount: Int = 0,
+    val deleted: List<SessionRefDto> = emptyList(),
+    @SerialName("not_found_count") val notFoundCount: Int = 0,
+    @SerialName("not_found") val notFound: List<SessionRefDto> = emptyList(),
+)
+
+@Serializable
 data class DialogueSessionDto(
     @SerialName("session_id") val sessionId: String = "",
     @SerialName("run_id") val runId: String = "",
@@ -376,6 +427,8 @@ data class DialogueSessionDto(
     @SerialName("speaker_activity") val speakerActivity: List<JsonObject> = emptyList(),
     @SerialName("speaker_balance") val speakerBalance: JsonObject = JsonObject(emptyMap()),
     @SerialName("event_signals") val eventSignals: JsonObject = JsonObject(emptyMap()),
+    @SerialName("generation_cache_stats") val generationCacheStats: JsonObject = JsonObject(emptyMap()),
+    @SerialName("latest_context_usage") val latestContextUsage: JsonObject = JsonObject(emptyMap()),
 )
 
 @Serializable

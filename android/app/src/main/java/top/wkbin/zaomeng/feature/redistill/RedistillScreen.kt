@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -60,6 +61,7 @@ fun RedistillScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var showEstimateConfirmation by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             viewModel.loadDocument(uri)
@@ -79,8 +81,43 @@ fun RedistillScreen(
         }
     }
 
+    fun requestRedistill() {
+        if (state.samplingPlan != null) {
+            showEstimateConfirmation = true
+        } else {
+            submitRedistill()
+        }
+    }
+
     LaunchedEffect(state.completed) {
         if (state.completed) onStarted()
+    }
+
+    LaunchedEffect(state.samplingPlan) {
+        if (state.samplingPlan == null) showEstimateConfirmation = false
+    }
+
+    if (showEstimateConfirmation) state.samplingPlan?.let { plan ->
+            AlertDialog(
+                onDismissRequest = { showEstimateConfirmation = false },
+                title = { Text("确认开始本轮蒸馏") },
+                text = {
+                    Text(
+                        "本轮预计调用约 ${plan.totalCalls} 次模型，消耗 ${plan.tokenLow.readableCount()}–${plan.tokenHigh.readableCount()} tokens，预计耗时 ${plan.timeLowSeconds.readableDuration()}–${plan.timeHighSeconds.readableDuration()}。",
+                    )
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEstimateConfirmation = false }) { Text("返回调整") }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showEstimateConfirmation = false
+                            submitRedistill()
+                        },
+                    ) { Text("确认开始") }
+                },
+            )
     }
 
     Scaffold(
@@ -147,7 +184,10 @@ fun RedistillScreen(
                         }
                         if (state.fileName.isNotBlank()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${state.fileSize / 1024} KB", Modifier.weight(1f))
+                                Text(
+                                    "${state.sourceCharCount.readableCount()} 字 · ${state.sourceSentenceCount} 句",
+                                    Modifier.weight(1f),
+                                )
                                 TextButton(onClick = viewModel::clearFile) { Text("移除") }
                             }
                         }
@@ -193,12 +233,18 @@ fun RedistillScreen(
                     )
                 }
             }
+            item {
+                RedistillSamplingPlanCard(
+                    state = state,
+                    onRetry = viewModel::refreshSamplingEstimate,
+                )
+            }
             if (state.error.isNotBlank()) {
                 item { Text(state.error, color = MaterialTheme.colorScheme.error) }
             }
             item {
                 Button(
-                    onClick = ::submitRedistill,
+                    onClick = ::requestRedistill,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.submitting,
                 ) {
@@ -207,6 +253,58 @@ fun RedistillScreen(
                     Text(if (state.submitting) "正在启动…" else "开始这一轮蒸馏")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RedistillSamplingPlanCard(
+    state: RedistillUiState,
+    onRetry: () -> Unit,
+) {
+    when {
+        state.estimatingSampling -> Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text("正在估算本轮蒸馏…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        state.samplingPlan != null -> state.samplingPlan?.let { plan ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("本轮蒸馏预估", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "约 ${plan.totalCalls} 次模型调用 · ${plan.tokenLow.readableCount()}–${plan.tokenHigh.readableCount()} tokens",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "预计 ${plan.timeLowSeconds.readableDuration()}–${plan.timeHighSeconds.readableDuration()}；推荐 ${plan.suggestedMaxSentences} 句 / ${plan.suggestedMaxChars.readableCount()} 字取样",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        state.samplingEstimateError.isNotBlank() -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                state.samplingEstimateError,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = onRetry) { Text("重试") }
         }
     }
 }
@@ -278,5 +376,20 @@ private fun SegmentCard(segment: RedistillSegmentDto, selected: Boolean, onSelec
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+private fun Int.readableCount(): String = when {
+    this >= 10_000 -> "%.1f 万".format(this / 10_000f)
+    else -> toString()
+}
+
+private fun Int.readableDuration(): String {
+    val minutes = coerceAtLeast(0) / 60
+    val seconds = coerceAtLeast(0) % 60
+    return when {
+        minutes == 0 -> "${seconds}秒"
+        seconds == 0 || minutes >= 10 -> "${minutes}分钟"
+        else -> "${minutes}分${seconds}秒"
     }
 }

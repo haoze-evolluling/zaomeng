@@ -14,6 +14,8 @@ import top.wkbin.zaomeng.data.api.BranchDialogueSceneRequest
 import top.wkbin.zaomeng.data.api.ArchiveDialogueChapterRequest
 import top.wkbin.zaomeng.data.api.ChapterDto
 import top.wkbin.zaomeng.data.api.DeleteRunResponse
+import top.wkbin.zaomeng.data.api.DeleteSessionsRequest
+import top.wkbin.zaomeng.data.api.DeleteSessionsResponse
 import top.wkbin.zaomeng.data.api.DialogueAssociationsRequest
 import top.wkbin.zaomeng.data.api.DialogueDirectorRequest
 import top.wkbin.zaomeng.data.api.DialogueMemoryDto
@@ -25,7 +27,9 @@ import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
 import top.wkbin.zaomeng.data.api.ExportedChapterManuscript
 import top.wkbin.zaomeng.data.api.ImportRunPackageRequest
+import top.wkbin.zaomeng.data.api.EstimateSamplingRequest
 import top.wkbin.zaomeng.data.api.ModelSettingsDto
+import top.wkbin.zaomeng.data.api.SamplingPlanDto
 import top.wkbin.zaomeng.data.api.PersonaQualityReportDto
 import top.wkbin.zaomeng.data.api.PersonaReviewDto
 import top.wkbin.zaomeng.data.api.RelationDetailsDto
@@ -40,6 +44,7 @@ import top.wkbin.zaomeng.data.api.SaveModelSettingsRequest
 import top.wkbin.zaomeng.data.api.TestModelSettingsRequest
 import top.wkbin.zaomeng.data.api.SaveChapterRequest
 import top.wkbin.zaomeng.data.api.SearchResultDto
+import top.wkbin.zaomeng.data.api.SessionRefDto
 import top.wkbin.zaomeng.data.api.SuggestPersonaFieldRequest
 import top.wkbin.zaomeng.data.api.SuggestPersonaFieldResponse
 import top.wkbin.zaomeng.data.api.SuggestRedistillSegmentsRequest
@@ -156,6 +161,24 @@ class ZaomengRepository(
             appPreferences.rememberRun(run.runId)
             run
         }
+    }
+
+    suspend fun estimateSampling(
+        charCount: Int,
+        sentenceCount: Int,
+        characterCount: Int,
+        maxSentences: Int,
+        maxChars: Int,
+    ): SamplingPlanDto = request {
+        backend.requireApi().estimateSampling(
+            EstimateSamplingRequest(
+                charCount = charCount,
+                sentenceCount = sentenceCount,
+                characterCount = characterCount,
+                maxSentences = maxSentences,
+                maxChars = maxChars,
+            ),
+        )
     }
 
     suspend fun importPackage(filename: String, bytes: ByteArray): RunManifestDto {
@@ -538,6 +561,7 @@ class ZaomengRepository(
         message: String,
         messageKind: String,
         operationId: String,
+        suppressTranscriptMessage: Boolean = messageKind == "plot",
     ): Flow<DialogueStreamEvent> = flow {
         try {
             val response = backend.requireApi().streamDialogueReply(
@@ -547,7 +571,7 @@ class ZaomengRepository(
                 request = DialogueReplyRequest(
                     message = message,
                     messageKind = messageKind,
-                    suppressTranscriptMessage = messageKind == "plot",
+                    suppressTranscriptMessage = suppressTranscriptMessage,
                     operationId = operationId,
                 ),
             )
@@ -799,6 +823,14 @@ class ZaomengRepository(
     suspend fun deleteSession(runId: String, sessionId: String) = request {
         backend.requireApi().deleteDialogueSession(runId, sessionId).also {
             appPreferences.forgetSession(runId, sessionId)
+        }
+    }
+
+    suspend fun deleteSessions(items: List<SessionRefDto>): DeleteSessionsResponse = request {
+        backend.requireApi().deleteSessions(DeleteSessionsRequest(items)).also { response ->
+            (response.deleted + response.notFound).forEach { session ->
+                appPreferences.forgetSession(session.runId, session.sessionId)
+            }
         }
     }
 

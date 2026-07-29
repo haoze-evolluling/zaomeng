@@ -20,7 +20,6 @@ val syncSharedPythonSources by tasks.registering(Sync::class) {
     from(repositoryRoot) {
         include("src/**")
         include("rules/**")
-        include("builtin_novels/**")
         include("zaomeng-skill/**")
         exclude("**/__pycache__/**")
         exclude("**/*.pyc")
