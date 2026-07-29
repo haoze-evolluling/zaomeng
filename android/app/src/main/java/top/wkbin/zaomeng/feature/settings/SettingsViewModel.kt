@@ -9,6 +9,8 @@ import top.wkbin.zaomeng.data.api.ModelProfileDto
 import top.wkbin.zaomeng.data.api.ModelSettingsDto
 import top.wkbin.zaomeng.data.api.SaveModelSettingsRequest
 import top.wkbin.zaomeng.data.api.TestModelSettingsRequest
+import top.wkbin.zaomeng.data.update.AppUpdateInfo
+import top.wkbin.zaomeng.data.update.AppUpdateRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +90,11 @@ data class SettingsUiState(
     val saving: Boolean = false,
     val testing: Boolean = false,
     val exportingDiagnostics: Boolean = false,
+    val checkingUpdate: Boolean = false,
+    val downloadingUpdate: Boolean = false,
+    val availableUpdate: AppUpdateInfo? = null,
+    val updateMessage: String = "",
+    val updateError: String = "",
     val switching: Boolean = false,
     val provider: String = "openai-compatible",
     val model: String = "",
@@ -107,6 +114,7 @@ data class SettingsUiState(
 
 class SettingsViewModel(
     private val repository: ZaomengRepository,
+    private val updateRepository: AppUpdateRepository,
     context: Context,
 ) : ViewModel() {
     private val applicationContext = context.applicationContext
@@ -115,6 +123,59 @@ class SettingsViewModel(
 
     init {
         load()
+        checkForAppUpdate()
+    }
+
+    fun checkForAppUpdate() {
+        if (state.value.checkingUpdate) return
+        viewModelScope.launch {
+            mutableState.update {
+                it.copy(
+                    checkingUpdate = true,
+                    updateError = "",
+                    updateMessage = "正在检查 GitHub Release…",
+                )
+            }
+            try {
+                val update = updateRepository.checkForUpdate()
+                mutableState.update {
+                    it.copy(
+                        checkingUpdate = false,
+                        availableUpdate = update,
+                        updateMessage = if (update == null) "当前已是最新版本。" else "发现 ${update.version} 新版本。",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        checkingUpdate = false,
+                        updateError = error.message ?: "检查更新失败。",
+                        updateMessage = "",
+                    )
+                }
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val update = state.value.availableUpdate ?: return
+        if (state.value.downloadingUpdate) return
+        try {
+            updateRepository.download(update)
+            mutableState.update {
+                it.copy(
+                    downloadingUpdate = true,
+                    updateMessage = "已交给系统下载器。下载完成后点击系统通知安装更新。",
+                    updateError = "",
+                )
+            }
+        } catch (error: Throwable) {
+            mutableState.update {
+                it.copy(updateError = error.message ?: "无法开始下载更新。")
+            }
+        }
     }
 
     fun load() = launchRequest(
@@ -318,6 +379,7 @@ class SettingsViewModel(
         selectedProfileId: String = settings.activeProfileId,
         message: String = "",
     ) {
+        val previous = state.value
         val selected = settings.profiles.firstOrNull { it.profileId == selectedProfileId }
             ?: settings.profiles.firstOrNull { it.profileId == settings.activeProfileId }
         mutableState.value = SettingsUiState(
@@ -333,6 +395,11 @@ class SettingsViewModel(
             profiles = settings.profiles,
             apiKeyConfigured = selected?.apiKeyConfigured ?: settings.apiKeyConfigured,
             configured = selected?.configured ?: settings.configured,
+            checkingUpdate = previous.checkingUpdate,
+            downloadingUpdate = previous.downloadingUpdate,
+            availableUpdate = previous.availableUpdate,
+            updateMessage = previous.updateMessage,
+            updateError = previous.updateError,
             message = message,
         )
     }

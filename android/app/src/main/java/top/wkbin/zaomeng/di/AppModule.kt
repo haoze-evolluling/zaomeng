@@ -10,6 +10,7 @@ import top.wkbin.zaomeng.backend.ModelApiKeyStore
 import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.LocalApiFactory
 import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
+import top.wkbin.zaomeng.data.update.AppUpdateRepository
 import top.wkbin.zaomeng.feature.bookshelf.BookshelfViewModel
 import top.wkbin.zaomeng.feature.chat.ChatViewModel
 import top.wkbin.zaomeng.feature.chapters.ChaptersViewModel
@@ -47,10 +48,11 @@ val appModule = module {
         )
     }
     single { AppPreferencesRepository(get()) }
+    single { AppUpdateRepository(androidContext()) }
     single { ZaomengRepository(get(), get(), get()) }
 
     viewModel { BookshelfViewModel(get(), androidContext()) }
-    viewModel { SettingsViewModel(get(), androidContext()) }
+    viewModel { SettingsViewModel(get(), get(), androidContext()) }
     viewModel { ImportBookViewModel(get(), androidContext()) }
     viewModel { parameters -> RunDetailViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RedistillViewModel(get(), parameters.get(), androidContext()) }

@@ -53,6 +53,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.zaomeng.BuildConfig
 import top.wkbin.zaomeng.R
 import top.wkbin.zaomeng.data.api.ModelProfileDto
 
@@ -109,6 +110,13 @@ fun ModelSettingsScreen(
             val selectedCatalog = modelCatalogs.firstOrNull { it.id == state.selectedCatalogId }
             val usesBuiltInConnection = selectedCatalog != null && selectedCatalog.id != "custom"
             item { ChatDisplaySettingsCard() }
+            item {
+                AppUpdateCard(
+                    state = state,
+                    onCheck = viewModel::checkForAppUpdate,
+                    onDownload = viewModel::downloadUpdate,
+                )
+            }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -298,6 +306,85 @@ fun ModelSettingsScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppUpdateCard(
+    state: SettingsUiState,
+    onCheck: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("应用更新", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "当前版本 ${BuildConfig.VERSION_NAME} · 仅检查 GitHub Release 正式版",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(
+                    onClick = onCheck,
+                    enabled = !state.checkingUpdate && !state.downloadingUpdate,
+                ) {
+                    if (state.checkingUpdate) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(end = 7.dp).height(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    Text(if (state.checkingUpdate) "检查中" else "检查更新")
+                }
+            }
+            state.availableUpdate?.let { update ->
+                Text(
+                    "发现新版本 ${update.version}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (update.releaseNotes.isNotBlank()) {
+                    Text(
+                        update.releaseNotes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 5,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Button(
+                    onClick = onDownload,
+                    enabled = !state.downloadingUpdate,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(if (state.downloadingUpdate) "已开始下载" else "下载更新")
+                }
+            }
+            if (state.updateMessage.isNotBlank()) {
+                Text(
+                    state.updateMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (state.updateError.isNotBlank()) {
+                Text(
+                    state.updateError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
