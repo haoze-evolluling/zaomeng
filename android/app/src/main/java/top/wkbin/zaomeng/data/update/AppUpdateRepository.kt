@@ -61,7 +61,7 @@ class AppUpdateRepository(
 
     fun download(update: AppUpdateInfo): Long {
         val request = DownloadManager.Request(android.net.Uri.parse(update.downloadUrl))
-            .setTitle("早梦 ${update.version}")
+            .setTitle("造梦 ${update.version}")
             .setDescription("下载完成后点击系统通知安装更新")
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
