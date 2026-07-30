@@ -850,7 +850,11 @@ private fun MemoryRow(
             }
             TextButton(onClick = onEdit, enabled = enabled) { Text("编辑") }
             IconButton(onClick = onDelete, enabled = enabled) {
-                Icon(Icons.Default.Delete, contentDescription = "删除记忆")
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除记忆",
+                    tint = MaterialTheme.colorScheme.error,
+                )
             }
         }
         HorizontalDivider()

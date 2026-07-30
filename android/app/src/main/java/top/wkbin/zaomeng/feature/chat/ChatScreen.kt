@@ -449,7 +449,11 @@ private fun ChatSearchBar(
             trailingIcon = {
                 if (query.isNotBlank()) {
                     IconButton(onClick = { onQueryChange("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "清空搜索",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             },

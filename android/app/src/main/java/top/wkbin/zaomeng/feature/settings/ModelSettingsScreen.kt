@@ -176,7 +176,9 @@ fun ModelProfileEditorScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { showDeleteDialog = false; viewModel.delete() }) { Text("删除") }
+                TextButton(onClick = { showDeleteDialog = false; viewModel.delete() }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("取消") } },
         )
@@ -348,9 +350,16 @@ fun ModelProfileEditorScreen(
                         enabled = state.profileCount > 1 && !state.deleting && !state.saving,
                     ) {
                         if (state.deleting) ProgressIcon()
-                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                         Spacer(Modifier.width(6.dp))
-                        Text(if (state.deleting) "删除中…" else "删除模型档案")
+                        Text(
+                            if (state.deleting) "删除中…" else "删除模型档案",
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }

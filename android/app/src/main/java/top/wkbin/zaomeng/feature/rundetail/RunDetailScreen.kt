@@ -154,7 +154,7 @@ fun RunDetailScreen(
                         viewModel.deleteRun()
                     },
                     enabled = !state.deleting,
-                ) { Text("确认删除") }
+                ) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDelete = false }, enabled = !state.deleting) { Text("取消") }
@@ -567,9 +567,16 @@ private fun ActionCard(
                     enabled = !deleting,
                 ) {
                     if (deleting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Delete, contentDescription = null)
+                    else Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (deleting) "正在删除…" else "删除这本书及其会话")
+                    Text(
+                        if (deleting) "正在删除…" else "删除这本书及其会话",
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
         }

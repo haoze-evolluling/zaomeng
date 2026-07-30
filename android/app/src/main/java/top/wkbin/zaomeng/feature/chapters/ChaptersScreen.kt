@@ -207,7 +207,7 @@ private fun ChapterCard(
             TextButton(onClick = onMoveUp, enabled = canMoveUp) { Text("上移") }
             TextButton(onClick = onMoveDown, enabled = canMoveDown) { Text("下移") }
             OutlinedButton(onClick = onEdit) { Text("编辑") }
-            TextButton(onClick = onDelete) { Text("删除") }
+            TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
         }
     } }
 }
