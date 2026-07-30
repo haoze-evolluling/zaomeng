@@ -37,7 +37,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -110,7 +109,7 @@ fun PersonaContent(
 ) {
     val expandedGroups = remember {
         mutableStateMapOf<String, Boolean>().apply {
-            PERSONA_FIELD_GROUPS.forEach { group -> put(group.key, true) }
+            PERSONA_FIELD_GROUPS.forEach { group -> put(group.key, false) }
         }
     }
 
@@ -611,28 +610,26 @@ private fun SaveBar(
     enabled: Boolean,
     onSave: () -> Unit,
 ) {
-    Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
-        Button(
-            onClick = onSave,
-            enabled = enabled && !isSaving,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        ) {
-            if (isSaving) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-            } else {
-                Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-            }
-            Text(
-                text = if (isSaving) "正在保存…" else "保存全部人物资料",
-                modifier = Modifier.padding(start = 8.dp),
+    Button(
+        onClick = onSave,
+        enabled = enabled && !isSaving,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        if (isSaving) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary,
             )
+        } else {
+            Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
         }
+        Text(
+            text = if (isSaving) "正在保存…" else "保存全部人物资料",
+            modifier = Modifier.padding(start = 8.dp),
+        )
     }
 }
 

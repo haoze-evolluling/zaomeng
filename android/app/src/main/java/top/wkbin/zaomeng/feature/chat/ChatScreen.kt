@@ -1372,17 +1372,16 @@ private fun ChatComposer(
             draftValue = TextFieldValue(state.draft, TextRange(state.draft.length))
         }
     }
-    Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(
-                    horizontal = 12.dp,
-                    vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
-                ),
-        ) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(
+                horizontal = 12.dp,
+                vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
+            ),
+    ) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(messageKindOptions, key = MessageKindOption::value) { option ->
                     FilterChip(
@@ -1591,7 +1590,6 @@ private fun ChatComposer(
                     }
                 }
             }
-        }
     }
 }
 
