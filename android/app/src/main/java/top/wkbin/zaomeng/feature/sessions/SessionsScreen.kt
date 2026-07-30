@@ -249,7 +249,7 @@ fun SessionsScreen(
             title = { Text("删除这段会话？") },
             text = { Text("聊天记录会从这台手机上永久删除，人物资料和书卷不会受影响。") },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         pendingDeletion = null
                         viewModel.deleteSession(session)
@@ -271,7 +271,7 @@ fun SessionsScreen(
             title = { Text("删除选中的 $selectedCount 个会话？") },
             text = { Text("这些聊天记录会从这台手机上永久删除，人物资料和书卷不会受影响。") },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         pendingBatchDeletion = false
                         viewModel.deleteSelectedSessions()

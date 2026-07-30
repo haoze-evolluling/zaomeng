@@ -31,6 +31,7 @@ import top.wkbin.zaomeng.data.api.EstimateSamplingRequest
 import top.wkbin.zaomeng.data.api.ModelSettingsDto
 import top.wkbin.zaomeng.data.api.SamplingPlanDto
 import top.wkbin.zaomeng.data.api.PersonaQualityReportDto
+import top.wkbin.zaomeng.data.api.PersonaAvatarDto
 import top.wkbin.zaomeng.data.api.PersonaReviewDto
 import top.wkbin.zaomeng.data.api.RelationDetailsDto
 import top.wkbin.zaomeng.data.api.RelationItemDto
@@ -74,12 +75,16 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class ZaomengRepository(
     private val backend: EmbeddedBackendController,
     private val appPreferences: AppPreferencesRepository,
     private val modelApiKeyStore: ModelApiKeyStore,
 ) {
+    private val avatarCache = mutableMapOf<String, ByteArray>()
     val backendState: StateFlow<BackendState> = backend.state
     val preferences: Flow<AppPreferences> = appPreferences.preferences
 
@@ -288,6 +293,40 @@ class ZaomengRepository(
             file = streamed.file,
             byteCount = streamed.byteCount,
         )
+    }
+
+    suspend fun uploadPersonaAvatar(
+        runId: String,
+        character: String,
+        bytes: ByteArray,
+    ): PersonaAvatarDto = request {
+        require(bytes.isNotEmpty()) { "头像文件为空。" }
+        val part = MultipartBody.Part.createFormData(
+            "file",
+            "avatar.png",
+            bytes.toRequestBody("image/png".toMediaType()),
+        )
+        backend.requireApi().uploadPersonaAvatar(runId, character, part).also { avatar ->
+            avatarCache.keys.removeAll { it.startsWith("$runId|$character|") }
+        }
+    }
+
+    suspend fun getPersonaAvatar(
+        runId: String,
+        character: String,
+        version: String,
+    ): ByteArray? {
+        if (version.isBlank()) return null
+        val key = "$runId|$character|$version"
+        avatarCache[key]?.let { return it }
+        return request {
+            val response = backend.requireApi().getPersonaAvatar(runId, character)
+            if (response.code() == 404) return@request null
+            if (!response.isSuccessful) {
+                throw ApiRequestException(errorDetail(response.errorBody()?.string(), response.code()))
+            }
+            response.body()?.use { it.bytes() }?.also { avatarCache[key] = it }
+        }
     }
 
     suspend fun listChapters(runId: String): List<ChapterDto> = request {

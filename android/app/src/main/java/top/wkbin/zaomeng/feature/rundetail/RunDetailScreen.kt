@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
@@ -49,8 +50,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -84,6 +88,11 @@ fun RunDetailScreen(
     var confirmStop by rememberSaveable { mutableStateOf(false) }
     var confirmRedistill by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var selectedAvatarPersona by remember { mutableStateOf<PersonaIndexDto?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val persona = selectedAvatarPersona
+        if (uri != null && persona != null) viewModel.updatePersonaAvatar(persona.name, uri)
+    }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
@@ -162,6 +171,32 @@ fun RunDetailScreen(
         )
     }
 
+    selectedAvatarPersona?.let { persona ->
+        AlertDialog(
+            onDismissRequest = { if (state.updatingAvatar.isBlank()) selectedAvatarPersona = null },
+            title = { Text(persona.name) },
+            text = {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    PersonaAvatar(
+                        bytes = state.avatarBytes[persona.name],
+                        modifier = Modifier.size(144.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { avatarPicker.launch("image/*") },
+                    enabled = state.updatingAvatar.isBlank(),
+                ) { Text(if (state.updatingAvatar == persona.name) "正在保存" else "修改头像") }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedAvatarPersona = null }, enabled = state.updatingAvatar.isBlank()) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -211,6 +246,7 @@ fun RunDetailScreen(
                 onRedistill = { confirmRedistill = true },
                 onExport = viewModel::exportRun,
                 onOpenPersona = { character -> onOpenPersona(viewModel.runId, character) },
+                onAvatarClick = { selectedAvatarPersona = it },
                 onOpenSessions = { onOpenSessions(viewModel.runId) },
                 onOpenChapters = { onOpenChapters(viewModel.runId) },
                 onOpenRelations = { onOpenRelations(viewModel.runId) },
@@ -231,6 +267,7 @@ private fun RunDetailContent(
     onRedistill: () -> Unit,
     onExport: () -> Unit,
     onOpenPersona: (String) -> Unit,
+    onAvatarClick: (PersonaIndexDto) -> Unit,
     onOpenSessions: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenRelations: () -> Unit,
@@ -318,7 +355,12 @@ private fun RunDetailContent(
             }
         } else {
             items(run.artifactIndex.characters, key = PersonaIndexDto::name) { persona ->
-                PersonaCard(persona = persona, onClick = { onOpenPersona(persona.name) })
+                PersonaCard(
+                    persona = persona,
+                    avatarBytes = state.avatarBytes[persona.name],
+                    onAvatarClick = { onAvatarClick(persona) },
+                    onClick = { onOpenPersona(persona.name) },
+                )
             }
         }
 
@@ -584,7 +626,12 @@ private fun ActionCard(
 }
 
 @Composable
-private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
+private fun PersonaCard(
+    persona: PersonaIndexDto,
+    avatarBytes: ByteArray?,
+    onAvatarClick: () -> Unit,
+    onClick: () -> Unit,
+) {
     val preview = persona.preview
     val summary = listOf(preview.coreIdentity, preview.storyRole, preview.soulGoal)
         .firstOrNull(String::isNotBlank)
@@ -595,14 +642,8 @@ private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Person, contentDescription = null)
-                }
+            IconButton(onClick = onAvatarClick, modifier = Modifier.size(44.dp)) {
+                PersonaAvatar(bytes = avatarBytes, modifier = Modifier.fillMaxSize())
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -615,6 +656,25 @@ private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier.clip(CircleShape), shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+        val bitmap = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+        if (bitmap == null) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+            }
+        } else {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "人物头像",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
         }
     }
 }

@@ -83,6 +83,7 @@ data class ChatUiState(
     val continuousObserveEnabled: Boolean = false,
     val toolBusy: String = "",
     val session: DialogueSessionDto? = null,
+    val avatarBytes: Map<String, ByteArray> = emptyMap(),
     val sceneCards: List<ReusableCardDto> = emptyList(),
     val toolOptions: List<ChatToolOption> = emptyList(),
     val toolOptionsTitle: String = "",
@@ -241,11 +242,13 @@ class ChatViewModel(
         loadJob = viewModelScope.launch {
             try {
                 val session = repository.getSession(normalizedRunId, normalizedSessionId)
+                val avatars = loadAvatars(normalizedRunId, session)
                 updateLoadState(requestId, normalizedRunId, normalizedSessionId) {
                     it.copy(
                         loading = false,
                         refreshing = false,
                         session = session,
+                        avatarBytes = avatars,
                         error = "",
                     )
                 }
@@ -261,6 +264,13 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    private suspend fun loadAvatars(runId: String, session: DialogueSessionDto): Map<String, ByteArray> {
+        return session.characterAvatars.mapNotNull { (character, version) ->
+            runCatching { repository.getPersonaAvatar(runId, character, version) }
+                .getOrNull()?.let { character to it }
+        }.toMap()
     }
 
     fun refresh() {

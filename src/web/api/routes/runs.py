@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from src.web.api.compat import model_to_dict
@@ -23,6 +23,20 @@ from src.web.api.schemas import (
 from src.web.workflow import WebRunService
 
 router = APIRouter()
+
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+_AVATAR_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _is_supported_avatar(content: bytes, content_type: str | None) -> bool:
+    declared = str(content_type or "").lower().split(";", 1)[0]
+    if declared not in _AVATAR_CONTENT_TYPES:
+        return False
+    return (
+        content.startswith(b"\xff\xd8\xff")
+        or content.startswith(b"\x89PNG\r\n\x1a\n")
+        or content.startswith(b"RIFF") and content[8:12] == b"WEBP"
+    )
 
 
 @router.get("/api/web/builtin-novels")
@@ -231,6 +245,41 @@ def get_persona_review(
         raise HTTPException(status_code=404, detail="Character not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/{run_id}/personas/{character}/avatar")
+async def save_persona_avatar(
+    run_id: str,
+    character: str,
+    file: UploadFile,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, str]:
+    content = await file.read(_AVATAR_MAX_BYTES + 1)
+    if len(content) > _AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="头像不能超过 5 MB。")
+    if not _is_supported_avatar(content, file.content_type):
+        raise HTTPException(status_code=400, detail="仅支持 JPEG、PNG 或 WebP 图片。")
+    try:
+        return run_service.save_persona_avatar(run_id, character, content)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Character not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/web/runs/{run_id}/personas/{character}/avatar")
+def get_persona_avatar(
+    run_id: str,
+    character: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> FileResponse:
+    try:
+        path = run_service.persona_avatar_path(run_id, character)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Avatar not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/png")
 
 
 @router.get("/api/web/runs/{run_id}/personas/{character}/quality-report")

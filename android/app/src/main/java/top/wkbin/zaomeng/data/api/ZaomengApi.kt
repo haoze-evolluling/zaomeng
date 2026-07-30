@@ -2,6 +2,7 @@ package top.wkbin.zaomeng.data.api
 
 import kotlinx.serialization.json.JsonObject
 import okhttp3.ResponseBody
+import okhttp3.MultipartBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -11,6 +12,8 @@ import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
+import retrofit2.http.Multipart
+import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.Streaming
@@ -147,6 +150,21 @@ interface ZaomengApi {
         @Path("runId") runId: String,
         @Path("character") character: String,
     ): PersonaReviewDto
+
+    @Multipart
+    @POST("api/web/runs/{runId}/personas/{character}/avatar")
+    suspend fun uploadPersonaAvatar(
+        @Path("runId") runId: String,
+        @Path("character") character: String,
+        @Part file: MultipartBody.Part,
+    ): PersonaAvatarDto
+
+    @Streaming
+    @GET("api/web/runs/{runId}/personas/{character}/avatar")
+    suspend fun getPersonaAvatar(
+        @Path("runId") runId: String,
+        @Path("character") character: String,
+    ): Response<ResponseBody>
 
     @PUT("api/web/runs/{runId}/personas/{character}")
     suspend fun savePersona(

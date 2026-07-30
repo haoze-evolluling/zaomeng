@@ -99,6 +99,7 @@ chaquopy {
             install("fastapi==0.119.1")
             install("pydantic==1.10.24")
             install("uvicorn==0.34.3")
+            install("python-multipart==0.0.20")
         }
     }
     sourceSets {

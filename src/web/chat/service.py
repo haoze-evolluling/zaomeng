@@ -41,6 +41,7 @@ import src.web.chat.turn_memory as _turn_memory
 from src.web.artifacts.ingest import load_relations_source
 from src.web.path_safety import InvalidStorageIdentifier, validate_storage_id
 from src.web.time_utils import utc_now as _utc_now
+from src.web.persona_avatars import avatar_path, avatar_version
 
 
 class _SessionStateOwner(Protocol):
@@ -2933,6 +2934,11 @@ class DialogueService:
         session_id = str(session.get("session_id", "")).strip()
         turn_records = self._completed_turn_records(run_id, session_id)
         session["file_urls"] = self._build_file_urls(run_id, session)
+        session["character_avatars"] = {
+            str(name).strip(): avatar_version(avatar_path(self.runs_root / run_id, str(name)))
+            for name in list(session.get("participants", []) or [])
+            if str(name).strip()
+        }
         session["mode_display"] = self._mode_display(
             str(session.get("mode", "")).strip()
         )

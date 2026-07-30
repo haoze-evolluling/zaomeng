@@ -161,6 +161,13 @@ data class ArtifactIndexDto(
 data class PersonaIndexDto(
     val name: String = "",
     val preview: PersonaPreviewDto = PersonaPreviewDto(),
+    @SerialName("avatar_version") val avatarVersion: String = "",
+)
+
+@Serializable
+data class PersonaAvatarDto(
+    val character: String = "",
+    @SerialName("avatar_version") val avatarVersion: String = "",
 )
 
 @Serializable
@@ -399,6 +406,7 @@ data class DialogueSessionDto(
     val mode: String = "observe",
     @SerialName("mode_display") val modeDisplay: String = "",
     val participants: List<String> = emptyList(),
+    @SerialName("character_avatars") val characterAvatars: Map<String, String> = emptyMap(),
     @SerialName("controlled_character") val controlledCharacter: String = "",
     val status: String = "ready",
     @SerialName("created_at") val createdAt: String = "",
