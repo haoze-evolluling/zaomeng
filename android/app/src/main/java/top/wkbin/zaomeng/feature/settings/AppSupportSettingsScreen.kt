@@ -52,6 +52,9 @@ fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             onOpenProject = {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/wkbin/zaomeng")))
             },
+            onOpenPackageLibrary = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/wkbin/zaomeng-library")))
+            },
             onJoinQqGroup = {
                 try {
                     context.startActivity(
@@ -76,6 +79,7 @@ private fun SettingsSupportGroup(
     onDownload: () -> Unit,
     onExportDiagnostics: () -> Unit,
     onOpenProject: () -> Unit,
+    onOpenPackageLibrary: () -> Unit,
     onJoinQqGroup: () -> Unit,
 ) {
     androidx.compose.material3.Card(
@@ -98,6 +102,12 @@ private fun SettingsSupportGroup(
                 title = "项目地址",
                 subtitle = "github.com/wkbin/zaomeng",
                 onClick = onOpenProject,
+            )
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            SettingsRow(
+                title = "书卷包地址",
+                subtitle = "github.com/wkbin/zaomeng-library",
+                onClick = onOpenPackageLibrary,
             )
             androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             SettingsRow(
