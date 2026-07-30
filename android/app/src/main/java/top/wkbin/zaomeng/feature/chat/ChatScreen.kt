@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -1164,8 +1166,9 @@ private fun TranscriptBubble(
         if (!isUser) {
             ChatPersonaAvatar(
                 bytes = avatarBytes[item.speaker],
-                modifier = Modifier.size(40.dp).padding(end = 8.dp),
+                modifier = Modifier.size(40.dp),
             )
+            Spacer(Modifier.width(8.dp))
         }
         Column {
             if (!isUser) {
@@ -1630,7 +1633,7 @@ private fun ChatComposer(
 @Composable
 private fun ChatPersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier,
+        modifier = modifier.clip(androidx.compose.foundation.shape.CircleShape),
         shape = androidx.compose.foundation.shape.CircleShape,
         color = MaterialTheme.colorScheme.secondaryContainer,
     ) {
@@ -1643,7 +1646,7 @@ private fun ChatPersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) 
             androidx.compose.foundation.Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "人物头像",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape),
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             )
         }

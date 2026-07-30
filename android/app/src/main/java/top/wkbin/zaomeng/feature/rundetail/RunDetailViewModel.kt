@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -42,6 +44,12 @@ data class RunDetailUiState(
     val exportRequestId: Long = 0,
     val avatarBytes: Map<String, ByteArray> = emptyMap(),
     val updatingAvatar: String = "",
+)
+
+data class AvatarCrop(
+    val left: Int,
+    val top: Int,
+    val side: Int,
 )
 
 class RunDetailViewModel(
@@ -250,12 +258,12 @@ class RunDetailViewModel(
         mutableState.update { it.copy(error = "", message = "") }
     }
 
-    fun updatePersonaAvatar(character: String, uri: Uri) {
+    fun updatePersonaAvatar(character: String, uri: Uri, crop: AvatarCrop) {
         if (character.isBlank() || state.value.updatingAvatar.isNotBlank()) return
         viewModelScope.launch {
             mutableState.update { it.copy(updatingAvatar = character, error = "", message = "") }
             try {
-                val bytes = withContext(Dispatchers.Default) { cropAvatar(uri) }
+                val bytes = withContext(Dispatchers.Default) { cropAvatar(uri, crop) }
                 repository.uploadPersonaAvatar(runId, character, bytes)
                 val refreshed = repository.getRun(runId)
                 acceptRun(refreshed)
@@ -307,27 +315,28 @@ class RunDetailViewModel(
         }
     }
 
-    private fun cropAvatar(uri: Uri): ByteArray {
+    private fun cropAvatar(uri: Uri, crop: AvatarCrop): ByteArray {
         val source = applicationContext.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
             ?: error("无法读取所选图片。")
-        val side = minOf(source.width, source.height)
+        val side = crop.side.coerceIn(1, minOf(source.width, source.height))
         require(side > 0) { "所选图片无效。" }
-        val left = (source.width - side) / 2
-        val top = (source.height - side) / 2
-        val square = Bitmap.createBitmap(source, left, top, side, side)
-        val scaled = Bitmap.createScaledBitmap(square, 512, 512, true)
+        val left = crop.left.coerceIn(0, source.width - side)
+        val top = crop.top.coerceIn(0, source.height - side)
         val circular = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
         Canvas(circular).apply {
-            drawCircle(256f, 256f, 256f, Paint(Paint.ANTI_ALIAS_FLAG))
-            drawBitmap(scaled, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
-            })
+            save()
+            clipPath(Path().apply { addCircle(256f, 256f, 256f, Path.Direction.CW) })
+            drawBitmap(
+                source,
+                Rect(left, top, left + side, top + side),
+                Rect(0, 0, 512, 512),
+                Paint(Paint.ANTI_ALIAS_FLAG),
+            )
+            restore()
         }
         return java.io.ByteArrayOutputStream().use { output ->
             circular.compress(Bitmap.CompressFormat.PNG, 100, output)
             circular.recycle()
-            if (scaled !== square) scaled.recycle()
-            if (square !== source) square.recycle()
             source.recycle()
             output.toByteArray()
         }

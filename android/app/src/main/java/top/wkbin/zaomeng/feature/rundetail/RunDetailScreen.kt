@@ -1,10 +1,15 @@
 package top.wkbin.zaomeng.feature.rundetail
 
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,14 +61,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.DistillationForegroundController
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
@@ -71,6 +83,8 @@ import top.wkbin.zaomeng.data.api.OnlineLibrarySourceDto
 import top.wkbin.zaomeng.data.api.PersonaIndexDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
 import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
+
+private const val AVATAR_CROP_FRAME_FRACTION = 0.8f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,9 +106,10 @@ fun RunDetailScreen(
     var confirmRedistill by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var selectedAvatarPersona by remember { mutableStateOf<PersonaIndexDto?>(null) }
+    var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val persona = selectedAvatarPersona
-        if (uri != null && persona != null) viewModel.updatePersonaAvatar(persona.name, uri)
+        if (uri != null && persona != null) avatarCropUri = uri
     }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -195,6 +210,19 @@ fun RunDetailScreen(
             dismissButton = {
                 TextButton(onClick = { selectedAvatarPersona = null }, enabled = state.updatingAvatar.isBlank()) {
                     Text("取消")
+                }
+            },
+        )
+    }
+
+    avatarCropUri?.let { uri ->
+        AvatarCropDialog(
+            uri = uri,
+            onDismiss = { avatarCropUri = null },
+            onConfirm = { crop ->
+                selectedAvatarPersona?.let { persona ->
+                    avatarCropUri = null
+                    viewModel.updatePersonaAvatar(persona.name, uri, crop)
                 }
             },
         )
@@ -711,6 +739,104 @@ private fun PersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
             )
         }
     }
+}
+
+@Composable
+private fun AvatarCropDialog(
+    uri: Uri,
+    onDismiss: () -> Unit,
+    onConfirm: (AvatarCrop) -> Unit,
+) {
+    val context = LocalContext.current
+    val bitmap = remember(uri) {
+        context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+    }
+    if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("无法读取图片") },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        )
+        return
+    }
+
+    var zoom by remember(uri) { mutableStateOf(1f) }
+    var offsetX by remember(uri) { mutableStateOf(0f) }
+    var offsetY by remember(uri) { mutableStateOf(0f) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
+        zoom = (zoom * zoomChange).coerceIn(1f, 4f)
+        val baseScale = minOf(
+            viewport.width.toFloat() / bitmap.width,
+            viewport.height.toFloat() / bitmap.height,
+        )
+        val cropDiameter = minOf(viewport.width, viewport.height) * AVATAR_CROP_FRAME_FRACTION
+        val scaledWidth = bitmap.width * baseScale * zoom
+        val scaledHeight = bitmap.height * baseScale * zoom
+        val maxX = ((scaledWidth - cropDiameter) / 2f).coerceAtLeast(0f)
+        val maxY = ((scaledHeight - cropDiameter) / 2f).coerceAtLeast(0f)
+        offsetX = (offsetX + panChange.x).coerceIn(-maxX, maxX)
+        offsetY = (offsetY + panChange.y).coerceIn(-maxY, maxY)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("调整头像取景") },
+        text = {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clipToBounds()
+                        .transformable(transformableState)
+                        .onSizeChanged { viewport = it },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "头像取景预览",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = zoom,
+                                scaleY = zoom,
+                                translationX = offsetX,
+                                translationY = offsetY,
+                            ),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    )
+                    Canvas(Modifier.fillMaxSize()) {
+                        drawCircle(
+                            color = Color.White.copy(alpha = 0.92f),
+                            radius = size.minDimension * AVATAR_CROP_FRAME_FRACTION / 2f,
+                            center = center,
+                            style = Stroke(width = 2.dp.toPx()),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val cropDiameter = minOf(viewport.width, viewport.height) * AVATAR_CROP_FRAME_FRACTION
+                    val baseScale = minOf(
+                        viewport.width.toFloat() / bitmap.width,
+                        viewport.height.toFloat() / bitmap.height,
+                    )
+                    val imageScale = baseScale * zoom
+                    val selectedSide = (cropDiameter / imageScale).toInt().coerceAtLeast(1)
+                    val left = ((bitmap.width - selectedSide) / 2f - offsetX / imageScale).toInt()
+                    val top = ((bitmap.height - selectedSide) / 2f - offsetY / imageScale).toInt()
+                    onConfirm(AvatarCrop(left, top, selectedSide))
+                },
+                enabled = viewport != IntSize.Zero,
+            ) { Text("确认") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable
