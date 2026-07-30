@@ -12,6 +12,9 @@ data object ImportBookDestination
 data object OnlineLibraryDestination
 
 @Serializable
+data object CrossoverDestination
+
+@Serializable
 data object ModelSettingsDestination
 
 @Serializable

@@ -19,6 +19,7 @@ import top.wkbin.zaomeng.feature.chapters.ChaptersViewModel
 import top.wkbin.zaomeng.feature.cards.CardLibraryViewModel
 import top.wkbin.zaomeng.feature.importbook.ImportBookViewModel
 import top.wkbin.zaomeng.feature.persona.PersonaViewModel
+import top.wkbin.zaomeng.feature.crossover.CrossoverViewModel
 import top.wkbin.zaomeng.feature.rundetail.RunDetailViewModel
 import top.wkbin.zaomeng.feature.redistill.RedistillViewModel
 import top.wkbin.zaomeng.feature.relations.RelationsViewModel
@@ -62,6 +63,7 @@ val appModule = module {
     viewModel { parameters -> ModelProfileEditorViewModel(get(), parameters.get()) }
     viewModel { ImportBookViewModel(get(), androidContext()) }
     viewModel { OnlineLibraryViewModel(get(), get()) }
+    viewModel { CrossoverViewModel(get()) }
     viewModel { parameters -> RunDetailViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RedistillViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RelationsViewModel(get(), parameters.get()) }

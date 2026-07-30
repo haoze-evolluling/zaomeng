@@ -54,7 +54,7 @@ class CardLibraryViewModel(
     }
 
     fun selectKind(kind: ReusableCardKind) {
-        if (kind == state.value.kind || state.value.saving) return
+        if (kind == state.value.kind || state.value.saving || state.value.generating) return
         mutableState.update {
             it.copy(
                 kind = kind,
@@ -207,13 +207,18 @@ class CardLibraryViewModel(
         viewModelScope.launch {
             mutableState.update { it.copy(generating = true, error = "", message = "") }
             try {
-                val generated = repository.generateReusableCard(kind)
-                mutableState.update {
-                    it.copy(
-                        generating = false,
-                        cards = listOf(generated) + it.cards.filterNot { card -> card.cardId == generated.cardId },
-                        message = "已生成一张${kind.displayName}，可以继续编辑。",
-                    )
+                val generatedDraft = repository.generateReusableCard(kind)
+                val saved = repository.saveReusableCard(kind, cardId = "", fields = generatedDraft.fields)
+                if (state.value.kind == kind) {
+                    mutableState.update {
+                        it.copy(
+                            generating = false,
+                            cards = listOf(saved) + it.cards.filterNot { card -> card.cardId == saved.cardId },
+                            message = "已生成并保存一张${kind.displayName}，可以继续编辑。",
+                        )
+                    }
+                } else {
+                    mutableState.update { it.copy(generating = false) }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -99,6 +99,7 @@ data class RunManifestDto(
     val control: RunControlDto = RunControlDto(),
     @SerialName("artifact_index") val artifactIndex: ArtifactIndexDto = ArtifactIndexDto(),
     @SerialName("imported_from") val importedFrom: ImportedFromDto = ImportedFromDto(),
+    @SerialName("beta_feature") val betaFeature: BetaFeatureDto? = null,
 ) {
     val title: String
         get() = novelSources.firstOrNull()?.sourceName
@@ -135,6 +136,33 @@ data class OnlineLibrarySourceDto(
     val version: String = "",
     @SerialName("download_url") val downloadUrl: String = "",
     val sha256: String = "",
+)
+
+@Serializable
+data class BetaFeatureDto(
+    val kind: String = "",
+    val unstable: Boolean = false,
+    @SerialName("world_setting") val worldSetting: String = "",
+    @SerialName("source_snapshots") val sourceSnapshots: List<CrossoverSourceDto> = emptyList(),
+)
+
+@Serializable
+data class CrossoverSourceDto(
+    @SerialName("run_id") val runId: String = "",
+    val character: String = "",
+)
+
+@Serializable
+data class CrossoverParticipantRequest(
+    @SerialName("run_id") val runId: String,
+    val character: String,
+)
+
+@Serializable
+data class CreateCrossoverSpaceRequest(
+    val title: String,
+    @SerialName("world_setting") val worldSetting: String,
+    val participants: List<CrossoverParticipantRequest>,
 )
 
 @Serializable

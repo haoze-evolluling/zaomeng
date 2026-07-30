@@ -26,6 +26,8 @@ import top.wkbin.zaomeng.feature.chapters.ChaptersScreen
 import top.wkbin.zaomeng.feature.chapters.ChaptersViewModel
 import top.wkbin.zaomeng.feature.importbook.ImportBookScreen
 import top.wkbin.zaomeng.feature.importbook.ImportBookViewModel
+import top.wkbin.zaomeng.feature.crossover.CrossoverScreen
+import top.wkbin.zaomeng.feature.crossover.CrossoverViewModel
 import top.wkbin.zaomeng.feature.library.OnlineLibraryScreen
 import top.wkbin.zaomeng.feature.library.OnlineLibraryViewModel
 import top.wkbin.zaomeng.feature.persona.PersonaScreen
@@ -96,7 +98,21 @@ fun ZaomengApp(
                 onOpenSettings = { navController.navigate(ModelSettingsDestination) },
                 onOpenSessions = { navController.navigate(SessionsDestination()) },
                 onOpenCards = { navController.navigate(CardLibraryDestination) },
+                onOpenCrossover = { navController.navigate(CrossoverDestination) },
                 onOpenRun = { navController.navigate(RunDetailDestination(it)) },
+            )
+        }
+
+        composable<CrossoverDestination> {
+            val viewModel: CrossoverViewModel = koinViewModel()
+            CrossoverScreen(
+                viewModel = viewModel,
+                onBack = navController::navigateUp,
+                onCreated = { runId ->
+                    navController.navigate(SessionsDestination(runId)) {
+                        popUpTo<CrossoverDestination> { inclusive = true }
+                    }
+                },
             )
         }
 

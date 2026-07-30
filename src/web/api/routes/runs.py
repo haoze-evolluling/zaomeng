@@ -12,6 +12,7 @@ from src.web.api.schemas import (
     DeleteSessionsRequest,
     EstimateSamplingRequest,
     ImportRunPackageRequest,
+    CreateCrossoverSpaceRequest,
     IngestCharacterRequest,
     IngestRelationRequest,
     RestartRunRequest,
@@ -123,6 +124,21 @@ def import_run_package_route(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Package not found.") from exc
+
+
+@router.post("/api/web/crossover-spaces")
+def create_crossover_space_route(
+    payload: CreateCrossoverSpaceRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.create_crossover_space(
+            title=payload.title,
+            world_setting=payload.world_setting,
+            participants=[model_to_dict(item) for item in payload.participants],
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Source character not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -202,6 +218,19 @@ def redistill_run(
             max_sentences=payload.max_sentences,
             max_chars=payload.max_chars,
         )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/runs/{run_id}/resume-distill")
+def resume_distill_run(
+    run_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.resume_unfinished_characters(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Run not found.") from exc
     except ValueError as exc:

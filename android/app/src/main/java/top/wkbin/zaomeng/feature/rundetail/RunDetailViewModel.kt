@@ -142,6 +142,45 @@ class RunDetailViewModel(
         }
     }
 
+    fun resumeUnfinishedCharacters() {
+        val run = state.value.run ?: return
+        if (state.value.redistilling) return
+        if (run.status == RUNNING_STATUS) {
+            mutableState.update { it.copy(error = "请先停止当前蒸馏，再继续未完成人物。", message = "") }
+            return
+        }
+        val unfinishedCount = run.lockedCharacters.count { it !in run.progress.completedCharacters }
+        if (unfinishedCount == 0) {
+            mutableState.update { it.copy(error = "这份书卷没有未完成的人物。", message = "") }
+            return
+        }
+
+        viewModelScope.launch {
+            mutableState.update { it.copy(redistilling = true, error = "", message = "") }
+            try {
+                val updated = repository.resumeDistill(runId)
+                acceptRun(updated)
+                mutableState.update {
+                    it.copy(redistilling = false, message = "已从未完成人物继续蒸馏。")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                val recovered = queryRunAfterUnknown()?.takeIf { it.status == RUNNING_STATUS }
+                if (recovered != null) {
+                    acceptRun(recovered)
+                    mutableState.update {
+                        it.copy(redistilling = false, message = "已从未完成人物继续蒸馏。")
+                    }
+                } else {
+                    mutableState.update {
+                        it.copy(redistilling = false, error = error.message ?: "继续蒸馏失败。")
+                    }
+                }
+            }
+        }
+    }
+
     fun exportRun() {
         if (state.value.exporting) return
         viewModelScope.launch {

@@ -776,6 +776,17 @@ private fun PendingUserMessageBubble(
         )
         return
     }
+    if (pending.messageKind == "narration") {
+        PendingNarrationMessageCard(
+            pending = pending,
+            onRetry = onRetry,
+            onEdit = onEdit,
+            onReconcile = onReconcile,
+            onRecover = onRecover,
+            requiresRecovery = requiresRecovery,
+        )
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
@@ -842,6 +853,89 @@ private fun PendingUserMessageBubble(
                                 if (pending.retryable) {
                                     TextButton(onClick = onRetry) { Text("重试") }
                                 }
+                            }
+                        }
+                    }
+
+                    PendingUserMessageStatus.OutcomeUnknown -> {
+                        Text(
+                            pending.statusText.ifBlank { "连接中断，正在核对结果" },
+                            modifier = Modifier.padding(top = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        TextButton(
+                            onClick = if (requiresRecovery) onRecover else onReconcile,
+                            modifier = Modifier.align(Alignment.End),
+                        ) { Text(if (requiresRecovery) "恢复会话" else "核对结果") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingNarrationMessageCard(
+    pending: PendingUserMessage,
+    onRetry: () -> Unit,
+    onEdit: () -> Unit,
+    onReconcile: () -> Unit,
+    onRecover: () -> Unit,
+    requiresRecovery: Boolean,
+) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier.widthIn(max = 520.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                Text(
+                    "旁白",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                ParentheticalMessageText(
+                    text = pending.message,
+                    modifier = Modifier.padding(top = 3.dp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                    baseColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+                when (pending.status) {
+                    PendingUserMessageStatus.Sending -> Row(
+                        modifier = Modifier.padding(top = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Text(
+                            pending.statusText.ifBlank { "正在发送旁白" },
+                            modifier = Modifier.padding(start = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.78f),
+                        )
+                    }
+
+                    PendingUserMessageStatus.Failed -> {
+                        Text(
+                            pending.statusText.ifBlank { "旁白发送失败" },
+                            modifier = Modifier.padding(top = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        if (requiresRecovery) {
+                            TextButton(onClick = onRecover, modifier = Modifier.align(Alignment.End)) {
+                                Text("恢复会话")
+                            }
+                        } else {
+                            Row(modifier = Modifier.align(Alignment.End)) {
+                                TextButton(onClick = onEdit) { Text("编辑") }
+                                if (pending.retryable) TextButton(onClick = onRetry) { Text("重试") }
                             }
                         }
                     }

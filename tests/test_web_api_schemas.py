@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from src.web.api.compat import model_to_dict
 from src.web.api.schemas import (
     CreateRunRequest,
+    CreateCrossoverSpaceRequest,
     DeleteSessionsRequest,
     DialogueAssociationsRequest,
     DialogueResponseItem,
@@ -17,6 +18,26 @@ from src.web.api.schemas import (
 
 
 class WebApiSchemasTests(unittest.TestCase):
+    def test_crossover_request_requires_two_to_eight_participants(self):
+        participant = {"run_id": "run-1", "character": "甲"}
+        with self.assertRaises(ValidationError):
+            CreateCrossoverSpaceRequest(title="测试", participants=[participant])
+        accepted = CreateCrossoverSpaceRequest(
+            title="测试",
+            participants=[participant, {"run_id": "run-2", "character": "乙"}],
+        )
+        self.assertEqual(len(accepted.participants), 2)
+        accepted_maximum = CreateCrossoverSpaceRequest(
+            title="测试",
+            participants=[
+                {"run_id": f"run-{index}", "character": f"人物{index}"}
+                for index in range(8)
+            ],
+        )
+        self.assertEqual(len(accepted_maximum.participants), 8)
+        with self.assertRaises(ValidationError):
+            CreateCrossoverSpaceRequest(title="测试", participants=[participant] * 9)
+
     def test_create_run_request_requires_non_empty_characters(self):
         with self.assertRaises(ValidationError):
             CreateRunRequest(

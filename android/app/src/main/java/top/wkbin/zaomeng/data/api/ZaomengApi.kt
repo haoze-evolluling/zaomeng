@@ -59,6 +59,9 @@ interface ZaomengApi {
     @POST("api/web/runs/import")
     suspend fun importRun(@Body request: ImportRunPackageRequest): RunManifestDto
 
+    @POST("api/web/crossover-spaces")
+    suspend fun createCrossoverSpace(@Body request: CreateCrossoverSpaceRequest): RunManifestDto
+
     @GET("api/web/runs/{runId}")
     suspend fun getRun(@Path("runId") runId: String): RunManifestDto
 
@@ -76,6 +79,9 @@ interface ZaomengApi {
         @Path("runId") runId: String,
         @Body request: RestartRunRequest,
     ): RunManifestDto
+
+    @POST("api/web/runs/{runId}/resume-distill")
+    suspend fun resumeDistillRun(@Path("runId") runId: String): RunManifestDto
 
     @POST("api/web/runs/{runId}/redistill/recommend")
     suspend fun suggestRedistillSegments(

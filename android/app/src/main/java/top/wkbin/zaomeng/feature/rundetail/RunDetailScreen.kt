@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -80,6 +81,7 @@ import top.wkbin.zaomeng.backend.DistillationForegroundController
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
 import top.wkbin.zaomeng.data.api.NovelSourceDto
 import top.wkbin.zaomeng.data.api.OnlineLibrarySourceDto
+import top.wkbin.zaomeng.data.api.BetaFeatureDto
 import top.wkbin.zaomeng.data.api.PersonaIndexDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
 import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
@@ -104,6 +106,7 @@ fun RunDetailScreen(
     val context = LocalContext.current
     var confirmStop by rememberSaveable { mutableStateOf(false) }
     var confirmRedistill by rememberSaveable { mutableStateOf(false) }
+    var confirmResume by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var selectedAvatarPersona by remember { mutableStateOf<PersonaIndexDto?>(null) }
     var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
@@ -111,15 +114,31 @@ fun RunDetailScreen(
         val persona = selectedAvatarPersona
         if (uri != null && persona != null) avatarCropUri = uri
     }
+    var resumeAfterPermission by rememberSaveable { mutableStateOf(false) }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) {
-        viewModel.redistillOriginalCharacters()
+    ) { granted ->
+        if (granted) {
+            if (resumeAfterPermission) viewModel.resumeUnfinishedCharacters()
+            else viewModel.redistillOriginalCharacters()
+        }
+        resumeAfterPermission = false
     }
 
     fun startOriginalRedistill() {
+        resumeAfterPermission = false
         if (DistillationForegroundController.hasNotificationPermission(context)) {
             viewModel.redistillOriginalCharacters()
+        } else {
+            notificationPermission.launch(DistillationForegroundController.NOTIFICATION_PERMISSION)
+        }
+    }
+
+    fun startResumeDistill() {
+        resumeAfterPermission = true
+        if (DistillationForegroundController.hasNotificationPermission(context)) {
+            viewModel.resumeUnfinishedCharacters()
+            resumeAfterPermission = false
         } else {
             notificationPermission.launch(DistillationForegroundController.NOTIFICATION_PERMISSION)
         }
@@ -165,6 +184,24 @@ fun RunDetailScreen(
                 }) { Text("重新开始") }
             },
             dismissButton = { TextButton(onClick = { confirmRedistill = false }) { Text("取消") } },
+        )
+    }
+
+    if (confirmResume) {
+        val characterCount = state.run
+            ?.let { run -> run.lockedCharacters.count { character -> character !in run.progress.completedCharacters } }
+            ?: 0
+        AlertDialog(
+            onDismissRequest = { confirmResume = false },
+            title = { Text("继续未完成人物") },
+            text = { Text("将保留已完成人物，只继续蒸馏剩余 $characterCount 位人物。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmResume = false
+                    startResumeDistill()
+                }) { Text("继续蒸馏") }
+            },
+            dismissButton = { TextButton(onClick = { confirmResume = false }) { Text("取消") } },
         )
     }
 
@@ -274,6 +311,7 @@ fun RunDetailScreen(
                 onDismissNotice = viewModel::dismissNotice,
                 onRetryExportDestination = viewModel::retryExportDestination,
                 onStop = { confirmStop = true },
+                onResume = { confirmResume = true },
                 onRedistill = { confirmRedistill = true },
                 onExport = viewModel::exportRun,
                 onOpenPersona = { character -> onOpenPersona(viewModel.runId, character) },
@@ -295,6 +333,7 @@ private fun RunDetailContent(
     onDismissNotice: () -> Unit,
     onRetryExportDestination: () -> Unit,
     onStop: () -> Unit,
+    onResume: () -> Unit,
     onRedistill: () -> Unit,
     onExport: () -> Unit,
     onOpenPersona: (String) -> Unit,
@@ -314,6 +353,10 @@ private fun RunDetailContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { RunHero(run) }
+
+        run.betaFeature?.takeIf { it.kind == "cross_book_crossover" }?.let { beta ->
+            item { CrossoverBetaCard(beta) }
+        }
 
         run.importedFrom.onlineLibrary?.takeIf { it.id.isNotBlank() }?.let { source ->
             item { OnlinePackageSourceCard(source) }
@@ -343,6 +386,7 @@ private fun RunDetailContent(
                 exporting = state.exporting,
                 deleting = state.deleting,
                 onStop = onStop,
+                onResume = onResume,
                 onRedistill = onRedistill,
                 onExport = onExport,
                 onOpenSessions = onOpenSessions,
@@ -400,6 +444,22 @@ private fun RunDetailContent(
         }
 
         item { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+private fun CrossoverBetaCard(beta: BetaFeatureDto) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("跨书卷共演 · Beta", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("这是独立人物快照空间。这里产生的关系、记忆、修正和会话不会写回来源书卷；测试功能的角色表现可能不稳定。", style = MaterialTheme.typography.bodySmall)
+            if (beta.worldSetting.isNotBlank()) {
+                Text("世界设定：${beta.worldSetting}", style = MaterialTheme.typography.bodySmall)
+            }
+            if (beta.sourceSnapshots.isNotEmpty()) {
+                Text("人物来源：${beta.sourceSnapshots.joinToString(" · ") { it.character }}", style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
@@ -585,6 +645,7 @@ private fun ActionCard(
     exporting: Boolean,
     deleting: Boolean,
     onStop: () -> Unit,
+    onResume: () -> Unit,
     onRedistill: () -> Unit,
     onExport: () -> Unit,
     onOpenSessions: () -> Unit,
@@ -634,6 +695,20 @@ private fun ActionCard(
                 else Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("继续蒸馏或换入新书段")
+            }
+
+            val unfinishedCount = run.lockedCharacters.count { it !in run.progress.completedCharacters }
+            if (unfinishedCount > 0 && run.status != "running") {
+                OutlinedButton(
+                    onClick = onResume,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !redistilling,
+                ) {
+                    if (redistilling) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Outlined.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("继续未完成人物（$unfinishedCount 人）")
+                }
             }
 
             TextButton(
