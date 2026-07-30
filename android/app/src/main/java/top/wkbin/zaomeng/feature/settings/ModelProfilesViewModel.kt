@@ -25,6 +25,7 @@ class ModelProfilesViewModel(
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ModelProfilesUiState())
     val state: StateFlow<ModelProfilesUiState> = mutableState.asStateFlow()
+    private var hasResumed = false
 
     init {
         load()
@@ -32,7 +33,9 @@ class ModelProfilesViewModel(
 
     fun load() {
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = "") }
+            mutableState.update { current ->
+                current.copy(loading = current.profiles.isEmpty(), error = "")
+            }
             try {
                 apply(repository.getModelSettings())
             } catch (cancelled: CancellationException) {
@@ -41,6 +44,14 @@ class ModelProfilesViewModel(
                 mutableState.update { it.copy(loading = false, error = error.message ?: "模型档案读取失败。") }
             }
         }
+    }
+
+    fun refreshWhenResumed() {
+        if (!hasResumed) {
+            hasResumed = true
+            return
+        }
+        load()
     }
 
     fun activate(profile: ModelProfileDto) {
