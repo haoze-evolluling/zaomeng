@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from time import perf_counter
 from typing import Any
+import base64
+import os
+import shutil
+from pathlib import Path
 from uuid import uuid4
 
 from src.core.config import Config
@@ -23,6 +27,102 @@ from src.web.run_ops import (
 
 
 class RunServiceMixin:
+    @staticmethod
+    def _copy_writable_character_snapshot(source: Path, target: Path) -> None:
+        """Copy an imported profile without carrying archive/read-only permissions."""
+        if target.exists():
+            raise FileExistsError(target)
+        target.mkdir(parents=True, mode=0o700)
+        for current_root, directory_names, file_names in os.walk(source):
+            current = Path(current_root)
+            relative = current.relative_to(source)
+            destination = target / relative
+            destination.mkdir(parents=True, exist_ok=True, mode=0o700)
+            destination.chmod(0o700)
+            for directory_name in directory_names:
+                child = destination / directory_name
+                child.mkdir(exist_ok=True, mode=0o700)
+                child.chmod(0o700)
+            for file_name in file_names:
+                source_file = current / file_name
+                destination_file = destination / file_name
+                shutil.copyfile(source_file, destination_file)
+                destination_file.chmod(0o600)
+
+    def create_crossover_space(
+        self,
+        *,
+        title: str,
+        world_setting: str,
+        participants: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        if not 2 <= len(participants) <= 8:
+            raise ValueError("共演空间需要选择 2 到 8 名人物。")
+        selected: list[tuple[str, str, Path]] = []
+        names: set[str] = set()
+        for item in participants:
+            run_id = str(item.get("run_id", "")).strip()
+            character = str(item.get("character", "")).strip()
+            if not run_id or not character or character in names:
+                raise ValueError("共演人物不能为空或重名。")
+            source = self._require_manifest(run_id)
+            artifact = next(
+                (
+                    entry for entry in source.get("artifact_index", {}).get("characters", [])
+                    if str(entry.get("name", "")).strip() == character
+                ),
+                None,
+            )
+            profile = Path(str((artifact or {}).get("profile_file", "")).strip())
+            source_run_dir = (self.runs_root / run_id).resolve()
+            try:
+                profile.resolve().relative_to(source_run_dir)
+            except (ValueError, OSError):
+                raise FileNotFoundError(f"{run_id}:{character}")
+            if not profile.exists():
+                raise FileNotFoundError(f"{run_id}:{character}")
+            selected.append((run_id, character, profile.parent))
+            names.add(character)
+
+        if len({run_id for run_id, _, _ in selected}) < 2:
+            raise ValueError("跨书卷共演至少需要来自两个不同书卷的人物。")
+
+        safe_title = str(title or "").strip()
+        setting = str(world_setting or "").strip()
+        seed = f"共演空间：{safe_title}\n世界设定：{setting or '由参与者共同展开。'}"
+        created = self.create_run(
+            novel_name=f"{safe_title}.txt",
+            novel_content_base64=base64.b64encode(seed.encode("utf-8")).decode("ascii"),
+            characters=[character for _, character, _ in selected],
+            defer_run=True,
+        )
+        run_id = str(created["run_id"])
+        manifest_path = self._manifest_path(run_id)
+        try:
+            manifest = self._require_manifest(run_id)
+            target_root = Path(manifest["webui"]["workspace"]["characters_root"])
+            for source_run_id, character, source_dir in selected:
+                target = target_root / source_dir.name
+                self._copy_writable_character_snapshot(source_dir, target)
+            manifest = self._discover_artifacts(manifest)
+            now = _utc_now()
+            manifest.update({"status": "ready", "success": True, "entrypoint": "crossover_beta", "updated_at": now})
+            manifest["beta_feature"] = {
+                "kind": "cross_book_crossover",
+                "unstable": True,
+                "world_setting": setting,
+                "source_snapshots": [
+                    {"run_id": source_run_id, "character": character}
+                    for source_run_id, character, _ in selected
+                ],
+            }
+            manifest.setdefault("summary", {})["status_text"] = "crossover_beta_ready"
+            self._write_json(manifest_path, manifest)
+            return self._serialize_manifest(manifest)
+        except Exception:
+            shutil.rmtree(self.runs_root / run_id, ignore_errors=True)
+            raise
+
     def estimate_sampling_plan(
         self,
         *,
@@ -361,3 +461,20 @@ class RunServiceMixin:
             max_chars=max_chars,
         )
         return self._serialize_manifest(self._load_manifest(manifest_path) or manifest)
+
+    def resume_unfinished_characters(self, run_id: str) -> dict[str, Any]:
+        """Continue a stopped or failed run without reprocessing completed personas."""
+        manifest = self._load_manifest(self._manifest_path(run_id))
+        if not manifest:
+            raise FileNotFoundError(run_id)
+        if str(manifest.get("status", "")).strip() == "running":
+            raise ValueError("This run is already running.")
+
+        locked_characters = self._normalize_characters(list(manifest.get("locked_characters", []) or []))
+        completed_characters = set(
+            self._normalize_characters(list((manifest.get("progress", {}) or {}).get("completed_characters", []) or []))
+        )
+        unfinished_characters = [name for name in locked_characters if name not in completed_characters]
+        if not unfinished_characters:
+            raise ValueError("All locked characters have already been distilled.")
+        return self.restart_run_distill(run_id, characters=unfinished_characters)

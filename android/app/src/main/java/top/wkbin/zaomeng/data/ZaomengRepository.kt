@@ -8,6 +8,8 @@ import top.wkbin.zaomeng.backend.EmbeddedBackendController
 import top.wkbin.zaomeng.backend.ModelApiKeyStore
 import top.wkbin.zaomeng.data.api.CreateDialogueSessionRequest
 import top.wkbin.zaomeng.data.api.CreateRunRequest
+import top.wkbin.zaomeng.data.api.CreateCrossoverSpaceRequest
+import top.wkbin.zaomeng.data.api.CrossoverParticipantRequest
 import top.wkbin.zaomeng.data.api.BuiltinNovelDto
 import top.wkbin.zaomeng.data.api.BranchDialogueTurnRequest
 import top.wkbin.zaomeng.data.api.BranchDialogueSceneRequest
@@ -243,6 +245,22 @@ class ZaomengRepository(
 
     suspend fun redistill(runId: String, characters: List<String>): RunManifestDto = request {
         backend.requireApi().redistillRun(runId, RestartRunRequest(characters = characters))
+    }
+
+    suspend fun createCrossoverSpace(
+        title: String,
+        worldSetting: String,
+        participants: List<CrossoverParticipantRequest>,
+    ): RunManifestDto = request {
+        val run = backend.requireApi().createCrossoverSpace(
+            CreateCrossoverSpaceRequest(title, worldSetting, participants),
+        )
+        appPreferences.rememberRun(run.runId)
+        run
+    }
+
+    suspend fun resumeDistill(runId: String): RunManifestDto = request {
+        backend.requireApi().resumeDistillRun(runId)
     }
 
     suspend fun redistill(

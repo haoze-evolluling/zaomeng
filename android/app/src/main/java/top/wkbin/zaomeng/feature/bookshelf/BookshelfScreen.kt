@@ -1,6 +1,7 @@
 package top.wkbin.zaomeng.feature.bookshelf
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,9 +53,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -71,6 +74,7 @@ fun BookshelfScreen(
     onOpenSettings: () -> Unit,
     onOpenCards: () -> Unit,
     onOpenSessions: () -> Unit,
+    onOpenCrossover: () -> Unit,
     onOpenRun: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -156,6 +160,7 @@ fun BookshelfScreen(
                 onToggleSort = viewModel::toggleSort,
                 onClearFilters = viewModel::clearFilters,
                 onImport = onImport,
+                onOpenCrossover = onOpenCrossover,
                 onOpenRun = onOpenRun,
                 modifier = Modifier.padding(innerPadding),
             )
@@ -175,6 +180,7 @@ private fun ReadyBookshelf(
     onToggleSort: () -> Unit,
     onClearFilters: () -> Unit,
     onImport: () -> Unit,
+    onOpenCrossover: () -> Unit,
     onOpenRun: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -228,6 +234,25 @@ private fun ReadyBookshelf(
         }
         if (state.modelConfigured == true) {
             item { ActiveModelCard(state.activeModelLabel, onOpenSettings) }
+        }
+        if (state.runs.count { it.betaFeature == null && it.availableCharacters.isNotEmpty() } >= 2) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenCrossover),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                ) {
+                    Box(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 42.dp, bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("跨书卷共演", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("从不同书卷复制人物快照，建立不会改动原书卷的独立共演空间。测试功能的角色表现和剧情连续性可能不稳定。", style = MaterialTheme.typography.bodySmall)
+                        }
+                        BetaCornerBadge(Modifier.align(Alignment.TopEnd))
+                    }
+                }
+            }
         }
         if (activeRuns.isNotEmpty()) {
             item {
@@ -312,6 +337,32 @@ private fun ReadyBookshelf(
                 RunCard(run = run, onClick = { onOpenRun(run.runId) })
             }
         }
+    }
+}
+
+@Composable
+private fun BetaCornerBadge(modifier: Modifier = Modifier) {
+    val badgeColor = MaterialTheme.colorScheme.tertiary
+    val textColor = MaterialTheme.colorScheme.onTertiary
+    Box(modifier.size(44.dp)) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawPath(
+                Path().apply {
+                    moveTo(size.width, 0f)
+                    lineTo(size.width, size.height)
+                    lineTo(0f, 0f)
+                    close()
+                },
+                color = badgeColor,
+            )
+        }
+        Text(
+            text = "Beta",
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 3.dp),
+            color = textColor,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -441,7 +492,18 @@ private fun RunCard(run: RunManifestDto, onClick: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                StatusPill(run.status)
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    if (run.betaFeature?.kind == "cross_book_crossover") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            shape = RoundedCornerShape(999.dp),
+                        ) {
+                            Text("Beta 共演", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    StatusPill(run.status)
+                }
             }
 
             if (run.status == "running") {
@@ -453,7 +515,11 @@ private fun RunCard(run: RunManifestDto, onClick: () -> Unit) {
             }
 
             Text(
-                text = run.progress.message.ifBlank { statusDescription(run.status) },
+                text = if (run.betaFeature?.kind == "cross_book_crossover") {
+                    "独立人物快照空间，不会改动来源书卷。"
+                } else {
+                    run.progress.message.ifBlank { statusDescription(run.status) }
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 3,

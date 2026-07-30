@@ -5,7 +5,14 @@ from pydantic import BaseModel, Field
 try:
     from pydantic import field_validator
 except ImportError:  # Pydantic v1 on Termux
-    from pydantic import validator as field_validator
+    from pydantic import validator as _pydantic_v1_validator
+
+    def field_validator(*fields: str, **kwargs):
+        # Embedded Android can restart Python and import this module again in
+        # the same process. Pydantic v1 otherwise treats the same validator
+        # function as a duplicate registration.
+        kwargs.setdefault("allow_reuse", True)
+        return _pydantic_v1_validator(*fields, **kwargs)
 
 
 class CreateRunRequest(BaseModel):
@@ -86,6 +93,26 @@ class ImportRunPackageRequest(BaseModel):
     filename: str = Field(..., min_length=1)
     content_base64: str = Field(..., min_length=1)
     library_package: dict[str, str] = Field(default_factory=dict)
+
+
+class CrossoverParticipantRequest(BaseModel):
+    run_id: str = Field(..., min_length=1)
+    character: str = Field(..., min_length=1)
+
+
+class CreateCrossoverSpaceRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=80)
+    world_setting: str = Field(default="", max_length=1000)
+    participants: list[CrossoverParticipantRequest] = Field(...)
+
+    @field_validator("participants")
+    @classmethod
+    def _validate_participants(
+        cls, value: list[CrossoverParticipantRequest]
+    ) -> list[CrossoverParticipantRequest]:
+        if not 2 <= len(value) <= 8:
+            raise ValueError("participants must contain between 2 and 8 items")
+        return value
 
 
 class SavePersonaReviewRequest(BaseModel):
