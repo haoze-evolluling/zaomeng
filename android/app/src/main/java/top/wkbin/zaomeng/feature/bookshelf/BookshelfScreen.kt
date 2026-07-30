@@ -1,5 +1,10 @@
 package top.wkbin.zaomeng.feature.bookshelf
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -128,37 +133,50 @@ fun BookshelfScreen(
             }
         },
     ) { innerPadding ->
-        when (val backendState = state.backendState) {
-            BackendState.Idle -> BackendLoading(
-                message = "正在准备本地故事工坊…",
-                modifier = Modifier.padding(innerPadding),
-            )
+        AnimatedContent(
+            targetState = state.backendState is BackendState.Ready,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(durationMillis = 260)) togetherWith
+                    fadeOut(animationSpec = tween(durationMillis = 180))
+            },
+            label = "backendReadyTransition",
+        ) { backendReady ->
+            if (backendReady) {
+                ReadyBookshelf(
+                    state = state,
+                    onRefresh = viewModel::refresh,
+                    onStopAll = viewModel::stopRunningTasks,
+                    onDismissError = viewModel::dismissError,
+                    onOpenSettings = onOpenSettings,
+                    onSearchQueryChange = viewModel::updateSearchQuery,
+                    onSelectFilter = viewModel::selectFilter,
+                    onToggleSort = viewModel::toggleSort,
+                    onClearFilters = viewModel::clearFilters,
+                    onImport = onImport,
+                    onOpenRun = onOpenRun,
+                    modifier = Modifier.padding(innerPadding),
+                )
+            } else {
+                when (val backendState = state.backendState) {
+                    BackendState.Idle -> BackendLoading(
+                        message = "正在准备本地故事工坊…",
+                        modifier = Modifier.padding(innerPadding),
+                    )
 
-            is BackendState.Starting -> BackendLoading(
-                message = backendState.message,
-                modifier = Modifier.padding(innerPadding),
-            )
+                    is BackendState.Starting -> BackendLoading(
+                        message = backendState.message,
+                        modifier = Modifier.padding(innerPadding),
+                    )
 
-            is BackendState.Failed -> BackendFailure(
-                message = backendState.message,
-                onRetry = viewModel::retryBackend,
-                modifier = Modifier.padding(innerPadding),
-            )
+                    is BackendState.Failed -> BackendFailure(
+                        message = backendState.message,
+                        onRetry = viewModel::retryBackend,
+                        modifier = Modifier.padding(innerPadding),
+                    )
 
-            is BackendState.Ready -> ReadyBookshelf(
-                state = state,
-                onRefresh = viewModel::refresh,
-                onStopAll = viewModel::stopRunningTasks,
-                onDismissError = viewModel::dismissError,
-                onOpenSettings = onOpenSettings,
-                onSearchQueryChange = viewModel::updateSearchQuery,
-                onSelectFilter = viewModel::selectFilter,
-                onToggleSort = viewModel::toggleSort,
-                onClearFilters = viewModel::clearFilters,
-                onImport = onImport,
-                onOpenRun = onOpenRun,
-                modifier = Modifier.padding(innerPadding),
-            )
+                    is BackendState.Ready -> Unit
+                }
+            }
         }
     }
 }

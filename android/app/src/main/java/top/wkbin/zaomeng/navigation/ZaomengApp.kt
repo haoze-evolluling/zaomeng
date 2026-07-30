@@ -43,6 +43,7 @@ import top.wkbin.zaomeng.feature.settings.SettingsViewModel
 import top.wkbin.zaomeng.feature.settings.AppearanceSettingsScreen
 import top.wkbin.zaomeng.feature.settings.ChatDisplaySettingsScreen
 import top.wkbin.zaomeng.feature.settings.SettingsHomeScreen
+import top.wkbin.zaomeng.feature.settings.StartupRecoverySettingsScreen
 import top.wkbin.zaomeng.feature.settings.AppSupportSettingsScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -117,6 +118,7 @@ fun ZaomengApp(
                 onOpenModelSettings = { navController.navigate(ModelConfigurationDestination) },
                 onOpenChatDisplay = { navController.navigate(ChatDisplaySettingsDestination) },
                 onOpenAppearance = { navController.navigate(AppearanceSettingsDestination) },
+                onOpenStartupRecovery = { navController.navigate(StartupRecoverySettingsDestination) },
                 onOpenAppSupport = { navController.navigate(AppSupportSettingsDestination) },
             )
         }
@@ -145,6 +147,10 @@ fun ZaomengApp(
 
         composable<AppearanceSettingsDestination> {
             AppearanceSettingsScreen(onBack = navController::navigateUp)
+        }
+
+        composable<StartupRecoverySettingsDestination> {
+            StartupRecoverySettingsScreen(onBack = navController::navigateUp)
         }
 
         composable<AppSupportSettingsDestination> {
@@ -274,6 +280,7 @@ private sealed interface RestoredLocation {
 
 private suspend fun ZaomengRepository.resolveRestoredLocation(): RestoredLocation? {
     val savedPreferences = preferences.first()
+    if (!savedPreferences.restoreLastLocation) return null
     val runId = savedPreferences.lastRunId.trim()
     if (runId.isBlank()) {
         if (savedPreferences.lastSessionId.isNotBlank()) clearLastLocation()

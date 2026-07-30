@@ -47,6 +47,7 @@ data class ChatDisplayPreferences(
 data class AppPreferences(
     val defaultCharacters: String = "",
     val autoDistill: Boolean = true,
+    val restoreLastLocation: Boolean = true,
     val lastRunId: String = "",
     val lastSessionId: String = "",
     val chatDisplay: ChatDisplayPreferences = ChatDisplayPreferences(),
@@ -64,6 +65,7 @@ class AppPreferencesRepository(
             AppPreferences(
                 defaultCharacters = values[DEFAULT_CHARACTERS].orEmpty(),
                 autoDistill = values[AUTO_DISTILL] ?: true,
+                restoreLastLocation = values[RESTORE_LAST_LOCATION] ?: true,
                 lastRunId = values[LAST_RUN_ID].orEmpty(),
                 lastSessionId = values[LAST_SESSION_ID].orEmpty(),
                 chatDisplay = ChatDisplayPreferences(
@@ -160,6 +162,10 @@ class AppPreferencesRepository(
         }
     }
 
+    suspend fun setRestoreLastLocation(enabled: Boolean) {
+        dataStore.edit { values -> values[RESTORE_LAST_LOCATION] = enabled }
+    }
+
     suspend fun setThemeMode(themeMode: ThemeMode) {
         dataStore.edit { values -> values[THEME_MODE] = themeMode.storageValue }
     }
@@ -167,6 +173,7 @@ class AppPreferencesRepository(
     private companion object {
         val DEFAULT_CHARACTERS = stringPreferencesKey("default_characters")
         val AUTO_DISTILL = booleanPreferencesKey("auto_distill")
+        val RESTORE_LAST_LOCATION = booleanPreferencesKey("restore_last_location")
         val LAST_RUN_ID = stringPreferencesKey("last_run_id")
         val LAST_SESSION_ID = stringPreferencesKey("last_session_id")
         val CHAT_FONT_SIZE = stringPreferencesKey("chat_font_size")

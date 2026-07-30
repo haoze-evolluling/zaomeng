@@ -45,10 +45,13 @@ fun SettingsHomeScreen(
     onOpenModelSettings: () -> Unit,
     onOpenChatDisplay: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenStartupRecovery: () -> Unit,
     onOpenAppSupport: () -> Unit,
     preferencesRepository: AppPreferencesRepository = koinInject(),
 ) {
-    val themeMode by preferencesRepository.themeMode.collectAsStateWithLifecycle(ThemeMode.SYSTEM)
+    val preferences by preferencesRepository.preferences.collectAsStateWithLifecycle(
+        initialValue = top.wkbin.zaomeng.data.preferences.AppPreferences(),
+    )
     Scaffold(
         topBar = {
             TopAppBar(
@@ -90,7 +93,7 @@ fun SettingsHomeScreen(
                         title = "主题模式",
                         subtitle = "浅色、深色或跟随系统。",
                         icon = Icons.Outlined.Palette,
-                        value = themeMode.displayName,
+                        value = preferences.themeMode.displayName,
                         onClick = onOpenAppearance,
                     )
                 }
@@ -98,6 +101,13 @@ fun SettingsHomeScreen(
             item { SectionTitle("应用") }
             item {
                 SettingsHomeGroup {
+                    SettingsHomeRow(
+                        title = "启动与恢复",
+                        subtitle = "打开应用后执行的操作。",
+                        icon = Icons.Outlined.Settings,
+                        onClick = onOpenStartupRecovery,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsHomeRow(
                         title = "应用与支持",
                         subtitle = "检查更新并导出脱敏运行诊断。",
