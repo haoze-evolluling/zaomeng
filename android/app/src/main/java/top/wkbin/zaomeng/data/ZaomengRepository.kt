@@ -27,6 +27,7 @@ import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
 import top.wkbin.zaomeng.data.api.ExportedChapterManuscript
 import top.wkbin.zaomeng.data.api.ImportRunPackageRequest
+import top.wkbin.zaomeng.data.api.LibraryPackageImportDto
 import top.wkbin.zaomeng.data.api.EstimateSamplingRequest
 import top.wkbin.zaomeng.data.api.ModelSettingsDto
 import top.wkbin.zaomeng.data.api.SamplingPlanDto
@@ -186,11 +187,16 @@ class ZaomengRepository(
         )
     }
 
-    suspend fun importPackage(filename: String, bytes: ByteArray): RunManifestDto {
+    suspend fun importPackage(
+        filename: String,
+        bytes: ByteArray,
+        libraryPackage: LibraryPackageImportDto? = null,
+    ): RunManifestDto {
         val payload = withContext(Dispatchers.Default) {
             ImportRunPackageRequest(
                 filename = filename,
                 contentBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                libraryPackage = libraryPackage,
             )
         }
         return request {

@@ -11,6 +11,8 @@ import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.LocalApiFactory
 import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
 import top.wkbin.zaomeng.data.update.AppUpdateRepository
+import top.wkbin.zaomeng.data.library.OnlineLibraryRepository
+import top.wkbin.zaomeng.feature.library.OnlineLibraryViewModel
 import top.wkbin.zaomeng.feature.bookshelf.BookshelfViewModel
 import top.wkbin.zaomeng.feature.chat.ChatViewModel
 import top.wkbin.zaomeng.feature.chapters.ChaptersViewModel
@@ -51,6 +53,7 @@ val appModule = module {
     }
     single { AppPreferencesRepository(get()) }
     single { AppUpdateRepository(androidContext()) }
+    single { OnlineLibraryRepository(androidContext()) }
     single { ZaomengRepository(get(), get(), get()) }
 
     viewModel { BookshelfViewModel(get(), androidContext()) }
@@ -58,6 +61,7 @@ val appModule = module {
     viewModel { ModelProfilesViewModel(get()) }
     viewModel { parameters -> ModelProfileEditorViewModel(get(), parameters.get()) }
     viewModel { ImportBookViewModel(get(), androidContext()) }
+    viewModel { OnlineLibraryViewModel(get(), get()) }
     viewModel { parameters -> RunDetailViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RedistillViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RelationsViewModel(get(), parameters.get()) }

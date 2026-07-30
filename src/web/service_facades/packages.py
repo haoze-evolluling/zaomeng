@@ -27,7 +27,13 @@ class PackageServiceMixin:
             serialize_manifest=self._serialize_manifest,
         )
 
-    def import_run_package(self, *, filename: str, content_base64: str) -> dict[str, Any]:
+    def import_run_package(
+        self,
+        *,
+        filename: str,
+        content_base64: str,
+        library_package: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         data = self._decode_base64(content_base64)
         if not data:
             raise ValueError("导入的小说包内容为空。")
@@ -47,6 +53,7 @@ class PackageServiceMixin:
                 write_json=self._write_json,
                 discover_artifacts=self._discover_artifacts,
                 serialize_manifest=self._serialize_manifest,
+                library_package=library_package,
             )
 
     def export_run_package(self, run_id: str, *, builtin: bool = False) -> dict[str, Any]:
