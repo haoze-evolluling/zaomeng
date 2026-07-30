@@ -2,6 +2,7 @@ package top.wkbin.zaomeng.feature.settings
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,6 +52,18 @@ fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             onOpenProject = {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/wkbin/zaomeng")))
             },
+            onJoinQqGroup = {
+                try {
+                    context.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1090225658&card_type=group&source=qrcode"),
+                        ),
+                    )
+                } catch (_: Exception) {
+                    Toast.makeText(context, "未检测到 QQ，请搜索群号 1090225658 加入。", Toast.LENGTH_LONG).show()
+                }
+            },
         )
     }
 }
@@ -63,6 +76,7 @@ private fun SettingsSupportGroup(
     onDownload: () -> Unit,
     onExportDiagnostics: () -> Unit,
     onOpenProject: () -> Unit,
+    onJoinQqGroup: () -> Unit,
 ) {
     androidx.compose.material3.Card(
         modifier = modifier,
@@ -84,6 +98,12 @@ private fun SettingsSupportGroup(
                 title = "项目地址",
                 subtitle = "github.com/wkbin/zaomeng",
                 onClick = onOpenProject,
+            )
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            SettingsRow(
+                title = "加入 QQ 群",
+                subtitle = "交流群：1090225658",
+                onClick = onJoinQqGroup,
             )
         }
     }
