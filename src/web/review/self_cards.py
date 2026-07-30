@@ -8,7 +8,11 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from src.web.review.persona_completion import PERSONA_REVIEW_FIELD_LABELS
-from src.web.review.persona import PERSONA_REVIEW_FIELDS
+from src.web.review.persona import (
+    PERSONA_REVIEW_FIELDS,
+    PROFILE_LIST_FIELDS,
+    apply_persona_review_updates,
+)
 
 
 SELF_CARD_EXTRA_FIELDS = (
@@ -71,10 +75,7 @@ def build_self_card_profile(fields: dict[str, str]) -> dict[str, Any]:
         "interaction_style": str(fields.get("interaction_style", "")).strip(),
         "novel_id": "__self_card__",
     }
-    for field in PERSONA_REVIEW_FIELDS:
-        value = str(fields.get(field, "")).strip()
-        if value:
-            profile[field] = value
+    apply_persona_review_updates(profile, fields)
     return profile
 
 
@@ -87,6 +88,12 @@ def read_self_card_fields(
     fields["display_name"] = str(profile.get("display_name", "")).strip() or str(profile.get("name", "")).strip()
     fields["scene_identity"] = str(profile.get("scene_identity", "")).strip() or fields["core_identity"]
     fields["interaction_style"] = str(profile.get("interaction_style", "")).strip()
+    for field in PROFILE_LIST_FIELDS:
+        value = profile.get(field)
+        if isinstance(value, list) and value and all(len(str(item).strip()) <= 1 for item in value):
+            # Older self cards wrote list fields as strings, causing the markdown renderer
+            # to split every character. Reconstruct the original text for editing and repair.
+            fields[field] = "".join(str(item) for item in value)
     return fields
 
 

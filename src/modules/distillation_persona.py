@@ -425,6 +425,8 @@ def should_create_trauma_md(profile: Dict[str, Any]) -> bool:
 
 
 def join_items(items: Iterable[Any]) -> str:
+    if isinstance(items, str):
+        return items.strip()
     cleaned = [str(item).strip() for item in items if str(item).strip()]
     return "；".join(cleaned)
 

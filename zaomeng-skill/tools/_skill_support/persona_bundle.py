@@ -256,6 +256,8 @@ def parse_metric_map(value: Any) -> dict[str, Any]:
 
 
 def join_items(items: Iterable[Any]) -> str:
+    if isinstance(items, str):
+        return items.strip()
     cleaned = [str(item).strip() for item in items if str(item).strip()]
     return "；".join(cleaned)
 
