@@ -1,5 +1,7 @@
 package top.wkbin.zaomeng.feature.rundetail
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -61,6 +63,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.DistillationForegroundController
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
 import top.wkbin.zaomeng.data.api.NovelSourceDto
+import top.wkbin.zaomeng.data.api.OnlineLibrarySourceDto
 import top.wkbin.zaomeng.data.api.PersonaIndexDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
 import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
@@ -247,6 +250,10 @@ private fun RunDetailContent(
     ) {
         item { RunHero(run) }
 
+        run.importedFrom.onlineLibrary?.takeIf { it.id.isNotBlank() }?.let { source ->
+            item { OnlinePackageSourceCard(source) }
+        }
+
         if (state.error.isNotBlank() || state.message.isNotBlank()) {
             item {
                 NoticeCard(
@@ -323,6 +330,33 @@ private fun RunDetailContent(
         }
 
         item { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+private fun OnlinePackageSourceCard(source: OnlineLibrarySourceDto) {
+    val context = LocalContext.current
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("在线书卷包", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                buildList {
+                    if (source.title.isNotBlank()) add(source.title)
+                    if (source.version.isNotBlank()) add("v${source.version}")
+                    if (source.id.isNotBlank()) add(source.id)
+                }.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            if (source.downloadUrl.isNotBlank()) {
+                TextButton(onClick = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.downloadUrl)))
+                }) { Text("打开书卷包来源") }
+            }
+        }
     }
 }
 

@@ -1,10 +1,14 @@
 package top.wkbin.zaomeng.data.library
 
-import java.io.ByteArrayOutputStream
+import android.content.Context
+import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -32,6 +36,7 @@ data class OnlineLibraryBook(
 )
 
 class OnlineLibraryRepository(
+    private val context: Context,
     private val httpClient: OkHttpClient = OkHttpClient(),
 ) {
     suspend fun listBooks(): List<OnlineLibraryBook> = withContext(Dispatchers.IO) {
@@ -56,42 +61,62 @@ class OnlineLibraryRepository(
     ): ByteArray = withContext(Dispatchers.IO) {
         require(book.sha256.matches(SHA256_PATTERN)) { "书卷校验信息无效。" }
         require(isAllowedDownloadUrl(book.downloadUrl)) { "书卷下载地址不受信任。" }
-        val request = Request.Builder().url(book.downloadUrl).header("User-Agent", USER_AGENT).build()
+        val partialFile = File(File(context.cacheDir, "online-packages").apply { mkdirs() }, "${book.id}.part")
+        var existingBytes = partialFile.takeIf(File::exists)?.length() ?: 0L
+        val requestBuilder = Request.Builder().url(book.downloadUrl).header("User-Agent", USER_AGENT)
+        if (existingBytes > 0) requestBuilder.header("Range", "bytes=$existingBytes-")
+        val request = requestBuilder.build()
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("书卷下载失败：GitHub 返回 ${response.code}")
+            if (existingBytes > 0 && response.code != 206) {
+                partialFile.delete()
+                existingBytes = 0
+            }
             val contentLength = response.body?.contentLength() ?: -1L
-            if (contentLength > MAX_PACKAGE_BYTES) error("书卷包过大，无法安全导入。")
-            val totalBytes = contentLength.takeIf { it > 0 } ?: book.sizeBytes
+            val totalBytes = response.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                ?: contentLength.takeIf { it > 0 }?.plus(existingBytes)
+                ?: book.sizeBytes
+            if (totalBytes > MAX_PACKAGE_BYTES) error("书卷包过大，无法安全导入。")
             val body = response.body ?: error("书卷下载内容为空。")
             val digest = MessageDigest.getInstance("SHA-256")
-            val bytes = ByteArrayOutputStream()
-            body.byteStream().use { input ->
+            if (existingBytes > 0) partialFile.inputStream().use { input ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var lastReportedBytes = 0L
                 while (true) {
                     val count = input.read(buffer)
                     if (count < 0) break
-                    if (bytes.size().toLong() + count > MAX_PACKAGE_BYTES) {
-                        error("书卷包过大，无法安全导入。")
-                    }
-                    bytes.write(buffer, 0, count)
                     digest.update(buffer, 0, count)
-                    val downloadedBytes = bytes.size().toLong()
-                    if (downloadedBytes - lastReportedBytes >= PROGRESS_REPORT_INTERVAL_BYTES) {
-                        lastReportedBytes = downloadedBytes
-                        onProgress(downloadedBytes, totalBytes)
+                }
+            }
+            body.byteStream().use { input ->
+                FileOutputStream(partialFile, existingBytes > 0).use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var lastReportedBytes = existingBytes
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        val downloadedBytes = output.channel.size() + count
+                        if (downloadedBytes > MAX_PACKAGE_BYTES) error("书卷包过大，无法安全导入。")
+                        output.write(buffer, 0, count)
+                        digest.update(buffer, 0, count)
+                        if (downloadedBytes - lastReportedBytes >= PROGRESS_REPORT_INTERVAL_BYTES) {
+                            lastReportedBytes = downloadedBytes
+                            onProgress(downloadedBytes, totalBytes)
+                        }
                     }
                 }
             }
-            val downloaded = bytes.toByteArray()
+            val downloaded = partialFile.readBytes()
             if (downloaded.isEmpty()) error("书卷下载内容为空。")
             onProgress(downloaded.size.toLong(), totalBytes.coerceAtLeast(downloaded.size.toLong()))
             val actualHash = digest.digest().joinToString("") {
                 "%02x".format(Locale.ROOT, it.toInt() and 0xff)
             }
             if (!actualHash.equals(book.sha256, ignoreCase = true)) {
+                partialFile.delete()
                 error("书卷校验失败，请刷新书库后重试。")
             }
+            partialFile.delete()
             downloaded
         }
     }

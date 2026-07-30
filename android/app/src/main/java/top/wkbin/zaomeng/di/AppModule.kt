@@ -53,7 +53,7 @@ val appModule = module {
     }
     single { AppPreferencesRepository(get()) }
     single { AppUpdateRepository(androidContext()) }
-    single { OnlineLibraryRepository() }
+    single { OnlineLibraryRepository(androidContext()) }
     single { ZaomengRepository(get(), get(), get()) }
 
     viewModel { BookshelfViewModel(get(), androidContext()) }

@@ -98,6 +98,7 @@ data class RunManifestDto(
     val timing: RunTimingDto = RunTimingDto(),
     val control: RunControlDto = RunControlDto(),
     @SerialName("artifact_index") val artifactIndex: ArtifactIndexDto = ArtifactIndexDto(),
+    @SerialName("imported_from") val importedFrom: ImportedFromDto = ImportedFromDto(),
 ) {
     val title: String
         get() = novelSources.firstOrNull()?.sourceName
@@ -120,6 +121,20 @@ data class NovelSourceDto(
     val timestamp: String = "",
     @SerialName("byte_size") val byteSize: Long = 0,
     @SerialName("char_count") val charCount: Int = 0,
+)
+
+@Serializable
+data class ImportedFromDto(
+    @SerialName("online_library") val onlineLibrary: OnlineLibrarySourceDto? = null,
+)
+
+@Serializable
+data class OnlineLibrarySourceDto(
+    val id: String = "",
+    val title: String = "",
+    val version: String = "",
+    @SerialName("download_url") val downloadUrl: String = "",
+    val sha256: String = "",
 )
 
 @Serializable
@@ -190,6 +205,16 @@ data class CreateRunRequest(
 data class ImportRunPackageRequest(
     val filename: String,
     @SerialName("content_base64") val contentBase64: String,
+    @SerialName("library_package") val libraryPackage: LibraryPackageImportDto? = null,
+)
+
+@Serializable
+data class LibraryPackageImportDto(
+    val id: String,
+    val title: String,
+    val version: String,
+    @SerialName("download_url") val downloadUrl: String,
+    val sha256: String,
 )
 
 @Serializable

@@ -85,6 +85,7 @@ class IngestRelationRequest(BaseModel):
 class ImportRunPackageRequest(BaseModel):
     filename: str = Field(..., min_length=1)
     content_base64: str = Field(..., min_length=1)
+    library_package: dict[str, str] = Field(default_factory=dict)
 
 
 class SavePersonaReviewRequest(BaseModel):

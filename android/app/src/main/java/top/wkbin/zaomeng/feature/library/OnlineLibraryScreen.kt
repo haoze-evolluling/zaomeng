@@ -116,10 +116,12 @@ fun OnlineLibraryScreen(
                 OnlineLibraryBookCard(
                     book = book,
                     importing = state.importingBookId == book.id,
+                    installedVersion = state.installedVersions[book.id].orEmpty(),
                     downloadedBytes = state.downloadedBytes,
                     downloadTotalBytes = state.downloadTotalBytes,
                     enabled = state.importingBookId.isBlank(),
                     onImport = { viewModel.importBook(book) },
+                    onCancel = viewModel::cancelImport,
                 )
             }
         }
@@ -130,10 +132,12 @@ fun OnlineLibraryScreen(
 private fun OnlineLibraryBookCard(
     book: OnlineLibraryBook,
     importing: Boolean,
+    installedVersion: String,
     downloadedBytes: Long,
     downloadTotalBytes: Long,
     enabled: Boolean,
     onImport: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -158,13 +162,29 @@ private fun OnlineLibraryBookCard(
             if (book.releaseNotes.isNotBlank()) {
                 Text(book.releaseNotes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (installedVersion.isNotBlank()) {
+                val updateAvailable = isPackageVersionNewer(book.version, installedVersion)
+                Text(
+                    if (updateAvailable) "已安装 v$installedVersion，可更新至 v${book.version}" else "已安装 v$installedVersion，已是最新版本",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (updateAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Button(onClick = onImport, modifier = Modifier.fillMaxWidth(), enabled = enabled) {
                 if (importing) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
                     Icon(Icons.Outlined.CloudDownload, contentDescription = null)
                 }
-                Text(if (importing) "下载并导入中..." else "下载并导入", modifier = Modifier.padding(start = 8.dp))
+                Text(
+                    when {
+                        importing -> "下载并导入中..."
+                        installedVersion.isNotBlank() && isPackageVersionNewer(book.version, installedVersion) -> "更新为新副本"
+                        installedVersion.isNotBlank() -> "再次导入新副本"
+                        else -> "下载并导入"
+                    },
+                    modifier = Modifier.padding(start = 8.dp),
+                )
             }
             if (importing) {
                 val progress = if (downloadTotalBytes > 0) {
@@ -183,6 +203,9 @@ private fun OnlineLibraryBookCard(
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text("正在下载书卷包...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+                    Text("取消下载")
+                }
             }
         }
     }
@@ -192,4 +215,16 @@ private fun readableLibrarySize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024f * 1024f))
     bytes >= 1024 -> "%.0f KB".format(bytes / 1024f)
     else -> "$bytes B"
+}
+
+internal fun isPackageVersionNewer(remote: String, installed: String): Boolean {
+    fun parts(value: String): List<Int>? = value.removePrefix("v").substringBefore('-').split('.')
+        .map { it.toIntOrNull() ?: return null }
+    val remoteParts = parts(remote) ?: return false
+    val installedParts = parts(installed) ?: return false
+    repeat(maxOf(remoteParts.size, installedParts.size)) { index ->
+        val comparison = remoteParts.getOrElse(index) { 0 }.compareTo(installedParts.getOrElse(index) { 0 })
+        if (comparison != 0) return comparison > 0
+    }
+    return false
 }

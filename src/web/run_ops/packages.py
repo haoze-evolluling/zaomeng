@@ -159,6 +159,7 @@ def import_run_package(
     write_json: Callable[[Path, dict[str, Any]], None],
     discover_artifacts: Callable[[dict[str, Any]], dict[str, Any]],
     serialize_manifest: Callable[[dict[str, Any]], dict[str, Any]],
+    library_package: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     target_run_dir = runs_root / new_run_id
     if target_run_dir.exists():
@@ -198,6 +199,7 @@ def import_run_package(
             imported_at=utc_now(),
             package_filename=package_path.name,
             builtin_source=builtin_source,
+            library_package=library_package,
         )
         refreshed = discover_artifacts(rewritten)
         write_json(manifest_path, refreshed)
@@ -216,6 +218,7 @@ def rewrite_imported_run_manifest(
     imported_at: str,
     package_filename: str,
     builtin_source: bool,
+    library_package: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     source_root = source_run_dir.resolve(strict=False)
     target_root = target_run_dir.resolve(strict=False)
@@ -227,6 +230,7 @@ def rewrite_imported_run_manifest(
         imported_at=imported_at,
         package_filename=package_filename,
         builtin_source=builtin_source,
+        library_package=library_package,
     )
 
 
