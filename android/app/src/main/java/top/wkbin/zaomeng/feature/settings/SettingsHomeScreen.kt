@@ -1,0 +1,164 @@
+package top.wkbin.zaomeng.feature.settings
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Chat
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.koin.compose.koinInject
+import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
+import top.wkbin.zaomeng.data.preferences.ThemeMode
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsHomeScreen(
+    onBack: () -> Unit,
+    onOpenModelSettings: () -> Unit,
+    onOpenChatDisplay: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onOpenAppSupport: () -> Unit,
+    preferencesRepository: AppPreferencesRepository = koinInject(),
+) {
+    val themeMode by preferencesRepository.themeMode.collectAsStateWithLifecycle(ThemeMode.SYSTEM)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("设置") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding = PaddingValues(bottom = 28.dp),
+        ) {
+            item { SectionTitle("模型与对话", 16.dp) }
+            item {
+                SettingsHomeGroup {
+                    SettingsHomeRow(
+                        title = "模型设置",
+                        subtitle = "管理模型档案、服务商和 API Key。",
+                        icon = Icons.Outlined.Settings,
+                        onClick = onOpenModelSettings,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsHomeRow(
+                        title = "聊天显示",
+                        subtitle = "调整消息字号和对话显示密度。",
+                        icon = Icons.Outlined.Chat,
+                        onClick = onOpenChatDisplay,
+                    )
+                }
+            }
+            item { SectionTitle("外观") }
+            item {
+                SettingsHomeGroup {
+                    SettingsHomeRow(
+                        title = "主题模式",
+                        subtitle = "浅色、深色或跟随系统。",
+                        icon = Icons.Outlined.Palette,
+                        value = themeMode.displayName,
+                        onClick = onOpenAppearance,
+                    )
+                }
+            }
+            item { SectionTitle("应用") }
+            item {
+                SettingsHomeGroup {
+                    SettingsHomeRow(
+                        title = "应用与支持",
+                        subtitle = "检查更新并导出脱敏运行诊断。",
+                        icon = Icons.Outlined.Info,
+                        onClick = onOpenAppSupport,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String, topPadding: androidx.compose.ui.unit.Dp = 24.dp) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 32.dp, top = topPadding, bottom = 8.dp, end = 32.dp),
+    )
+}
+
+@Composable
+private fun SettingsHomeGroup(content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) { Column(content = { content() }) }
+}
+
+@Composable
+private fun SettingsHomeRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    value: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        value?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+internal val ThemeMode.displayName: String
+    get() = when (this) {
+        ThemeMode.SYSTEM -> "跟随系统"
+        ThemeMode.LIGHT -> "浅色模式"
+        ThemeMode.DARK -> "深色模式"
+    }

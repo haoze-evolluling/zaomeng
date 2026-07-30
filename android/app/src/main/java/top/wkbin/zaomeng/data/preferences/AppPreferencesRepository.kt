@@ -27,6 +27,18 @@ enum class ChatFontSize(
     }
 }
 
+enum class ThemeMode(val storageValue: String) {
+    SYSTEM("system"),
+    LIGHT("light"),
+    DARK("dark"),
+    ;
+
+    companion object {
+        fun fromStorageValue(value: String?): ThemeMode =
+            values().firstOrNull { it.storageValue == value } ?: SYSTEM
+    }
+}
+
 data class ChatDisplayPreferences(
     val fontSize: ChatFontSize = ChatFontSize.STANDARD,
     val compactMode: Boolean = false,
@@ -38,6 +50,7 @@ data class AppPreferences(
     val lastRunId: String = "",
     val lastSessionId: String = "",
     val chatDisplay: ChatDisplayPreferences = ChatDisplayPreferences(),
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
 )
 
 class AppPreferencesRepository(
@@ -57,11 +70,16 @@ class AppPreferencesRepository(
                     fontSize = ChatFontSize.fromStorageValue(values[CHAT_FONT_SIZE]),
                     compactMode = values[CHAT_COMPACT_MODE] ?: false,
                 ),
+                themeMode = ThemeMode.fromStorageValue(values[THEME_MODE]),
             )
         }
 
     val chatDisplayPreferences: Flow<ChatDisplayPreferences> = preferences
         .map { preferences -> preferences.chatDisplay }
+        .distinctUntilChanged()
+
+    val themeMode: Flow<ThemeMode> = preferences
+        .map { preferences -> preferences.themeMode }
         .distinctUntilChanged()
 
     suspend fun saveImportDefaults(characters: String, autoDistill: Boolean) {
@@ -142,6 +160,10 @@ class AppPreferencesRepository(
         }
     }
 
+    suspend fun setThemeMode(themeMode: ThemeMode) {
+        dataStore.edit { values -> values[THEME_MODE] = themeMode.storageValue }
+    }
+
     private companion object {
         val DEFAULT_CHARACTERS = stringPreferencesKey("default_characters")
         val AUTO_DISTILL = booleanPreferencesKey("auto_distill")
@@ -149,5 +171,6 @@ class AppPreferencesRepository(
         val LAST_SESSION_ID = stringPreferencesKey("last_session_id")
         val CHAT_FONT_SIZE = stringPreferencesKey("chat_font_size")
         val CHAT_COMPACT_MODE = booleanPreferencesKey("chat_compact_mode")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }
