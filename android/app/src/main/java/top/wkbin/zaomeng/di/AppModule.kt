@@ -22,6 +22,8 @@ import top.wkbin.zaomeng.feature.redistill.RedistillViewModel
 import top.wkbin.zaomeng.feature.relations.RelationsViewModel
 import top.wkbin.zaomeng.feature.sessions.SessionsViewModel
 import top.wkbin.zaomeng.feature.settings.SettingsViewModel
+import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
+import top.wkbin.zaomeng.feature.settings.ModelProfilesViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +55,8 @@ val appModule = module {
 
     viewModel { BookshelfViewModel(get(), androidContext()) }
     viewModel { SettingsViewModel(get(), get(), androidContext()) }
+    viewModel { ModelProfilesViewModel(get()) }
+    viewModel { parameters -> ModelProfileEditorViewModel(get(), parameters.get()) }
     viewModel { ImportBookViewModel(get(), androidContext()) }
     viewModel { parameters -> RunDetailViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RedistillViewModel(get(), parameters.get(), androidContext()) }

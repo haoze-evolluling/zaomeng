@@ -36,6 +36,9 @@ import top.wkbin.zaomeng.feature.rundetail.RunDetailViewModel
 import top.wkbin.zaomeng.feature.sessions.SessionsScreen
 import top.wkbin.zaomeng.feature.sessions.SessionsViewModel
 import top.wkbin.zaomeng.feature.settings.ModelSettingsScreen
+import top.wkbin.zaomeng.feature.settings.ModelProfileEditorScreen
+import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
+import top.wkbin.zaomeng.feature.settings.ModelProfilesViewModel
 import top.wkbin.zaomeng.feature.settings.SettingsViewModel
 import top.wkbin.zaomeng.feature.settings.AppearanceSettingsScreen
 import top.wkbin.zaomeng.feature.settings.ChatDisplaySettingsScreen
@@ -119,8 +122,21 @@ fun ZaomengApp(
         }
 
         composable<ModelConfigurationDestination> {
-            val viewModel: SettingsViewModel = koinViewModel()
-            ModelSettingsScreen(viewModel = viewModel, onBack = navController::navigateUp)
+            val viewModel: ModelProfilesViewModel = koinViewModel()
+            ModelSettingsScreen(
+                viewModel = viewModel,
+                onBack = navController::navigateUp,
+                onAddProfile = { navController.navigate(ModelProfileEditorDestination()) },
+                onEditProfile = { navController.navigate(ModelProfileEditorDestination(it)) },
+            )
+        }
+
+        composable<ModelProfileEditorDestination> { entry ->
+            val destination = entry.toRoute<ModelProfileEditorDestination>()
+            val viewModel: ModelProfileEditorViewModel = koinViewModel(
+                parameters = { parametersOf(destination.profileId) },
+            )
+            ModelProfileEditorScreen(viewModel = viewModel, onBack = navController::navigateUp)
         }
 
         composable<ChatDisplaySettingsDestination> {
