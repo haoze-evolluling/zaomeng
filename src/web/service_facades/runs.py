@@ -65,6 +65,7 @@ class RunServiceMixin:
         profile_id: str = "",
         profile_name: str = "",
         create_profile: bool = False,
+        activate_profile: bool = True,
     ) -> dict[str, Any]:
         document = self._load_model_settings_document()
         profiles = list(document.get("profiles", []) or [])
@@ -108,7 +109,11 @@ class RunServiceMixin:
             next_profiles.append(normalized)
         self._write_json(
             self.settings_path,
-            {"version": 2, "active_profile_id": requested_profile_id, "profiles": next_profiles},
+            {
+                "version": 2,
+                "active_profile_id": requested_profile_id if activate_profile or not active_profile_id else active_profile_id,
+                "profiles": next_profiles,
+            },
         )
         return self.get_model_settings()
 

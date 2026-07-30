@@ -15,6 +15,9 @@ data object ModelSettingsDestination
 data object ModelConfigurationDestination
 
 @Serializable
+data class ModelProfileEditorDestination(val profileId: String = "")
+
+@Serializable
 data object ChatDisplaySettingsDestination
 
 @Serializable

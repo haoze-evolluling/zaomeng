@@ -55,6 +55,7 @@ class SaveModelSettingsRequest(BaseModel):
     profile_id: str = Field(default="")
     profile_name: str = Field(default="", max_length=80)
     create_profile: bool = Field(default=False)
+    activate_profile: bool = Field(default=True)
 
 
 class TestModelSettingsRequest(BaseModel):

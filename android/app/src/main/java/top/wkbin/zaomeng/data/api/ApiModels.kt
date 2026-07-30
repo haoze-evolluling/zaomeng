@@ -41,6 +41,7 @@ data class SaveModelSettingsRequest(
     @SerialName("profile_id") val profileId: String = "",
     @SerialName("profile_name") val profileName: String = "",
     @SerialName("create_profile") val createProfile: Boolean = false,
+    @SerialName("activate_profile") val activateProfile: Boolean = true,
 )
 
 @Serializable

@@ -36,6 +36,7 @@ def save_model_settings(
             profile_id=payload.profile_id,
             profile_name=payload.profile_name,
             create_profile=payload.create_profile,
+            activate_profile=payload.activate_profile,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

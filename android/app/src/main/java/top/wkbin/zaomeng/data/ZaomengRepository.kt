@@ -92,7 +92,7 @@ class ZaomengRepository(
 
     suspend fun saveModelSettings(request: SaveModelSettingsRequest): ModelSettingsDto = request {
         backend.requireApi().saveModelSettings(request).also { saved ->
-            modelApiKeyStore.saveForProfile(saved.activeProfileId.ifBlank { request.profileId }, request.apiKey)
+            modelApiKeyStore.saveForProfile(request.profileId.ifBlank { saved.activeProfileId }, request.apiKey)
         }
     }
 
