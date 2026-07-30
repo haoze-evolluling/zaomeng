@@ -7,6 +7,10 @@ import top.wkbin.zaomeng.backend.BackendState
 import top.wkbin.zaomeng.backend.DistillationForegroundController
 import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.RunManifestDto
+import top.wkbin.zaomeng.data.update.AppUpdateDownloadState
+import top.wkbin.zaomeng.data.update.AppUpdateDownloadStatus
+import top.wkbin.zaomeng.data.update.AppUpdateInfo
+import top.wkbin.zaomeng.data.update.AppUpdateRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,10 +45,13 @@ data class BookshelfUiState(
     val filter: BookshelfFilter = BookshelfFilter.All,
     val sort: BookshelfSort = BookshelfSort.Recent,
     val error: String = "",
+    val availableUpdate: AppUpdateInfo? = null,
+    val updateDownloadState: AppUpdateDownloadState = AppUpdateDownloadState(),
 )
 
 class BookshelfViewModel(
     private val repository: ZaomengRepository,
+    private val updateRepository: AppUpdateRepository,
     private val applicationContext: Context,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(BookshelfUiState())
@@ -55,6 +62,12 @@ class BookshelfViewModel(
 
     init {
         repository.startBackend()
+        checkForAppUpdate()
+        viewModelScope.launch {
+            updateRepository.downloadState.collect { downloadState ->
+                mutableState.update { it.copy(updateDownloadState = downloadState) }
+            }
+        }
         viewModelScope.launch {
             repository.backendState.collectLatest { backendState ->
                 mutableState.update {
@@ -81,9 +94,54 @@ class BookshelfViewModel(
 
     /** Refresh after this retained destination returns from import or detail. */
     fun refreshWhenResumed() {
+        refreshAppUpdateDownloadState()
         if (state.value.backendState is BackendState.Ready) {
             loadRuns(manualRefresh = true)
             refreshModelConfiguration()
+        }
+    }
+
+    fun downloadUpdate() {
+        val update = state.value.availableUpdate ?: return
+        val status = state.value.updateDownloadState
+            .takeIf { it.version == update.version }
+            ?.status
+        if (status == AppUpdateDownloadStatus.Downloading || status == AppUpdateDownloadStatus.Downloaded) return
+        viewModelScope.launch {
+            try {
+                updateRepository.download(update)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The update can still be downloaded later from App Support.
+            }
+        }
+    }
+
+    private fun checkForAppUpdate() {
+        viewModelScope.launch {
+            try {
+                val update = updateRepository.checkForUpdate()
+                if (update != null) updateRepository.refreshDownloadState(update)
+                mutableState.update { it.copy(availableUpdate = update) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Update checks must never block the local bookshelf.
+            }
+        }
+    }
+
+    private fun refreshAppUpdateDownloadState() {
+        val update = state.value.availableUpdate ?: return
+        viewModelScope.launch {
+            try {
+                updateRepository.refreshDownloadState(update)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Keep the last known state if DownloadManager cannot be queried.
+            }
         }
     }
 

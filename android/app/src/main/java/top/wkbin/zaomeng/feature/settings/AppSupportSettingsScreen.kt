@@ -6,7 +6,10 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -17,17 +20,30 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.net.toUri
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshUpdateDownloadState()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val diagnosticsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri -> if (uri != null) viewModel.exportDiagnostics(uri) }
@@ -43,31 +59,53 @@ fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             )
         },
     ) { innerPadding ->
-        SettingsSupportGroup(
-            modifier = Modifier.fillMaxWidth().padding(innerPadding).padding(horizontal = 16.dp, vertical = 16.dp),
-            state = state,
-            onCheck = viewModel::checkForAppUpdate,
-            onDownload = viewModel::downloadUpdate,
-            onExportDiagnostics = { diagnosticsLauncher.launch("zaomeng-diagnostics.json") },
-            onOpenProject = {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/wkbin/zaomeng")))
-            },
-            onOpenPackageLibrary = {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/wkbin/zaomeng-library")))
-            },
-            onJoinQqGroup = {
-                try {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+        ) {
+            SettingsSupportGroup(
+                modifier = Modifier.fillMaxWidth(),
+                state = state,
+                onCheck = viewModel::checkForAppUpdate,
+                onDownload = viewModel::downloadUpdate,
+                onExportDiagnostics = { diagnosticsLauncher.launch("zaomeng-diagnostics.json") },
+                onOpenProject = {
                     context.startActivity(
                         Intent(
                             Intent.ACTION_VIEW,
-                            Uri.parse("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1090225658&card_type=group&source=qrcode"),
-                        ),
+                            "https://github.com/wkbin/zaomeng".toUri()
+                        )
                     )
-                } catch (_: Exception) {
-                    Toast.makeText(context, "未检测到 QQ，请搜索群号 1090225658 加入。", Toast.LENGTH_LONG).show()
-                }
-            },
-        )
+                },
+                onOpenPackageLibrary = {
+                    context.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            "https://github.com/wkbin/zaomeng-library".toUri()
+                        )
+                    )
+                },
+                onJoinQqGroup = {
+                    try {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1090225658&card_type=group&source=qrcode".toUri(),
+                            ),
+                        )
+                    } catch (_: Exception) {
+                        Toast.makeText(
+                            context,
+                            "未检测到 QQ，请搜索群号 1090225658 加入。",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                },
+            )
+        }
     }
 }
 

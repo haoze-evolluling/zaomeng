@@ -53,11 +53,11 @@ val appModule = module {
         )
     }
     single { AppPreferencesRepository(get()) }
-    single { AppUpdateRepository(androidContext()) }
+    single { AppUpdateRepository(androidContext(), get()) }
     single { OnlineLibraryRepository(androidContext()) }
     single { ZaomengRepository(get(), get(), get()) }
 
-    viewModel { BookshelfViewModel(get(), androidContext()) }
+    viewModel { BookshelfViewModel(get(), get(), androidContext()) }
     viewModel { SettingsViewModel(get(), get(), androidContext()) }
     viewModel { ModelProfilesViewModel(get()) }
     viewModel { parameters -> ModelProfileEditorViewModel(get(), parameters.get()) }
