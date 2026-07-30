@@ -21,4 +21,5 @@ mypy>=1.10.0
 fastapi>=0.104.0,<1.0.0
 httpx2>=2.0.0,<3.0.0
 pydantic>=2.0.0,<3.0.0
+python-multipart==0.0.20
 uvicorn>=0.24.0

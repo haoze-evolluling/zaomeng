@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from src.web.time_utils import utc_now as _utc_now
+from src.web.persona_avatars import avatar_path, avatar_version
 from src.web.artifacts import discover_character_cards, discover_relation_graph
 from src.web.chat import load_pending_turn_payload as load_dialogue_pending_turn_payload
 from src.web.manifest import (
@@ -28,7 +29,13 @@ class CoreServiceMixin:
     def _serialize_manifest(self, payload: dict[str, Any]) -> dict[str, Any]:
         run_id = str(payload.get("run_id", "")).strip()
         file_urls = self._build_file_urls(run_id, payload) if run_id else {}
-        return serialize_manifest(payload, run_id=run_id, file_urls=file_urls)
+        serialized = serialize_manifest(payload, run_id=run_id, file_urls=file_urls)
+        for persona in serialized.get("artifact_index", {}).get("characters", []):
+            if isinstance(persona, dict):
+                persona["avatar_version"] = avatar_version(
+                    avatar_path(self.runs_root / run_id, str(persona.get("name", "")))
+                ) if run_id else ""
+        return serialized
 
     def _discover_artifacts(self, manifest: dict[str, Any]) -> dict[str, Any]:
         return discover_artifacts(

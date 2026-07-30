@@ -1,6 +1,7 @@
 package top.wkbin.zaomeng.feature.chat
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -27,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -75,6 +79,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -264,6 +269,7 @@ fun ChatScreen(
                 } else {
                     Transcript(
                         session = requireNotNull(state.session),
+                        avatarBytes = state.avatarBytes,
                         sending = state.sending,
                         streamStatus = state.streamStatus,
                         streamingReplies = state.streamingReplies,
@@ -449,7 +455,11 @@ private fun ChatSearchBar(
             trailingIcon = {
                 if (query.isNotBlank()) {
                     IconButton(onClick = { onQueryChange("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "清空搜索",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             },
@@ -568,6 +578,7 @@ private fun HighlightedSearchText(text: String, query: String) {
 @Composable
 private fun Transcript(
     session: DialogueSessionDto,
+    avatarBytes: Map<String, ByteArray>,
     sending: Boolean,
     streamStatus: String,
     streamingReplies: List<StreamingReplyPart>,
@@ -638,7 +649,7 @@ private fun Transcript(
         }
     }
 
-    Box(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -671,6 +682,7 @@ private fun Transcript(
             ) { index, item ->
                 TranscriptBubble(
                     item = item,
+                    avatarBytes = avatarBytes,
                     displayPreferences = displayPreferences,
                     actionsEnabled = actionsEnabled,
                     canRegenerate = index == latestAssistantIndex && !sending,
@@ -707,6 +719,7 @@ private fun Transcript(
                         message = item.text,
                         role = item.role,
                     ),
+                    avatarBytes = avatarBytes,
                     displayPreferences = displayPreferences,
                     actionsEnabled = false,
                     streaming = true,
@@ -953,44 +966,46 @@ private fun DirectorReceiptCard(receipt: DirectorReceipt) {
             modifier = Modifier
                 .widthIn(max = 520.dp)
                 .clickable { expanded = !expanded },
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            shape = RoundedCornerShape(8.dp),
+            color = androidx.compose.ui.graphics.Color.Transparent,
+            shape = RoundedCornerShape(0.dp),
         ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                androidx.compose.material3.HorizontalDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Default.PlayArrow,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
                         "导演指令已应用",
                         modifier = Modifier.padding(start = 5.dp).weight(1f),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Icon(
                         Icons.Default.KeyboardArrowDown,
                         contentDescription = if (expanded) "收起指令" else "展开指令",
                         modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (expanded) {
                     ParentheticalMessageText(
                         text = receipt.message,
-                        modifier = Modifier.padding(top = 5.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
                         style = MaterialTheme.typography.bodyMedium,
-                        baseColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        baseColor = MaterialTheme.colorScheme.onSurface,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                 } else {
                     Text(
                         "作为下一拍的引导，不写入角色台词",
                         modifier = Modifier.padding(top = 2.dp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -1010,30 +1025,32 @@ private fun PendingDirectorInstructionCard(
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Surface(
             modifier = Modifier.widthIn(max = 520.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            shape = RoundedCornerShape(8.dp),
+            color = androidx.compose.ui.graphics.Color.Transparent,
+            shape = RoundedCornerShape(0.dp),
         ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                androidx.compose.material3.HorizontalDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Default.PlayArrow,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
                         "导演指令",
                         modifier = Modifier.padding(start = 5.dp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
                 ParentheticalMessageText(
                     text = pending.message,
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                    baseColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    baseColor = MaterialTheme.colorScheme.onSurface,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
                 when (pending.status) {
                     PendingUserMessageStatus.Sending -> Row(
@@ -1043,13 +1060,13 @@ private fun PendingDirectorInstructionCard(
                         CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
                             pending.statusText.ifBlank { "正在安排下一拍" },
                             modifier = Modifier.padding(start = 7.dp),
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
 
@@ -1117,6 +1134,7 @@ private suspend fun LazyListState.scrollToBottom(itemIndex: Int, animated: Boole
 @OptIn(ExperimentalFoundationApi::class)
 private fun TranscriptBubble(
     item: TranscriptItemDto,
+    avatarBytes: Map<String, ByteArray>,
     displayPreferences: ChatDisplayPreferences,
     actionsEnabled: Boolean,
     streaming: Boolean = false,
@@ -1188,30 +1206,35 @@ private fun TranscriptBubble(
                             onClick = {},
                             onLongClick = { if (!streaming) menuExpanded = true },
                         ),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(8.dp),
+                    color = androidx.compose.ui.graphics.Color.Transparent,
+                    shape = RoundedCornerShape(0.dp),
                 ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = verticalPadding)) {
+                    Column(
+                        Modifier.padding(horizontal = 14.dp, vertical = verticalPadding),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        androidx.compose.material3.HorizontalDivider()
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Default.PlayArrow,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
                                 text = "导演${item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}",
                                 modifier = Modifier.padding(start = 5.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }
                         ParentheticalMessageText(
                             text = item.message,
-                            modifier = Modifier.padding(top = 3.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
                             style = messageStyle,
-                            baseColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            baseColor = MaterialTheme.colorScheme.onSurface,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         )
                     }
                 }
@@ -1234,6 +1257,22 @@ private fun TranscriptBubble(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
+        if (!isUser) {
+            ChatPersonaAvatar(
+                bytes = avatarBytes[item.speaker],
+                modifier = Modifier.size(40.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        Column {
+            if (!isUser) {
+                Text(
+                    text = item.speaker.ifBlank { "人物" },
+                    modifier = Modifier.padding(bottom = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         Box {
             Surface(
                 modifier = Modifier
@@ -1255,14 +1294,10 @@ private fun TranscriptBubble(
                 ),
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = verticalPadding)) {
-                    Text(
-                        text = if (isUser) "你 · ${item.speaker}" else item.speaker.ifBlank { "人物" },
+                    if (isUser) Text(
+                        text = "你 · ${item.speaker}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (isUser) {
-                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
                         fontWeight = FontWeight.SemiBold,
                     )
                     ParentheticalMessageText(
@@ -1295,6 +1330,7 @@ private fun TranscriptBubble(
                 onRegenerate = onRegenerate,
                 onBranch = onBranch,
             )
+        }
         }
     }
 }
@@ -1408,6 +1444,7 @@ private fun ParentheticalMessageText(
     modifier: Modifier = Modifier,
     style: TextStyle,
     baseColor: androidx.compose.ui.graphics.Color,
+    textAlign: androidx.compose.ui.text.style.TextAlign = androidx.compose.ui.text.style.TextAlign.Start,
 ) {
     val asideColor = MaterialTheme.colorScheme.secondary
     val annotated = buildAnnotatedString {
@@ -1421,7 +1458,7 @@ private fun ParentheticalMessageText(
         }
         append(text.substring(cursor))
     }
-    Text(text = annotated, modifier = modifier, style = style, color = baseColor)
+    Text(text = annotated, modifier = modifier, style = style, color = baseColor, textAlign = textAlign)
 }
 
 @Composable
@@ -1466,17 +1503,16 @@ private fun ChatComposer(
             draftValue = TextFieldValue(state.draft, TextRange(state.draft.length))
         }
     }
-    Surface(shadowElevation = 8.dp, tonalElevation = 2.dp) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(
-                    horizontal = 12.dp,
-                    vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
-                ),
-        ) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(
+                horizontal = 12.dp,
+                vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
+            ),
+    ) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(messageKindOptions, key = MessageKindOption::value) { option ->
                     FilterChip(
@@ -1685,9 +1721,31 @@ private fun ChatComposer(
                     }
                 }
             }
-        }
     }
 }
+
+@Composable
+private fun ChatPersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.clip(androidx.compose.foundation.shape.CircleShape),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        val bitmap = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+        if (bitmap == null) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+            }
+        } else {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "人物头像",
+                modifier = Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+        }
+        }
+    }
 
 private class MentionVisualTransformation(
     private val participants: List<String>,

@@ -170,7 +170,11 @@ fun SessionsScreen(
                             if (state.deletingSelection) {
                                 CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                             } else {
-                                Icon(Icons.Default.Delete, contentDescription = "删除选中会话")
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "删除选中会话",
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
                             }
                         }
                     } else {
@@ -245,13 +249,13 @@ fun SessionsScreen(
             title = { Text("删除这段会话？") },
             text = { Text("聊天记录会从这台手机上永久删除，人物资料和书卷不会受影响。") },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         pendingDeletion = null
                         viewModel.deleteSession(session)
                     },
                 ) {
-                    Text("删除")
+                    Text("删除", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -267,13 +271,13 @@ fun SessionsScreen(
             title = { Text("删除选中的 $selectedCount 个会话？") },
             text = { Text("这些聊天记录会从这台手机上永久删除，人物资料和书卷不会受影响。") },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         pendingBatchDeletion = false
                         viewModel.deleteSelectedSessions()
                     },
                 ) {
-                    Text("删除 $selectedCount 个")
+                    Text("删除 $selectedCount 个", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -399,7 +403,11 @@ private fun SessionListControls(
             trailingIcon = if (query.isNotBlank()) {
                 {
                     IconButton(onClick = { onQueryChange("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "清空搜索",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             } else {
@@ -458,7 +466,9 @@ private fun NoSessionMatches(onClearSearch: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = onClearSearch) { Text("清空搜索") }
+            TextButton(onClick = onClearSearch) {
+                Text("清空搜索", color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
@@ -554,7 +564,11 @@ private fun SessionCard(
                         if (deleting) {
                             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         } else {
-                            Icon(Icons.Default.Delete, contentDescription = "删除会话")
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "删除会话",
+                                tint = MaterialTheme.colorScheme.error,
+                            )
                         }
                     }
                     Button(onClick = onOpen, enabled = !deleting) {

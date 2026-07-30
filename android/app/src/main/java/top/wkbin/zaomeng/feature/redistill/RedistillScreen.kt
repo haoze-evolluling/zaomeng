@@ -188,7 +188,9 @@ fun RedistillScreen(
                                     "${state.sourceCharCount.readableCount()} 字 · ${state.sourceSentenceCount} 句",
                                     Modifier.weight(1f),
                                 )
-                                TextButton(onClick = viewModel::clearFile) { Text("移除") }
+                                TextButton(onClick = viewModel::clearFile) {
+                                    Text("移除", color = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
                     }

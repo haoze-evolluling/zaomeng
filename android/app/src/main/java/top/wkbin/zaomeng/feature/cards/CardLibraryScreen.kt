@@ -81,7 +81,7 @@ fun CardLibraryScreen(
                 TextButton(onClick = {
                     pendingDelete = null
                     viewModel.delete(card.cardId)
-                }) { Text("删除") }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
         )
@@ -240,7 +240,11 @@ private fun ReusableCardRow(
             }
             IconButton(onClick = onDelete, enabled = !deleting) {
                 if (deleting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Icon(Icons.Default.Delete, contentDescription = "删除")
+                else Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除",
+                    tint = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }

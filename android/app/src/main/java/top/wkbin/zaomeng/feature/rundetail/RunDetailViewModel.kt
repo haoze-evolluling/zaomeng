@@ -1,6 +1,12 @@
 package top.wkbin.zaomeng.feature.rundetail
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -36,6 +42,14 @@ data class RunDetailUiState(
     val message: String = "",
     val exportedPackage: ExportedRunPackage? = null,
     val exportRequestId: Long = 0,
+    val avatarBytes: Map<String, ByteArray> = emptyMap(),
+    val updatingAvatar: String = "",
+)
+
+data class AvatarCrop(
+    val left: Int,
+    val top: Int,
+    val side: Int,
 )
 
 class RunDetailViewModel(
@@ -283,6 +297,26 @@ class RunDetailViewModel(
         mutableState.update { it.copy(error = "", message = "") }
     }
 
+    fun updatePersonaAvatar(character: String, uri: Uri, crop: AvatarCrop) {
+        if (character.isBlank() || state.value.updatingAvatar.isNotBlank()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(updatingAvatar = character, error = "", message = "") }
+            try {
+                val bytes = withContext(Dispatchers.Default) { cropAvatar(uri, crop) }
+                repository.uploadPersonaAvatar(runId, character, bytes)
+                val refreshed = repository.getRun(runId)
+                acceptRun(refreshed)
+                mutableState.update { it.copy(avatarBytes = it.avatarBytes + (character to bytes)) }
+                loadAvatar(character, refreshed.artifactIndex.characters.firstOrNull { it.name == character }?.avatarVersion.orEmpty())
+                mutableState.update { it.copy(updatingAvatar = "", message = "${character} 的头像已更新。") }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update { it.copy(updatingAvatar = "", error = error.message ?: "头像更新失败。") }
+            }
+        }
+    }
+
     private fun loadRun(refreshManifest: Boolean) {
         if (loadJob?.isActive == true) return
         loadJob = viewModelScope.launch {
@@ -295,7 +329,9 @@ class RunDetailViewModel(
                 )
             }
             try {
-                acceptRun(if (refreshManifest) repository.refreshRun(runId) else repository.getRun(runId))
+                val run = if (refreshManifest) repository.refreshRun(runId) else repository.getRun(runId)
+                acceptRun(run)
+                run.artifactIndex.characters.forEach { persona -> loadAvatar(persona.name, persona.avatarVersion) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -307,6 +343,41 @@ class RunDetailViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private fun loadAvatar(character: String, version: String) {
+        if (character.isBlank() || version.isBlank() || state.value.avatarBytes.containsKey(character)) return
+        viewModelScope.launch {
+            val bytes = runCatching { repository.getPersonaAvatar(runId, character, version) }.getOrNull() ?: return@launch
+            mutableState.update { it.copy(avatarBytes = it.avatarBytes + (character to bytes)) }
+        }
+    }
+
+    private fun cropAvatar(uri: Uri, crop: AvatarCrop): ByteArray {
+        val source = applicationContext.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+            ?: error("无法读取所选图片。")
+        val side = crop.side.coerceIn(1, minOf(source.width, source.height))
+        require(side > 0) { "所选图片无效。" }
+        val left = crop.left.coerceIn(0, source.width - side)
+        val top = crop.top.coerceIn(0, source.height - side)
+        val circular = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+        Canvas(circular).apply {
+            save()
+            clipPath(Path().apply { addCircle(256f, 256f, 256f, Path.Direction.CW) })
+            drawBitmap(
+                source,
+                Rect(left, top, left + side, top + side),
+                Rect(0, 0, 512, 512),
+                Paint(Paint.ANTI_ALIAS_FLAG),
+            )
+            restore()
+        }
+        return java.io.ByteArrayOutputStream().use { output ->
+            circular.compress(Bitmap.CompressFormat.PNG, 100, output)
+            circular.recycle()
+            source.recycle()
+            output.toByteArray()
         }
     }
 

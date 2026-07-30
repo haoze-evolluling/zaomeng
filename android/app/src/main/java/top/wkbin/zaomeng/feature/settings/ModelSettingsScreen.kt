@@ -40,7 +40,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -81,7 +80,7 @@ fun ModelSettingsScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.load()
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshWhenResumed()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -177,7 +176,9 @@ fun ModelProfileEditorScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { showDeleteDialog = false; viewModel.delete() }) { Text("删除") }
+                TextButton(onClick = { showDeleteDialog = false; viewModel.delete() }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("取消") } },
         )
@@ -230,27 +231,25 @@ fun ModelProfileEditorScreen(
             )
         },
         bottomBar = {
-            Surface(tonalElevation = 3.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    onClick = viewModel::testConnection,
+                    modifier = Modifier.weight(1f),
+                    enabled = !state.loading && !state.saving && !state.testing && !state.deleting,
                 ) {
-                    OutlinedButton(
-                        onClick = viewModel::testConnection,
-                        modifier = Modifier.weight(1f),
-                        enabled = !state.loading && !state.saving && !state.testing && !state.deleting,
-                    ) {
-                        if (state.testing) ProgressIcon()
-                        Text(if (state.testing) "测试中…" else "测试连接")
-                    }
-                    Button(
-                        onClick = viewModel::save,
-                        modifier = Modifier.weight(1f),
-                        enabled = !state.loading && !state.saving && !state.testing && !state.deleting,
-                    ) {
-                        if (state.saving) ProgressIcon()
-                        Text(if (state.saving) "保存中…" else if (state.isNew) "创建并启用" else "保存")
-                    }
+                    if (state.testing) ProgressIcon()
+                    Text(if (state.testing) "测试中…" else "测试连接")
+                }
+                Button(
+                    onClick = viewModel::save,
+                    modifier = Modifier.weight(1f),
+                    enabled = !state.loading && !state.saving && !state.testing && !state.deleting,
+                ) {
+                    if (state.saving) ProgressIcon()
+                    Text(if (state.saving) "保存中…" else if (state.isNew) "创建并启用" else "保存")
                 }
             }
         },
@@ -351,9 +350,16 @@ fun ModelProfileEditorScreen(
                         enabled = state.profileCount > 1 && !state.deleting && !state.saving,
                     ) {
                         if (state.deleting) ProgressIcon()
-                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                         Spacer(Modifier.width(6.dp))
-                        Text(if (state.deleting) "删除中…" else "删除模型档案")
+                        Text(
+                            if (state.deleting) "删除中…" else "删除模型档案",
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }

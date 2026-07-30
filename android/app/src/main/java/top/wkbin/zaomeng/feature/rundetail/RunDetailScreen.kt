@@ -1,10 +1,15 @@
 package top.wkbin.zaomeng.feature.rundetail
 
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,9 +22,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
@@ -52,14 +59,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.DistillationForegroundController
 import top.wkbin.zaomeng.data.api.ExportedRunPackage
@@ -69,6 +85,8 @@ import top.wkbin.zaomeng.data.api.BetaFeatureDto
 import top.wkbin.zaomeng.data.api.PersonaIndexDto
 import top.wkbin.zaomeng.data.api.RunManifestDto
 import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
+
+private const val AVATAR_CROP_FRAME_FRACTION = 0.8f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +108,12 @@ fun RunDetailScreen(
     var confirmRedistill by rememberSaveable { mutableStateOf(false) }
     var confirmResume by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var selectedAvatarPersona by remember { mutableStateOf<PersonaIndexDto?>(null) }
+    var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val persona = selectedAvatarPersona
+        if (uri != null && persona != null) avatarCropUri = uri
+    }
     var resumeAfterPermission by rememberSaveable { mutableStateOf(false) }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -194,10 +218,49 @@ fun RunDetailScreen(
                         viewModel.deleteRun()
                     },
                     enabled = !state.deleting,
-                ) { Text("确认删除") }
+                ) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDelete = false }, enabled = !state.deleting) { Text("取消") }
+            },
+        )
+    }
+
+    selectedAvatarPersona?.let { persona ->
+        AlertDialog(
+            onDismissRequest = { if (state.updatingAvatar.isBlank()) selectedAvatarPersona = null },
+            title = { Text(persona.name) },
+            text = {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    PersonaAvatar(
+                        bytes = state.avatarBytes[persona.name],
+                        modifier = Modifier.size(144.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { avatarPicker.launch("image/*") },
+                    enabled = state.updatingAvatar.isBlank(),
+                ) { Text(if (state.updatingAvatar == persona.name) "正在保存" else "修改头像") }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedAvatarPersona = null }, enabled = state.updatingAvatar.isBlank()) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+
+    avatarCropUri?.let { uri ->
+        AvatarCropDialog(
+            uri = uri,
+            onDismiss = { avatarCropUri = null },
+            onConfirm = { crop ->
+                selectedAvatarPersona?.let { persona ->
+                    avatarCropUri = null
+                    viewModel.updatePersonaAvatar(persona.name, uri, crop)
+                }
             },
         )
     }
@@ -252,6 +315,7 @@ fun RunDetailScreen(
                 onRedistill = { confirmRedistill = true },
                 onExport = viewModel::exportRun,
                 onOpenPersona = { character -> onOpenPersona(viewModel.runId, character) },
+                onAvatarClick = { selectedAvatarPersona = it },
                 onOpenSessions = { onOpenSessions(viewModel.runId) },
                 onOpenChapters = { onOpenChapters(viewModel.runId) },
                 onOpenRelations = { onOpenRelations(viewModel.runId) },
@@ -273,6 +337,7 @@ private fun RunDetailContent(
     onRedistill: () -> Unit,
     onExport: () -> Unit,
     onOpenPersona: (String) -> Unit,
+    onAvatarClick: (PersonaIndexDto) -> Unit,
     onOpenSessions: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenRelations: () -> Unit,
@@ -369,7 +434,12 @@ private fun RunDetailContent(
             }
         } else {
             items(run.artifactIndex.characters, key = PersonaIndexDto::name) { persona ->
-                PersonaCard(persona = persona, onClick = { onOpenPersona(persona.name) })
+                PersonaCard(
+                    persona = persona,
+                    avatarBytes = state.avatarBytes[persona.name],
+                    onAvatarClick = { onAvatarClick(persona) },
+                    onClick = { onOpenPersona(persona.name) },
+                )
             }
         }
 
@@ -676,9 +746,16 @@ private fun ActionCard(
                     enabled = !deleting,
                 ) {
                     if (deleting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Delete, contentDescription = null)
+                    else Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (deleting) "正在删除…" else "删除这本书及其会话")
+                    Text(
+                        if (deleting) "正在删除…" else "删除这本书及其会话",
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
         }
@@ -686,7 +763,12 @@ private fun ActionCard(
 }
 
 @Composable
-private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
+private fun PersonaCard(
+    persona: PersonaIndexDto,
+    avatarBytes: ByteArray?,
+    onAvatarClick: () -> Unit,
+    onClick: () -> Unit,
+) {
     val preview = persona.preview
     val summary = listOf(preview.coreIdentity, preview.storyRole, preview.soulGoal)
         .firstOrNull(String::isNotBlank)
@@ -697,14 +779,8 @@ private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Person, contentDescription = null)
-                }
+            IconButton(onClick = onAvatarClick, modifier = Modifier.size(44.dp)) {
+                PersonaAvatar(bytes = avatarBytes, modifier = Modifier.fillMaxSize())
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -719,6 +795,123 @@ private fun PersonaCard(persona: PersonaIndexDto, onClick: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun PersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier.clip(CircleShape), shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+        val bitmap = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+        if (bitmap == null) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+            }
+        } else {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "人物头像",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AvatarCropDialog(
+    uri: Uri,
+    onDismiss: () -> Unit,
+    onConfirm: (AvatarCrop) -> Unit,
+) {
+    val context = LocalContext.current
+    val bitmap = remember(uri) {
+        context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+    }
+    if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("无法读取图片") },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        )
+        return
+    }
+
+    var zoom by remember(uri) { mutableStateOf(1f) }
+    var offsetX by remember(uri) { mutableStateOf(0f) }
+    var offsetY by remember(uri) { mutableStateOf(0f) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
+        zoom = (zoom * zoomChange).coerceIn(1f, 4f)
+        val baseScale = minOf(
+            viewport.width.toFloat() / bitmap.width,
+            viewport.height.toFloat() / bitmap.height,
+        )
+        val cropDiameter = minOf(viewport.width, viewport.height) * AVATAR_CROP_FRAME_FRACTION
+        val scaledWidth = bitmap.width * baseScale * zoom
+        val scaledHeight = bitmap.height * baseScale * zoom
+        val maxX = ((scaledWidth - cropDiameter) / 2f).coerceAtLeast(0f)
+        val maxY = ((scaledHeight - cropDiameter) / 2f).coerceAtLeast(0f)
+        offsetX = (offsetX + panChange.x).coerceIn(-maxX, maxX)
+        offsetY = (offsetY + panChange.y).coerceIn(-maxY, maxY)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("调整头像取景") },
+        text = {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clipToBounds()
+                        .transformable(transformableState)
+                        .onSizeChanged { viewport = it },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "头像取景预览",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = zoom,
+                                scaleY = zoom,
+                                translationX = offsetX,
+                                translationY = offsetY,
+                            ),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    )
+                    Canvas(Modifier.fillMaxSize()) {
+                        drawCircle(
+                            color = Color.White.copy(alpha = 0.92f),
+                            radius = size.minDimension * AVATAR_CROP_FRAME_FRACTION / 2f,
+                            center = center,
+                            style = Stroke(width = 2.dp.toPx()),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val cropDiameter = minOf(viewport.width, viewport.height) * AVATAR_CROP_FRAME_FRACTION
+                    val baseScale = minOf(
+                        viewport.width.toFloat() / bitmap.width,
+                        viewport.height.toFloat() / bitmap.height,
+                    )
+                    val imageScale = baseScale * zoom
+                    val selectedSide = (cropDiameter / imageScale).toInt().coerceAtLeast(1)
+                    val left = ((bitmap.width - selectedSide) / 2f - offsetX / imageScale).toInt()
+                    val top = ((bitmap.height - selectedSide) / 2f - offsetY / imageScale).toInt()
+                    onConfirm(AvatarCrop(left, top, selectedSide))
+                },
+                enabled = viewport != IntSize.Zero,
+            ) { Text("确认") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

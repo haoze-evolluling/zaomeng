@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.web.persona_avatars import avatar_path, avatar_version
 from src.utils.file_utils import save_markdown_data
 from src.web.time_utils import utc_now as _utc_now
 from src.web.review.persona_quality import evaluate_persona_quality
@@ -43,6 +44,35 @@ from src.web.review import (
 
 
 class ArtifactServiceMixin:
+    def save_persona_avatar(self, run_id: str, character: str, content: bytes) -> dict[str, str]:
+        manifest = self._require_manifest(run_id)
+        resolve_persona_dir(manifest, character)
+        if not content:
+            raise ValueError("头像文件为空。")
+        target = avatar_path(self.runs_root / run_id, character)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(target)
+        return self.persona_avatar_metadata(run_id, character)
+
+    def persona_avatar_metadata(self, run_id: str, character: str) -> dict[str, str]:
+        manifest = self._require_manifest(run_id)
+        resolve_persona_dir(manifest, character)
+        path = avatar_path(self.runs_root / run_id, character)
+        return {
+            "character": str(character).strip(),
+            "avatar_version": avatar_version(path),
+        }
+
+    def persona_avatar_path(self, run_id: str, character: str) -> Path:
+        manifest = self._require_manifest(run_id)
+        resolve_persona_dir(manifest, character)
+        path = avatar_path(self.runs_root / run_id, character)
+        if not path.exists():
+            raise FileNotFoundError(character)
+        return path
+
     def ingest_character_result(
         self,
         run_id: str,

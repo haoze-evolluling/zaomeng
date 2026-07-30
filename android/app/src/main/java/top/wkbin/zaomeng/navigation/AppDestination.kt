@@ -30,6 +30,9 @@ data object ChatDisplaySettingsDestination
 data object AppearanceSettingsDestination
 
 @Serializable
+data object StartupRecoverySettingsDestination
+
+@Serializable
 data object AppSupportSettingsDestination
 
 @Serializable
