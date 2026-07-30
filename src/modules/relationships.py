@@ -275,17 +275,24 @@ class RelationshipExtractor:
         alias_map = alias_map or {name: [name] for name in present}
         sentences = split_sentences(chunk)
         pairs: Dict[str, List[str]] = defaultdict(list)
-        for sentence in sentences:
-            hit = [
+        sentence_hits = [
+            {
                 name
                 for name in present
                 if self.distiller.text_mentions_any_alias(sentence, alias_map.get(name, [name]))
-            ]
+            }
+            for sentence in sentences
+        ]
+        for index, sentence in enumerate(sentences):
+            window = sentences[index : index + 2]
+            hit = set().union(*sentence_hits[index : index + 2])
             if len(hit) < 2:
                 continue
-            cleaned = re.sub(r"\s+", " ", sentence).strip()
-            for a, b in itertools.combinations(sorted(set(hit)), 2):
-                pairs[self._pair_key(a, b)].append(cleaned)
+            cleaned = re.sub(r"\s+", " ", " ".join(window)).strip()
+            for a, b in itertools.combinations(sorted(hit), 2):
+                pair = pairs[self._pair_key(a, b)]
+                if cleaned not in pair:
+                    pair.append(cleaned)
         return pairs
 
     def _score_relation(self, chunk: str, a: str, b: str) -> Dict[str, Any]:

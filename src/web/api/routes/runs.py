@@ -105,6 +105,7 @@ def import_run_package_route(
         return run_service.import_run_package(
             filename=payload.filename,
             content_base64=payload.content_base64,
+            library_package=payload.library_package,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Package not found.") from exc

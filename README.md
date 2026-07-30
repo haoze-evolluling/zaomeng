@@ -43,6 +43,10 @@
   <img src="docs/assets/qq-group.png" alt="造梦 QQ 交流群二维码，群号 1090225658" width="360">
 </p>
 
+## 提交书卷包
+
+已经整理好的 `.zaomeng-run.zip` 书卷包，欢迎通过 [在线书卷包提交入口](https://github.com/wkbin/zaomeng-library/issues) 投稿到社区书卷包库。
+
 ## 安装 🚀
 
 ### 安装 skill

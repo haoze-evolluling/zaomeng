@@ -77,6 +77,7 @@ def apply_imported_run_semantics(
     imported_at: str,
     package_filename: str,
     builtin_source: bool,
+    library_package: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     rewritten = manifest
     rewritten["run_id"] = new_run_id
@@ -100,6 +101,15 @@ def apply_imported_run_semantics(
         "builtin_source": builtin_source,
         "imported_at": imported_at,
     }
+    if library_package:
+        allowed = ("id", "title", "version", "download_url", "sha256")
+        normalized = {
+            key: str(library_package.get(key, "")).strip()
+            for key in allowed
+            if str(library_package.get(key, "")).strip()
+        }
+        if normalized.get("id") and normalized.get("version"):
+            rewritten["imported_from"]["online_library"] = normalized
     rewritten.setdefault("webui", {})
     novel_id = str(rewritten.get("novel_id", "")).strip()
     rewritten["webui"]["run_dir"] = str(target_root)

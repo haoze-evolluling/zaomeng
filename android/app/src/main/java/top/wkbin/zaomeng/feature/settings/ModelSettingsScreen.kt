@@ -628,7 +628,7 @@ internal fun SettingsRow(
     onClick: (() -> Unit)? = null,
 ) {
     val modifier = if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier
-    Row(modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         leadingIcon?.let { Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
