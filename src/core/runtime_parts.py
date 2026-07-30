@@ -36,6 +36,7 @@ class _RelationVisualizationRenderer:
     _render_mermaid_graph = RelationshipExtractor._render_mermaid_graph
     _render_relation_html = RelationshipExtractor._render_relation_html
     _default_node_style = staticmethod(RelationshipExtractor._default_node_style)
+    _mermaid_escape = staticmethod(RelationshipExtractor._mermaid_escape)
     _closeness_score = staticmethod(RelationshipExtractor._closeness_score)
     _edge_style = staticmethod(RelationshipExtractor._edge_style)
     _metric_badge = staticmethod(RelationshipExtractor._metric_badge)

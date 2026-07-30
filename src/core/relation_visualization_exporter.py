@@ -58,5 +58,6 @@ class MermaidRelationVisualizationExporter(RelationVisualizationExporter):
             return ""
         target_path = output_dir / asset_path.name
         if not target_path.exists():
-            shutil.copy2(asset_path, target_path)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(asset_path, target_path)
         return target_path.name
