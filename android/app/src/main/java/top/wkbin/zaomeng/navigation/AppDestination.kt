@@ -9,6 +9,9 @@ data object BookshelfDestination
 data object ImportBookDestination
 
 @Serializable
+data object OnlineLibraryDestination
+
+@Serializable
 data object ModelSettingsDestination
 
 @Serializable

@@ -23,20 +23,69 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
+def _balanced_json_candidates(text: str) -> list[str]:
+    """Return complete object and array fragments without joining unrelated text."""
+    candidates: list[str] = []
+    start = 0
+    while start < len(text):
+        opener = text[start]
+        if opener not in "[{":
+            start += 1
+            continue
+        stack = ["]" if opener == "[" else "}"]
+        in_string = False
+        escaped = False
+        completed = False
+        for end in range(start + 1, len(text)):
+            char = text[end]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "[":
+                stack.append("]")
+            elif char == "{":
+                stack.append("}")
+            elif char in "]}":
+                if char != stack[-1]:
+                    break
+                stack.pop()
+                if not stack:
+                    candidates.append(text[start : end + 1])
+                    start = end + 1
+                    completed = True
+                    break
+        if completed:
+            continue
+        # A JSON-looking root that reaches EOF without closing is truncated.
+        # Do not accept an object nested inside it as a separate response.
+        if start + 1 < len(text) and text[start + 1] in '{["-0123456789tfn \t\r\n':
+            break
+        start += 1
+    return candidates
+
+
 def _loads_llm_json(text: str, *, prefer_array: bool = False) -> Any:
-    text = _strip_code_fence(text)
+    text = _strip_code_fence(text).lstrip("\ufeff").replace("\u00a0", " ")
     if not text:
         raise ValueError("Model returned empty JSON.")
-    bracket_pairs = ("[]", "{}") if prefer_array else ("{}", "[]")
     candidates: list[str] = [text]
-    for brackets in bracket_pairs:
-        open_ch, close_ch = brackets[0], brackets[1]
-        start = text.find(open_ch)
-        end = text.rfind(close_ch)
-        if start != -1 and end > start:
-            snippet = text[start : end + 1]
-            if snippet not in candidates:
-                candidates.append(snippet)
+    for match in re.finditer(r"```(?:json)?[^\S\r\n]*\r?\n(.*?)```", text, re.DOTALL):
+        fenced = match.group(1).strip()
+        if fenced and fenced not in candidates:
+            candidates.append(fenced)
+    fragments = _balanced_json_candidates(text)
+    preferred_opener = "[" if prefer_array else "{"
+    fragments.sort(key=lambda candidate: 0 if candidate.startswith(preferred_opener) else 1)
+    for fragment in fragments:
+        if fragment not in candidates:
+            candidates.append(fragment)
     last_error: json.JSONDecodeError | None = None
     for candidate in candidates:
         for strict in (True, False):

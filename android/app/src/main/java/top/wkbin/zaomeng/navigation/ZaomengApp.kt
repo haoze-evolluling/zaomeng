@@ -26,6 +26,8 @@ import top.wkbin.zaomeng.feature.chapters.ChaptersScreen
 import top.wkbin.zaomeng.feature.chapters.ChaptersViewModel
 import top.wkbin.zaomeng.feature.importbook.ImportBookScreen
 import top.wkbin.zaomeng.feature.importbook.ImportBookViewModel
+import top.wkbin.zaomeng.feature.library.OnlineLibraryScreen
+import top.wkbin.zaomeng.feature.library.OnlineLibraryViewModel
 import top.wkbin.zaomeng.feature.persona.PersonaScreen
 import top.wkbin.zaomeng.feature.redistill.RedistillScreen
 import top.wkbin.zaomeng.feature.redistill.RedistillViewModel
@@ -103,7 +105,21 @@ fun ZaomengApp(
                 viewModel = viewModel,
                 onBack = navController::navigateUp,
                 onOpenSettings = { navController.navigate(ModelSettingsDestination) },
+                onOpenOnlineLibrary = { navController.navigate(OnlineLibraryDestination) },
                 onRunCreated = { runId ->
+                    navController.navigate(RunDetailDestination(runId)) {
+                        popUpTo<ImportBookDestination> { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable<OnlineLibraryDestination> {
+            val viewModel: OnlineLibraryViewModel = koinViewModel()
+            OnlineLibraryScreen(
+                viewModel = viewModel,
+                onBack = navController::navigateUp,
+                onRunImported = { runId ->
                     navController.navigate(RunDetailDestination(runId)) {
                         popUpTo<ImportBookDestination> { inclusive = true }
                     }

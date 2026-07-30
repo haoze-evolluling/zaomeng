@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -54,6 +55,7 @@ fun ImportBookScreen(
     viewModel: ImportBookViewModel,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenOnlineLibrary: () -> Unit,
     onRunCreated: (String) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -214,6 +216,16 @@ fun ImportBookScreen(
                         }
                     }
                 }
+            }
+            item {
+                ImportSourceCard(
+                    title = "在线书卷包",
+                    description = "浏览已蒸馏的书卷包，下载、校验后直接导入本机书架。",
+                    actionLabel = "浏览在线书卷包",
+                    icon = { Icon(Icons.Outlined.CloudDownload, contentDescription = null) },
+                    enabled = !state.submitting && !state.readingFile,
+                    onClick = onOpenOnlineLibrary,
+                )
             }
             item {
                 ImportSourceCard(
