@@ -439,7 +439,10 @@ class DistillationServiceTests(unittest.TestCase):
                 ]
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts):
+            with (
+                patch("src.web.workflow.build_runtime_parts", return_value=fake_parts),
+                patch.object(service, "_maybe_repair_generated_profile", return_value=None),
+            ):
                 result = service._run_automatic_pipeline(
                     manifest_path=manifest_path,
                     novel_path=novel_path,
@@ -512,7 +515,10 @@ class DistillationServiceTests(unittest.TestCase):
                 ]
             )
 
-            with patch("src.web.workflow.build_runtime_parts", return_value=fake_parts):
+            with (
+                patch("src.web.workflow.build_runtime_parts", return_value=fake_parts),
+                patch.object(service, "_maybe_repair_generated_profile", return_value=None),
+            ):
                 result = service._run_automatic_pipeline(
                     manifest_path=manifest_path,
                     novel_path=novel_path,
@@ -661,3 +667,16 @@ class DistillationServiceTests(unittest.TestCase):
             self.assertIn("- speech_style", prompt)
             self.assertIn("- cadence", prompt)
             self.assertNotIn("完整的 PROFILE.generated.md Markdown", prompt)
+
+            completion_messages = service._build_distill_completion_messages(
+                payload,
+                character="贾宝玉",
+                peer_characters=["贾宝玉", "林黛玉"],
+                profile={"name": "贾宝玉", "novel_id": "hongloumeng"},
+                group_name="Inner Core",
+                fields=("soul_goal", "belief_anchor"),
+                dialogue_evidence=[],
+            )
+            completion_prompt = completion_messages[1]["content"]
+            self.assertIn("COMPLETION_TASK", completion_prompt)
+            self.assertNotIn("完整的 PROFILE.generated.md Markdown", completion_prompt)

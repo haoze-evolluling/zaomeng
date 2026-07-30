@@ -134,17 +134,6 @@ class WebRunService(
     )
     PROFILE_COMPLETION_GROUPS = (
         (
-            "Embodiment",
-            (
-                "gender",
-                "age_stage",
-                "appearance_feature",
-                "habit_action",
-                "preference_like",
-                "dislike_hate",
-            ),
-        ),
-        (
             "Inner Core",
             (
                 "soul_goal",

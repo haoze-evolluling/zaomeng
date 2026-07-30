@@ -202,7 +202,13 @@ def build_distill_repair_messages(
     )
     return [
         base_messages[0],
-        {"role": "user", "content": f"{base_messages[1]['content']}\n\n{instruction}"},
+        {
+            "role": "user",
+            "content": (
+                f"目标角色：{_profile_character_context(payload, profile_markdown)}\n\n"
+                f"{instruction}"
+            ),
+        },
     ]
 
 
@@ -227,8 +233,25 @@ def build_distill_completion_messages(
     )
     return [
         base_messages[0],
-        {"role": "user", "content": f"{base_messages[1]['content']}\n\n{instruction}"},
+        {
+            "role": "user",
+            "content": (
+                f"目标角色：{_profile_character_context(payload, profile_markdown)}\n\n"
+                f"{instruction}"
+            ),
+        },
     ]
+
+
+def _profile_character_context(payload: dict[str, Any], profile_markdown: str) -> str:
+    for line in str(profile_markdown or "").splitlines():
+        if line.strip().startswith("- name:"):
+            return line.split(":", 1)[1].strip() or "未命名角色"
+    request = dict(payload.get("request", {}) or {})
+    requested = [str(item).strip() for item in request.get("characters", []) if str(item).strip()]
+    if requested:
+        return requested[0]
+    return "未命名角色"
 
 
 def build_relation_llm_messages(

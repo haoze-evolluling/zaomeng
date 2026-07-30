@@ -5,9 +5,11 @@ from pydantic import BaseModel, Field
 try:
     from pydantic import field_validator
 except ImportError:  # Pydantic v1 on Termux
-    from pydantic import validator as _pydantic_v1_validator
+    from pydantic import validator as field_validator
 
-    def field_validator(*fields: str, **kwargs):
+    _pydantic_v1_validator = field_validator
+
+    def field_validator(*fields: str, **kwargs):  # type: ignore[no-redef]
         # Embedded Android can restart Python and import this module again in
         # the same process. Pydantic v1 otherwise treats the same validator
         # function as a duplicate registration.

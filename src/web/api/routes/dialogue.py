@@ -314,13 +314,13 @@ def reply_dialogue_turn(
     run_id: str,
     session_id: str,
     payload: PrepareDialogueTurnRequest,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     run_service: WebRunService = Depends(get_run_service),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     try:
         operation_id = _reply_operation_id(
             payload.operation_id,
-            idempotency_key,
+            idempotency_key if isinstance(idempotency_key, str) else None,
             generate=False,
         )
         if operation_id:
