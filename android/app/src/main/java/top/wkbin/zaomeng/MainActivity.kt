@@ -31,7 +31,7 @@ import top.wkbin.zaomeng.ui.theme.MyApplicationTheme
 class MainActivity : ComponentActivity() {
     private var appUpdateState by mutableStateOf(AppUpdateUiState())
     private var dismissedUpdateVersion by mutableStateOf("")
-    private var startupUpdateCheckDisabled by mutableStateOf(true)
+    private var startupUpdateCheckDisabled by mutableStateOf(false)
     private var appUpdateDownloadJob: Job? = null
     private var appUpdateDownloadGeneration = 0L
     private val appUpdateManager by lazy { AppUpdateManager(applicationContext) }

@@ -15,7 +15,7 @@ object AppUpdatePreferences {
         preferences(context).edit().remove(KEY_DOWNLOAD_PATH).remove(KEY_DOWNLOAD_VERSION).apply()
     }
 
-    fun isStartupCheckDisabled(context: Context): Boolean = preferences(context).getBoolean(KEY_DISABLE_STARTUP_CHECK, true)
+    fun isStartupCheckDisabled(context: Context): Boolean = preferences(context).getBoolean(KEY_DISABLE_STARTUP_CHECK, false)
 
     fun setStartupCheckDisabled(context: Context, disabled: Boolean) {
         preferences(context).edit().putBoolean(KEY_DISABLE_STARTUP_CHECK, disabled).apply()
