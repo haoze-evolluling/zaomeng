@@ -17,7 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.SupportAgent
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -112,14 +113,14 @@ fun SettingsHomeScreen(
                     SettingsHomeRow(
                         title = "检查更新",
                         subtitle = "检查 GitHub Release 中的最新应用版本。",
-                        icon = Icons.Outlined.Info,
+                        icon = Icons.Outlined.SystemUpdate,
                         onClick = onOpenAppUpdate,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsHomeRow(
                         title = "应用与支持",
                         subtitle = "导出脱敏运行诊断并查看项目资源。",
-                        icon = Icons.Outlined.Info,
+                        icon = Icons.Outlined.SupportAgent,
                         onClick = onOpenAppSupport,
                     )
                 }
