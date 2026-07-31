@@ -283,6 +283,8 @@ class DistillationForegroundService : Service(), KoinComponent {
         true
     } catch (_: SecurityException) {
         false
+    } catch (_: IllegalStateException) {
+        false
     }
 
     private fun updateNotification(notification: Notification) {

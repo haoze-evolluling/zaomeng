@@ -973,7 +973,7 @@ class ZaomengRepository(
         val encoded = Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE)
             .find(contentDisposition)?.groupValues?.getOrNull(1)
         if (!encoded.isNullOrBlank()) {
-            return java.net.URLDecoder.decode(encoded, Charsets.UTF_8.name())
+            return java.net.URLDecoder.decode(encoded.replace("+", "%2B"), Charsets.UTF_8.name())
         }
         return Regex("filename=\\\"?([^;\\\"]+)", RegexOption.IGNORE_CASE)
             .find(contentDisposition)?.groupValues?.getOrNull(1).orEmpty()

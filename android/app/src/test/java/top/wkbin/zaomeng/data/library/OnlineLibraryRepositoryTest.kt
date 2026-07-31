@@ -16,4 +16,15 @@ class OnlineLibraryRepositoryTest {
         assertFalse(OnlineLibraryRepository.isAllowedDownloadUrl("https://example.com/demo.zip"))
         assertFalse(OnlineLibraryRepository.isAllowedDownloadUrl("https://raw.githubusercontent.com/other/library/main/books/demo.zip"))
     }
+
+    @Test
+    fun `accepts only safe library book ids`() {
+        assertTrue(OnlineLibraryRepository.isSafeBookId("demo-book-1"))
+        assertTrue(OnlineLibraryRepository.isSafeBookId("demo_book_2"))
+        assertFalse(OnlineLibraryRepository.isSafeBookId(""))
+        assertFalse(OnlineLibraryRepository.isSafeBookId("../escape"))
+        assertFalse(OnlineLibraryRepository.isSafeBookId("book/../escape"))
+        assertFalse(OnlineLibraryRepository.isSafeBookId("absolute/id"))
+        assertFalse(OnlineLibraryRepository.isSafeBookId("id with space"))
+    }
 }

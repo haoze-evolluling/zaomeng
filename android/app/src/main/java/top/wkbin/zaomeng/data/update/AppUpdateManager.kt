@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import top.wkbin.zaomeng.BuildConfig
 
 data class AppUpdateInfo(
@@ -75,6 +76,7 @@ class AppUpdateManager(
         if (existing.status == AppUpdateDownloadStatus.Downloading || existing.status == AppUpdateDownloadStatus.Downloaded) {
             return@withContext existing
         }
+        require(isAllowedUpdateDownloadUrl(update.downloadUrl)) { "更新包下载地址不受信任。" }
         updateDirectory.mkdirs()
         val finalFile = File(updateDirectory, "update-${update.version}.apk")
         val temporaryFile = File(updateDirectory, ".update-${update.version}.apk.part")
@@ -89,6 +91,7 @@ class AppUpdateManager(
                 if (!response.isSuccessful) error("下载更新失败：服务器返回 ${response.code}")
                 val body = response.body ?: error("下载更新失败：响应内容为空")
                 val totalBytes = body.contentLength().takeIf { it > 0L } ?: -1L
+                if (totalBytes > MAX_UPDATE_BYTES) error("更新包过大，无法安全下载。")
                 var downloadedBytes = 0L
                 var lastReportedBytes = -1L
                 fun reportProgress(force: Boolean = false) {
@@ -107,6 +110,7 @@ class AppUpdateManager(
                             if (read < 0) break
                             output.write(buffer, 0, read)
                             downloadedBytes += read
+                            if (downloadedBytes > MAX_UPDATE_BYTES) error("更新包过大，无法安全下载。")
                             reportProgress()
                         }
                     }
@@ -139,7 +143,12 @@ class AppUpdateManager(
             return@withContext AppUpdateDownloadState(version = update.version)
         }
         val apkFile = File(localPath)
-        if (!apkFile.isFile || apkFile.length() <= 0L) {
+        if (
+            !apkFile.isFile ||
+            apkFile.length() <= 0L ||
+            apkFile.length() > MAX_UPDATE_BYTES ||
+            !isInsideUpdateDirectory(apkFile)
+        ) {
             AppUpdatePreferences.clearDownload(context)
             return@withContext AppUpdateDownloadState(version = update.version)
         }
@@ -156,7 +165,8 @@ class AppUpdateManager(
         val path = AppUpdatePreferences.downloadPath(context)
         check(path.isNotBlank() && AppUpdatePreferences.downloadVersion(context) == update.version)
         val apkFile = File(path)
-        check(apkFile.isFile && apkFile.length() > 0L)
+        check(apkFile.isFile && apkFile.length() > 0L && apkFile.length() <= MAX_UPDATE_BYTES)
+        check(isInsideUpdateDirectory(apkFile))
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
         context.startActivity(Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
@@ -164,10 +174,24 @@ class AppUpdateManager(
         })
     }.isSuccess
 
-    private companion object {
+    private fun isInsideUpdateDirectory(file: File): Boolean {
+        val root = runCatching { updateDirectory.canonicalFile }.getOrElse { updateDirectory.absoluteFile }
+        val candidate = runCatching { file.canonicalFile }.getOrElse { file.absoluteFile }
+        return candidate.parentFile == root
+    }
+
+    internal companion object {
         const val UPDATE_DIRECTORY = "app-update"
         const val RELEASE_URL = "https://api.github.com/repos/wkbin/zaomeng/releases/latest"
+        const val MAX_UPDATE_BYTES = 256L * 1024L * 1024L
         const val PROGRESS_UPDATE_BYTES = 256L * 1024L
+
+        internal fun isAllowedUpdateDownloadUrl(url: String): Boolean {
+            val parsed = url.toHttpUrlOrNull() ?: return false
+            return parsed.isHttps &&
+                parsed.host == "github.com" &&
+                parsed.encodedPath.startsWith("/wkbin/zaomeng/releases/download/")
+        }
     }
 }
 
@@ -186,7 +210,9 @@ internal fun parseLatestRelease(payload: String, currentVersion: String): AppUpd
         it.stringValue("name").endsWith(".apk", true)
     } ?: error("最新版本未提供 Android APK")
     val downloadUrl = asset.stringValue("browser_download_url")
-    if (downloadUrl.isBlank()) error("更新包下载地址无效")
+    if (downloadUrl.isBlank() || !AppUpdateManager.isAllowedUpdateDownloadUrl(downloadUrl)) {
+        error("更新包下载地址无效")
+    }
     return AppUpdateInfo(
         version = remoteVersion.removePrefix("v"),
         downloadUrl = downloadUrl,

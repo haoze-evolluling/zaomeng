@@ -23,13 +23,26 @@ class AppUpdateManagerTest {
     @Test
     fun parsesNewerReleaseAndPrefersArm64Asset() {
         val update = parseLatestRelease(
-            """{"tag_name":"v1.2.0","body":"- 修复问题","assets":[{"name":"zaomeng.apk","browser_download_url":"https://example.com/universal.apk"},{"name":"zaomeng-arm64-v8a.apk","browser_download_url":"https://example.com/arm64.apk"}]}""",
+            """{"tag_name":"v1.2.0","body":"- 修复问题","assets":[{"name":"zaomeng.apk","browser_download_url":"https://github.com/wkbin/zaomeng/releases/download/v1.2.0/zaomeng.apk"},{"name":"zaomeng-arm64-v8a.apk","browser_download_url":"https://github.com/wkbin/zaomeng/releases/download/v1.2.0/zaomeng-arm64-v8a.apk"}]}""",
             "1.1.0",
         )
 
         requireNotNull(update)
         assertEquals("1.2.0", update.version)
-        assertEquals("https://example.com/arm64.apk", update.downloadUrl)
+        assertEquals("https://github.com/wkbin/zaomeng/releases/download/v1.2.0/zaomeng-arm64-v8a.apk", update.downloadUrl)
         assertEquals("- 修复问题", update.releaseNotes)
+    }
+
+    @Test
+    fun `accepts only configured GitHub release download urls`() {
+        assertTrue(
+            AppUpdateManager.isAllowedUpdateDownloadUrl(
+                "https://github.com/wkbin/zaomeng/releases/download/v1.2.0/zaomeng-arm64-v8a.apk",
+            ),
+        )
+        assertFalse(AppUpdateManager.isAllowedUpdateDownloadUrl("http://github.com/wkbin/zaomeng/releases/download/v1.2.0/zaomeng.apk"))
+        assertFalse(AppUpdateManager.isAllowedUpdateDownloadUrl("https://example.com/zaomeng.apk"))
+        assertFalse(AppUpdateManager.isAllowedUpdateDownloadUrl("https://github.com/other/releases/download/v1.2.0/zaomeng.apk"))
+        assertFalse(AppUpdateManager.isAllowedUpdateDownloadUrl("https://github.com/wkbin/zaomeng/archive/refs/tags/v1.2.0.zip"))
     }
 }
