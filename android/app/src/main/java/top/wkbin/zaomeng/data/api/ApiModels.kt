@@ -110,6 +110,11 @@ data class RunManifestDto(
     val isTerminal: Boolean
         get() = status in setOf("ready", "failed", "stopped", "draft")
 
+    val isInterrupted: Boolean
+        get() = status == "stopped" &&
+            progress.stage == "interrupted" &&
+            control.interruptionReason == "android_process_ended"
+
     val availableCharacters: List<String>
         get() = artifactIndex.characters.map(PersonaIndexDto::name).filter(String::isNotBlank)
 }
@@ -193,6 +198,8 @@ data class RunTimingDto(
 @Serializable
 data class RunControlDto(
     @SerialName("stop_requested") val stopRequested: Boolean = false,
+    @SerialName("interrupted_at") val interruptedAt: String = "",
+    @SerialName("interruption_reason") val interruptionReason: String = "",
 )
 
 @Serializable

@@ -149,6 +149,8 @@ fun BookshelfScreen(
                     state = state,
                     onRefresh = viewModel::refresh,
                     onStopAll = viewModel::stopRunningTasks,
+                    onResumeRecovered = viewModel::resumeRecoveredRun,
+                    onDismissRecovered = viewModel::dismissRecoveredRun,
                     onDismissError = viewModel::dismissError,
                     onOpenSettings = onOpenSettings,
                     onSearchQueryChange = viewModel::updateSearchQuery,
@@ -190,6 +192,8 @@ private fun ReadyBookshelf(
     state: BookshelfUiState,
     onRefresh: () -> Unit,
     onStopAll: () -> Unit,
+    onResumeRecovered: (String) -> Unit,
+    onDismissRecovered: (String) -> Unit,
     onDismissError: () -> Unit,
     onOpenSettings: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -280,6 +284,16 @@ private fun ReadyBookshelf(
                 )
             }
         }
+        if (state.recoveredRuns.isNotEmpty()) {
+            item {
+                RecoveredDistillationCard(
+                    runs = state.recoveredRuns,
+                    resumingRunId = state.resumingRecoveredRunId,
+                    onResume = onResumeRecovered,
+                    onDismiss = onDismissRecovered,
+                )
+            }
+        }
 
         if (state.error.isNotBlank()) {
             item {
@@ -352,6 +366,69 @@ private fun ReadyBookshelf(
         } else {
             items(visibleRuns, key = RunManifestDto::runId) { run ->
                 RunCard(run = run, onClick = { onOpenRun(run.runId) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecoveredDistillationCard(
+    runs: List<RunManifestDto>,
+    resumingRunId: String,
+    onResume: (String) -> Unit,
+    onDismiss: (String) -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "上次蒸馏被中断",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                "进程退出导致任务停止，已有进度仍然保留；可以从未完成人物继续蒸馏。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            runs.take(3).forEach { run ->
+                val resuming = resumingRunId == run.runId
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = run.title,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    TextButton(
+                        onClick = { onDismiss(run.runId) },
+                        enabled = resumingRunId.isBlank(),
+                    ) {
+                        Text("忽略")
+                    }
+                    Button(
+                        onClick = { onResume(run.runId) },
+                        enabled = resumingRunId.isBlank(),
+                    ) {
+                        if (resuming) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text("继续蒸馏")
+                        }
+                    }
+                }
+            }
+            if (runs.size > 3) {
+                Text(
+                    "另有 ${runs.size - 3} 本可续跑书卷",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
             }
         }
     }

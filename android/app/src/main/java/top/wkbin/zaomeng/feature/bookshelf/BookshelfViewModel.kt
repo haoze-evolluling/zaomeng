@@ -40,6 +40,9 @@ data class BookshelfUiState(
     val searchQuery: String = "",
     val filter: BookshelfFilter = BookshelfFilter.All,
     val sort: BookshelfSort = BookshelfSort.Recent,
+    val recoveredRuns: List<RunManifestDto> = emptyList(),
+    val dismissedRecoveredRunIds: Set<String> = emptySet(),
+    val resumingRecoveredRunId: String = "",
     val error: String = "",
 )
 
@@ -128,6 +131,57 @@ class BookshelfViewModel(
         mutableState.update { it.copy(error = "") }
     }
 
+    fun dismissRecoveredRun(runId: String) {
+        if (runId.isBlank()) return
+        mutableState.update {
+            it.copy(
+                recoveredRuns = it.recoveredRuns.filterNot { run -> run.runId == runId },
+                dismissedRecoveredRunIds = it.dismissedRecoveredRunIds + runId,
+            )
+        }
+    }
+
+    fun resumeRecoveredRun(runId: String) {
+        if (runId.isBlank() || state.value.resumingRecoveredRunId.isNotBlank()) return
+        if (state.value.recoveredRuns.none { it.runId == runId }) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(resumingRecoveredRunId = runId, error = "") }
+            try {
+                val updated = repository.resumeDistill(runId)
+                if (updated.status != RUNNING_STATUS) {
+                    mutableState.update {
+                        it.copy(
+                            resumingRecoveredRunId = "",
+                            error = "任务未能恢复为运行状态，请打开书卷重试。",
+                        )
+                    }
+                } else {
+                    DistillationForegroundController.start(applicationContext)
+                    mutableState.update { current ->
+                        current.copy(
+                            runs = current.runs.map { run ->
+                                if (run.runId == runId) updated else run
+                            },
+                            recoveredRuns = current.recoveredRuns.filterNot { run -> run.runId == runId },
+                            dismissedRecoveredRunIds = current.dismissedRecoveredRunIds + runId,
+                            resumingRecoveredRunId = "",
+                            error = "",
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        resumingRecoveredRunId = "",
+                        error = error.message ?: "继续蒸馏失败。",
+                    )
+                }
+            }
+        }
+    }
+
     fun updateSearchQuery(value: String) {
         mutableState.update { it.copy(searchQuery = value.take(MAX_SEARCH_LENGTH)) }
     }
@@ -183,12 +237,15 @@ class BookshelfViewModel(
             }
             try {
                 val runs = repository.listRuns()
+                val dismissed = state.value.dismissedRecoveredRunIds
+                val recovered = recoverableRuns(runs, dismissed)
                 if (runs.any { it.status == RUNNING_STATUS }) {
                     DistillationForegroundController.start(applicationContext)
                 }
                 mutableState.update {
                     it.copy(
                         runs = runs.sortedByDescending(RunManifestDto::updatedAt),
+                        recoveredRuns = recovered,
                         loadingRuns = false,
                         refreshing = false,
                         error = "",
@@ -212,6 +269,13 @@ class BookshelfViewModel(
         const val RUNNING_STATUS = "running"
         const val MAX_SEARCH_LENGTH = 120
     }
+}
+
+internal fun recoverableRuns(
+    runs: List<RunManifestDto>,
+    dismissedRecoveredRunIds: Set<String> = emptySet(),
+): List<RunManifestDto> = runs.filter { run ->
+    run.isInterrupted && run.runId !in dismissedRecoveredRunIds
 }
 
 internal fun filterBookshelfRuns(state: BookshelfUiState): List<RunManifestDto> {
