@@ -268,7 +268,7 @@ fun ChaptersScreen(
     if (showArchive) ArchiveSessionDialog(
         sessions = state.sessions,
         onDismiss = { showArchive = false },
-        onArchive = { sessionId, title -> viewModel.archiveSession(sessionId, title); showArchive = false },
+        onArchive = { sessionId, title -> viewModel.convertSession(sessionId, title); showArchive = false },
     )
 }
 

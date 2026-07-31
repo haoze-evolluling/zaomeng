@@ -400,6 +400,10 @@ class ZaomengRepository(
         backend.requireApi().archiveSessionAsChapter(runId, ArchiveDialogueChapterRequest(sessionId, title))
     }
 
+    suspend fun convertSessionAsNovel(runId: String, sessionId: String, title: String = ""): ChapterDto = request {
+        backend.requireApi().convertSessionAsNovel(runId, ArchiveDialogueChapterRequest(sessionId, title))
+    }
+
     suspend fun deleteChapter(runId: String, chapterId: String) = request {
         backend.requireApi().deleteChapter(runId, chapterId)
     }

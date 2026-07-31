@@ -144,6 +144,12 @@ interface ZaomengApi {
         @Body request: ArchiveDialogueChapterRequest,
     ): ChapterDto
 
+    @POST("api/web/runs/{runId}/chapters/convert-session")
+    suspend fun convertSessionAsNovel(
+        @Path("runId") runId: String,
+        @Body request: ArchiveDialogueChapterRequest,
+    ): ChapterDto
+
     @DELETE("api/web/runs/{runId}/chapters/{chapterId}")
     suspend fun deleteChapter(
         @Path("runId") runId: String,

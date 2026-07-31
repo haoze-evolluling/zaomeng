@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -9,6 +10,52 @@ from src.web.time_utils import utc_now as _utc_now
 
 
 MIN_DIALOGUE_TURNS_FOR_CHAPTER = 6
+_NOVEL_REWRITE_MAX_TOKENS = 4096
+
+
+_NOVEL_REWRITE_SYSTEM_PROMPT = """
+你是一名小说改写编辑。请将提供的结构化角色对话改写成连贯、自然、有画面感的小说正文。
+
+你收到的数据可能包含：
+- speaker：说话角色
+- message：角色实际说出口的话
+- inner_thought：角色没有说出口的真实想法
+- user_message：用户或主角说出口的话
+- context：此前剧情背景
+- scene：已知的场景信息
+
+你的任务是把这些信息组织成小说正文，而不是继续扮演角色回复用户。
+
+核心原则：
+1. 忠于原始内容。必须保留人物关系、说话顺序、对话含义、情绪倾向、已经明确发生的事件，以及 inner_thought 所表达的真实心理。不得擅自改变角色立场，不得加入会影响后续剧情的新事实。
+2. 可以进行小说化补充。允许补充简短动作、神态和视线变化、合理停顿、说话语气、场景氛围、人物距离感、对话衔接、与角色心理一致的细节。这些内容只能增强画面和情绪，不得推动原对话中没有发生的新剧情。
+3. 正确使用 inner_thought。可以将它转化为直接心理活动、间接心理描写、或与动作结合的内心反应。不要求逐字照抄，但不得改变原意。
+4. 不机械添加动作。不是每句对白前后都必须添加动作。避免连续使用“他笑了笑”“她点了点头”“他微微一愣”“她垂下眼眸”“他沉默片刻”“她攥紧衣角”。动作必须服务于人物情绪和对话节奏，同一个动作、神态或句式不要频繁重复。
+5. 控制描写密度。以人物互动和对话为主，描写为辅。普通对话场景中，对话约占 50%～70%，动作与神态约占 15%～30%，环境描写约占 5%～15%，心理描写约占 10%～25%。不要把几句简单对话扩写成大段空洞景物描写。
+6. 视角必须统一。默认使用第三人称限知视角，主要跟随当前核心角色，不随意进入所有角色的内心。只有提供了某个角色的 inner_thought，才可以明确描写该角色当时的真实心理。没有提供时，只能通过动作、神态和语气表现，不得直接断言角色内心想法。
+7. 禁止信息越界。不得擅自添加新人物、新地点、新道具、新的过去经历、未说明的人物关系、突然发生的肢体接触、告白、亲吻、冲突、离开等关键剧情、角色不知道的信息、原文没有依据的心理结论。如果必要信息不足，使用模糊但自然的表达。
+8. 对话处理。保留原对话的主要内容和角色口吻。允许删除重复口头词、调整标点、合并断裂短句、补充符合语境的语气词、将过于书面的句子调整得更口语化。不得改变原句的意图、承诺、拒绝、态度或信息。
+9. 文风要求。正文自然流畅、有画面感但不过度堆砌、情绪克制、避免模板化动作、避免华丽辞藻堆叠、避免把每个心理都解释清楚、留出适当的潜台词和空白。
+
+不要写总结、分析、创作说明或标题，只输出小说正文。
+
+输入格式：
+{
+  "context": "此前剧情背景",
+  "scene": "当前已知场景",
+  "point_of_view": "第三人称限知",
+  "style": "现代言情，细腻克制",
+  "dialogues": [
+    {
+      "speaker": "角色名",
+      "message": "角色说出口的话",
+      "inner_thought": "角色没说出口的想法"
+    }
+  ]
+}
+
+输出要求：直接输出经过小说化处理的正文。不得输出 JSON，不得解释改写过程，不得添加输入中没有依据的重要剧情。
+""".strip()
 
 
 def _dialogue_turn_count(transcript: list[dict[str, Any]]) -> int:
@@ -150,6 +197,7 @@ class ChapterServiceMixin:
         goal: str = "",
         participants: list[str] | None = None,
         content: str = "",
+        source_session_id: str = "",
     ) -> dict[str, Any]:
         self._ensure_run_exists(run_id)
         normalized_title = str(title or "").strip()
@@ -186,6 +234,8 @@ class ChapterServiceMixin:
                 content=normalized_content,
                 updated_at=now,
             )
+            if source_session_id:
+                chapter["source_session_id"] = str(source_session_id).strip()
             chapters[target_index] = chapter
         else:
             chapter = {
@@ -195,7 +245,7 @@ class ChapterServiceMixin:
                 "goal": str(goal or "").strip(),
                 "participants": normalized_participants,
                 "content": normalized_content,
-                "source_session_id": "",
+                "source_session_id": str(source_session_id or "").strip(),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -243,6 +293,126 @@ class ChapterServiceMixin:
         book["chapters"] = self._normalized_chapters(chapters)
         self._write_json(self._chapter_book_path(run_id), book)
         return chapter
+
+    def convert_dialogue_session_to_novel(
+        self, run_id: str, *, session_id: str, title: str = ""
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        session = self.dialogue.get_session(run_id, session_id)
+        transcript = list(session.get("transcript", []) or [])
+        dialogue_turns = _dialogue_turn_count(transcript)
+        if dialogue_turns < MIN_DIALOGUE_TURNS_FOR_CHAPTER:
+            raise ValueError(
+                f"当前只有 {dialogue_turns} 轮有效对话，"
+                f"至少需要 {MIN_DIALOGUE_TURNS_FOR_CHAPTER} 轮才能转为小说章节。"
+            )
+        payload = self._load_model_settings_payload()
+        if not self._is_model_configured_payload(payload):
+            raise ValueError("请先在设置中完成模型配置，再使用对话转小说。")
+
+        chapters = self.list_chapters(run_id)
+        previous = chapters[-1] if chapters else {}
+        previous_content = str(previous.get("content", "")).strip()
+        story_recap = dict(session.get("story_recap", {}) or {})
+        context_parts: list[str] = []
+        if previous and previous_content:
+            context_parts.append(
+                f"上一章《{str(previous.get('title', '')).strip()}》结尾：\n"
+                f"{previous_content[-1800:]}"
+            )
+        summary = str(story_recap.get("summary", "")).strip()
+        if summary:
+            context_parts.append(f"本段剧情摘要：{summary}")
+
+        scene_parts = [
+            str(story_recap.get("time_hint", "")).strip(),
+            str(story_recap.get("location", "")).strip(),
+            str(story_recap.get("atmosphere", "")).strip(),
+            str(dict(session.get("scene_card", {}) or {}).get("title", "")).strip(),
+        ]
+        scene = "，".join(part for part in scene_parts if part)
+        dialogues: list[dict[str, str]] = []
+        for item in list(transcript or []):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "")).strip()
+            if role in {"scene", "director", "loading"}:
+                continue
+            message = str(item.get("message", "")).strip()
+            speaker = str(item.get("speaker", "")).strip()
+            if not speaker or not message:
+                continue
+            dialogue: dict[str, str] = {
+                "speaker": speaker,
+                "message": message,
+            }
+            inner_thought = str(item.get("inner_thought", "")).strip()
+            if inner_thought:
+                dialogue["inner_thought"] = inner_thought
+            dialogues.append(dialogue)
+        if not dialogues:
+            raise ValueError("这个会话还没有可转成小说的有效对话。")
+
+        config = Config()
+        config.update(
+            {
+                "llm": {
+                    "provider": payload["provider"],
+                    "model": payload["model"],
+                    "base_url": payload["base_url"],
+                    "api_key": payload["api_key"],
+                    "max_tokens": min(
+                        max(1600, int(payload.get("max_tokens", 0) or 0)),
+                        _NOVEL_REWRITE_MAX_TOKENS,
+                    ),
+                }
+            }
+        )
+        llm_input = {
+            "context": "\n\n".join(context_parts).strip(),
+            "scene": scene,
+            "point_of_view": "第三人称限知",
+            "style": "自然、克制、有画面感",
+            "dialogues": dialogues,
+        }
+        result = LLMClient(config).chat_completion(
+            [
+                {"role": "system", "content": _NOVEL_REWRITE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(llm_input, ensure_ascii=False),
+                },
+            ],
+            temperature=0.55,
+            max_tokens=min(
+                max(1600, int(payload.get("max_tokens", 0) or 0)),
+                _NOVEL_REWRITE_MAX_TOKENS,
+            ),
+        )
+        content = str(result.get("content", "")).strip()
+        if not content:
+            raise ValueError("模型没有返回小说正文，请稍后重试。")
+
+        chapter_title = (
+            str(title or "").strip()
+            or str(story_recap.get("title", "")).strip()
+            or f"第 {len(chapters) + 1} 章"
+        )
+        participants = [
+            str(name).strip()
+            for name in list(session.get("participants", []) or [])
+            if str(name).strip()
+        ]
+        return self.save_chapter(
+            run_id,
+            title=chapter_title,
+            goal="由对话改写成小说正文。",
+            participants=participants,
+            content=content,
+            source_session_id=str(
+                session.get("session_id", session_id)
+            ).strip(),
+        )
 
     def delete_chapter(self, run_id: str, chapter_id: str) -> dict[str, str]:
         self._ensure_run_exists(run_id)

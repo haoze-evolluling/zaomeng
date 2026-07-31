@@ -153,6 +153,29 @@ class ChaptersViewModel(
         }
     }
 
+    fun convertSession(sessionId: String, title: String = "") {
+        if (state.value.saving || sessionId.isBlank()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(saving = true, error = "", message = "") }
+            try {
+                repository.convertSessionAsNovel(runId, sessionId, title)
+                mutableState.update {
+                    it.copy(
+                        saving = false,
+                        chapters = repository.listChapters(runId),
+                        message = "小说章节已生成。",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(saving = false, error = error.message ?: "对话转小说失败。")
+                }
+            }
+        }
+    }
+
     fun delete(chapterId: String) {
         if (state.value.saving) return
         viewModelScope.launch {

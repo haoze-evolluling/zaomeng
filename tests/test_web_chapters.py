@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
+from unittest.mock import patch
+
 from src.web.workflow import WebRunService
 
 
@@ -85,6 +87,69 @@ class ChapterServiceTests(unittest.TestCase):
             self.service.archive_dialogue_session_as_chapter(
                 self.run["run_id"], session_id="session-short"
             )
+
+    def test_converts_dialogue_to_novel_with_previous_chapter_context(self) -> None:
+        self.service.save_model_settings(
+            provider="openai-compatible",
+            model="test-model",
+            base_url="https://example.com/v1",
+            api_key="sk-test",
+        )
+        self.service.save_chapter(
+            self.run["run_id"],
+            title="第一章",
+            content="第一章结尾：雨夜重逢。",
+            participants=["小甲", "小乙"],
+        )
+        self.service.dialogue.get_session = Mock(
+            return_value={
+                "session_id": "session-novel",
+                "title": "雨夜重逢",
+                "participants": ["小甲", "小乙"],
+                "story_recap": {
+                    "title": "雨夜重逢",
+                    "summary": "两人在雨夜重逢。",
+                    "location": "旧桥",
+                    "time_hint": "深夜",
+                },
+                "scene_card": {},
+                "transcript": [
+                    {"speaker": "小甲", "message": "你来了。", "role": "user", "turn_id": "turn-1"},
+                    {"speaker": "小乙", "message": "我一直在等。", "role": "character", "turn_id": "turn-1"},
+                    {"speaker": "小甲", "message": "这一路辛苦了。", "role": "user", "turn_id": "turn-2"},
+                    {"speaker": "小乙", "message": "不辛苦，能见到你就好。", "role": "character", "turn_id": "turn-2"},
+                    {"speaker": "小甲", "message": "那我们进去说。", "role": "user", "turn_id": "turn-3"},
+                    {"speaker": "小乙", "message": "好，屋里坐。", "role": "character", "turn_id": "turn-3"},
+                    {"speaker": "小甲", "message": "你最近还好吗。", "role": "user", "turn_id": "turn-4"},
+                    {"speaker": "小乙", "message": "挺好的，就是总想起从前。", "role": "character", "turn_id": "turn-4"},
+                    {"speaker": "小甲", "message": "我也常常想起。", "role": "user", "turn_id": "turn-5"},
+                    {"speaker": "小乙", "message": "那就别想太多了。", "role": "character", "turn_id": "turn-5"},
+                    {"speaker": "小甲", "message": "天色不早了。", "role": "user", "turn_id": "turn-6"},
+                    {"speaker": "小乙", "message": "我送送你。", "role": "character", "turn_id": "turn-6"},
+                ],
+            }
+        )
+
+        with patch(
+            "src.web.service_facades.chapters.LLMClient"
+        ) as client:
+            client.return_value.chat_completion.return_value = {
+                "content": "雨落在旧桥上，两人隔着水声望了彼此一眼。"
+            }
+            chapter = self.service.convert_dialogue_session_to_novel(
+                self.run["run_id"], session_id="session-novel"
+            )
+
+        self.assertIn("雨落在旧桥上", chapter["content"])
+        self.assertEqual(chapter["source_session_id"], "session-novel")
+        sent_messages = client.return_value.chat_completion.call_args.args[0]
+        user_payload = next(
+            message["content"]
+            for message in sent_messages
+            if message["role"] == "user"
+        )
+        self.assertIn("上一章《第一章》", user_payload)
+        self.assertIn("旧桥", user_payload)
 
     def test_continue_chapter_uses_draft_as_local_session_context(self) -> None:
         chapter = self.service.save_chapter(

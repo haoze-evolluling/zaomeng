@@ -82,6 +82,22 @@ def archive_session(run_id: str, payload: ArchiveDialogueChapterRequest, run_ser
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/api/web/runs/{run_id}/chapters/convert-session")
+def convert_session(
+    run_id: str,
+    payload: ArchiveDialogueChapterRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.convert_dialogue_session_to_novel(
+            run_id, session_id=payload.session_id, title=payload.title
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run or session not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.delete("/api/web/runs/{run_id}/chapters/{chapter_id}")
 def delete_chapter(run_id: str, chapter_id: str, run_service: WebRunService = Depends(get_run_service)) -> dict[str, str]:
     try:
