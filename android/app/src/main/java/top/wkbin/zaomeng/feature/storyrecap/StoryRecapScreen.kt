@@ -42,11 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import top.wkbin.zaomeng.data.api.StoryCharacterArcDto
-import top.wkbin.zaomeng.data.api.StoryEventDto
 import top.wkbin.zaomeng.data.api.StoryQuoteDto
 import top.wkbin.zaomeng.data.api.StoryRecapDto
-import top.wkbin.zaomeng.data.api.StoryRelationChangeDto
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,15 +123,6 @@ fun StoryRecapScreen(
                 item(key = "header") { RecapHeader(recap) }
                 if (recap.quotes.isNotEmpty()) {
                     item(key = "quotes") { QuoteCard(recap.quotes) }
-                }
-                if (recap.events.isNotEmpty()) {
-                    item(key = "events") { EventCard(recap.events) }
-                }
-                if (recap.relations.isNotEmpty()) {
-                    item(key = "relations") { RelationChangeCard(recap.relations) }
-                }
-                if (recap.characterArcs.isNotEmpty()) {
-                    item(key = "arcs") { CharacterArcCard(recap.characterArcs) }
                 }
                 if (recap.hooks.isNotEmpty()) {
                     item(key = "hooks") { HooksCard(recap.hooks) }
@@ -221,109 +209,6 @@ private fun QuoteCard(quotes: List<StoryQuoteDto>) {
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EventCard(events: List<StoryEventDto>) {
-    RecapSectionCard(title = "事件") {
-        events.forEachIndexed { index, event ->
-            if (index > 0) HorizontalDivider()
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(
-                    text = event.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                val meta = listOfNotNull(
-                    event.timeHint.takeIf(String::isNotBlank),
-                    event.location.takeIf(String::isNotBlank),
-                    event.participants.joinToString("、").takeIf(String::isNotBlank),
-                )
-                if (meta.isNotEmpty()) {
-                    Text(
-                        text = meta.joinToString(" · "),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                event.responses.take(2).forEach { response ->
-                    Text(
-                        text = "${response.speaker}：${response.message}",
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RelationChangeCard(relations: List<StoryRelationChangeDto>) {
-    RecapSectionCard(title = "关系变化") {
-        relations.forEachIndexed { index, relation ->
-            if (index > 0) HorizontalDivider()
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = relation.label,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = relation.changes.joinToString(" ") { change ->
-                            "${change.label}${if (change.delta >= 0) "+" else ""}${change.delta}"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                if (relation.reason.isNotBlank()) {
-                    Text(
-                        text = relation.reason,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                if (relation.evidence.isNotBlank()) {
-                    Text(
-                        text = "依据：${relation.evidence}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CharacterArcCard(arcs: List<StoryCharacterArcDto>) {
-    RecapSectionCard(title = "人物状态") {
-        arcs.forEachIndexed { index, arc ->
-            if (index > 0) HorizontalDivider()
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(
-                    text = arc.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (arc.growthSummary.isNotBlank()) {
-                    Text(
-                        text = arc.growthSummary,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
             }
         }
     }
