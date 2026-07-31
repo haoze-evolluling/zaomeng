@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.web.chat.cache_stats import summarize_completion_results
+from src.web.chat.helpers import DIALOGUE_RESPONSE_MIN_MAX_TOKENS
 from src.web.path_safety import resolve_storage_child, validate_storage_id
 
 
@@ -105,7 +106,10 @@ def generate_dialogue_responses_for_run(
         payload=payload,
         allowed_speakers=allowed_speakers,
         temperature=float(config.get("llm.temperature", 0.35) or 0.35),
-        max_tokens=int(config.get("llm.max_tokens", 900) or 900),
+        max_tokens=int(
+            config.get("llm.max_tokens", DIALOGUE_RESPONSE_MIN_MAX_TOKENS)
+            or DIALOGUE_RESPONSE_MIN_MAX_TOKENS
+        ),
         chat_completion=complete,
         build_messages=lambda current_payload, retry_on_empty: build_dialogue_llm_messages(
             current_payload,

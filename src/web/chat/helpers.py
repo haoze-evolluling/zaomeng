@@ -11,6 +11,11 @@ from src.skill_support.scene_recommendations import build_scene_opening_message
 
 DIALOGUE_SUGGESTION_COMPACT_PROMPT_CHAR_THRESHOLD = 18_000
 
+# 多角色 JSON 回复在中文下很容易超过 900 token，过低的上限会让回复被截断成
+# 无法解析的 JSON。这里给单轮对话生成兜一个下限，并为重试留出提额空间。
+DIALOGUE_RESPONSE_MIN_MAX_TOKENS = 1_600
+DIALOGUE_RESPONSE_MAX_MAX_TOKENS = 4_096
+
 
 def _strip_code_fence(text: str) -> str:
     text = str(text or "").strip()
@@ -481,6 +486,7 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
     character_snapshots = dict(memory_context.get("character_snapshots", {}) or {})
     event_signals = list(memory_context.get("event_signals", []) or [])
     controlled_memories = list(memory_context.get("controlled_memories", []) or [])
+    world_facts = list(memory_context.get("world_facts", []) or [])
     compact_archived = {
         key: value
         for key, value in {
@@ -510,6 +516,30 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
         }
         if compact_hit:
             compact_hits.append(compact_hit)
+    compact_world_facts: list[dict[str, Any]] = []
+    for item in sorted(
+        (fact for fact in world_facts if isinstance(fact, dict)),
+        key=lambda fact: not bool(fact.get("locked", False)),
+    )[:18]:
+        compact_fact = {
+            key: value
+            for key, value in {
+                "fact_id": str(item.get("fact_id", "")).strip(),
+                "category": str(item.get("category", "")).strip(),
+                "summary": _trim_text(str(item.get("summary", "")).strip(), 240),
+                "characters": [
+                    _trim_text(str(name).strip(), 80)
+                    for name in list(item.get("characters", []) or [])[:12]
+                    if str(name).strip()
+                ],
+                "location": _trim_text(str(item.get("location", "")).strip(), 100),
+                "time_hint": _trim_text(str(item.get("time_hint", "")).strip(), 80),
+                "locked": bool(item.get("locked", False)),
+            }.items()
+            if _has_meaningful_value(value) or key == "locked"
+        }
+        if compact_fact.get("summary"):
+            compact_world_facts.append(compact_fact)
     return {
         key: value
         for key, value in {
@@ -560,6 +590,7 @@ def _compact_memory_context(memory_context: dict[str, Any]) -> dict[str, Any]:
                 for item in event_signals[-6:]
                 if dict(item or {}).get("kind")
             ],
+            "world_facts": compact_world_facts,
             "controlled_memories": [
                 {
                     "memory_id": str(item.get("memory_id", "")).strip(),
@@ -767,6 +798,12 @@ def build_dialogue_llm_messages(
             "CONTROLLED_MEMORIES 是用户明确管理的有效记忆。"
             "其中 pinned=true 的内容属于必须持续遵守的硬设定；其他内容也应作为当前有效上下文，"
             "除非本轮输入明确修改了该设定。不要在回复中解释记忆系统。"
+        )
+    if list(memory_context.get("world_facts", []) or []):
+        turn_system_parts.append(
+            "WORLD_FACTS are current story facts. Facts with locked=true are binding: "
+            "do not contradict, replace, or silently change them without an explicit in-story cause. "
+            "Use other active facts as context and never explain the memory system in the reply."
         )
     if correction_context:
         turn_system_parts.append(
@@ -1385,6 +1422,41 @@ def parse_dialogue_relation_state(
     }
 
 
+_SPEAKER_DECORATION = re.compile(r"[（(\[【].*?[）)\]】]")
+_SPEAKER_TRIM_CHARS = "　 \t·:：,，.。!！?？;；、\"'“”‘’*_-—"
+
+
+def _normalize_speaker_key(name: str) -> str:
+    """把模型写法归一化成可比对的 key：去装饰、去标点、忽略大小写。"""
+    text = _SPEAKER_DECORATION.sub("", str(name or ""))
+    text = text.strip(_SPEAKER_TRIM_CHARS)
+    return " ".join(text.split()).casefold()
+
+
+def _build_speaker_alias_map(allowed_speakers: set[str]) -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    for name in allowed_speakers:
+        key = _normalize_speaker_key(name)
+        if key:
+            alias_map.setdefault(key, name)
+    return alias_map
+
+
+def _canonical_speaker_name(speaker: str, alias_map: dict[str, str]) -> str:
+    """把模型返回的 speaker 映射回白名单里的正式名，映射不上返回空串。
+
+    模型常见的偏差是带称谓、括号注释或标点，例如「祥子（车夫）」「祥子:」。
+    直接按原文比对会静默丢弃整条回复，最终报“没有返回可用的角色回复”。
+
+    这里只做归一化后的精确匹配，不做包含匹配：「虎妞的父亲」这类写法指的是
+    另一个人，模糊匹配会把台词错记到在场角色名下，比丢弃更难发现。
+    """
+    key = _normalize_speaker_key(speaker)
+    if not key:
+        return ""
+    return alias_map.get(key, "")
+
+
 def parse_dialogue_responses(
     content: str, allowed_speakers: list[str]
 ) -> list[dict[str, str]]:
@@ -1402,6 +1474,7 @@ def parse_dialogue_responses(
         raise ValueError("Model reply is not a response list.")
 
     allowed = {name for name in allowed_speakers if name}
+    alias_map = _build_speaker_alias_map(allowed)
     clean_responses: list[dict[str, str]] = []
     for item in parsed:
         if not isinstance(item, dict):
@@ -1410,8 +1483,11 @@ def parse_dialogue_responses(
         message = str(item.get("message", "")).strip()
         if not speaker or not message:
             continue
-        if allowed and speaker not in allowed:
-            continue
+        if allowed:
+            canonical = _canonical_speaker_name(speaker, alias_map)
+            if not canonical:
+                continue
+            speaker = canonical
         clean_responses.append({"speaker": speaker, "message": message})
     if not clean_responses:
         raise ValueError("Model reply did not contain usable character responses.")
@@ -1718,16 +1794,28 @@ def generate_dialogue_responses(
     parse_responses: Callable[[str, list[str]], list[dict[str, str]]],
     completion_observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, str]]:
+    initial_max_tokens = max(DIALOGUE_RESPONSE_MIN_MAX_TOKENS, int(max_tokens or 0))
     attempts = (
-        build_messages(payload, False),
-        build_messages(payload, True),
+        (build_messages(payload, False), initial_max_tokens),
+        (
+            build_messages(payload, True),
+            min(initial_max_tokens * 2, DIALOGUE_RESPONSE_MAX_MAX_TOKENS),
+        ),
     )
     last_error: Exception | None = None
-    for index, llm_messages in enumerate(attempts):
-        llm_result = chat_completion(llm_messages, temperature, max_tokens)
+    for index, (llm_messages, attempt_max_tokens) in enumerate(attempts):
+        llm_result = chat_completion(llm_messages, temperature, attempt_max_tokens)
         if callable(completion_observer):
             completion_observer(dict(llm_result or {}))
         content = str(llm_result.get("content", "")).strip()
+        if _llm_result_was_truncated(llm_result):
+            # 截断的 JSON 只会解析失败，重试时才有更大的 max_tokens 可用。
+            last_error = ValueError(
+                "模型回复被输出长度限制截断，请调高 llm.max_tokens。"
+            )
+            if index + 1 < len(attempts):
+                continue
+            raise last_error
         if not content:
             last_error = ValueError("Model returned an empty reply.")
             if index + 1 < len(attempts):

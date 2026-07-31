@@ -314,6 +314,100 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
         self.assertEqual(responses[0]["speaker"], "场景提示")
         self.assertIn("账本", responses[0]["message"])
 
+    def test_truncated_reply_retries_with_a_larger_token_budget(self):
+        payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
+        completion = Mock()
+        completion.side_effect = [
+            {
+                "content": '[{"speaker":"祥子","message":"我今天拉了一整',
+                "finish_reason": "length",
+            },
+            {"content": '[{"speaker":"祥子","message":"我今天拉了一整天车。"}]'},
+        ]
+
+        responses = generate_dialogue_responses(
+            payload=payload,
+            allowed_speakers=["祥子"],
+            temperature=0.2,
+            max_tokens=900,
+            chat_completion=completion,
+            build_messages=lambda _payload, retry: [
+                {"role": "user", "content": "retry" if retry else "first"}
+            ],
+            parse_responses=parse_dialogue_responses,
+        )
+
+        self.assertEqual(completion.call_count, 2)
+        self.assertEqual(responses[0]["message"], "我今天拉了一整天车。")
+        first_budget = completion.call_args_list[0].args[2]
+        second_budget = completion.call_args_list[1].args[2]
+        self.assertGreaterEqual(first_budget, 1600)
+        self.assertGreater(second_budget, first_budget)
+
+    def test_truncation_on_final_attempt_reports_the_token_limit(self):
+        payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
+        completion = Mock(
+            return_value={
+                "content": '[{"speaker":"祥子","message":"我今天拉了一整',
+                "finish_reason": "length",
+            }
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            generate_dialogue_responses(
+                payload=payload,
+                allowed_speakers=["祥子"],
+                temperature=0.2,
+                max_tokens=900,
+                chat_completion=completion,
+                build_messages=lambda _payload, retry: [
+                    {"role": "user", "content": "retry" if retry else "first"}
+                ],
+                parse_responses=parse_dialogue_responses,
+            )
+
+        self.assertEqual(completion.call_count, 2)
+        self.assertIn("max_tokens", str(ctx.exception))
+
+    def test_decorated_speaker_names_map_back_to_the_allowed_roster(self):
+        responses = parse_dialogue_responses(
+            json.dumps(
+                [
+                    {"speaker": "祥子（车夫）", "message": "我拉车去了。"},
+                    {"speaker": "虎妞:", "message": "你倒是快说话。"},
+                    {"speaker": " 旁白 ", "message": "院里静了下来。"},
+                ],
+                ensure_ascii=False,
+            ),
+            ["祥子", "虎妞", "旁白", "场景提示"],
+        )
+
+        self.assertEqual(
+            [item["speaker"] for item in responses],
+            ["祥子", "虎妞", "旁白"],
+        )
+
+    def test_unknown_speakers_are_still_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_dialogue_responses(
+                json.dumps(
+                    [{"speaker": "刘四", "message": "我可没答应。"}],
+                    ensure_ascii=False,
+                ),
+                ["祥子", "虎妞"],
+            )
+
+    def test_relative_of_an_allowed_speaker_is_not_folded_into_that_speaker(self):
+        """「虎妞的父亲」是另一个人，不能被归一化成「虎妞」。"""
+        with self.assertRaises(ValueError):
+            parse_dialogue_responses(
+                json.dumps(
+                    [{"speaker": "虎妞的父亲", "message": "我可没答应。"}],
+                    ensure_ascii=False,
+                ),
+                ["虎妞", "祥子"],
+            )
+
     def test_at_mention_only_targets_present_characters_and_retries_until_they_reply(self):
         payload = {
             "mode": "act",
