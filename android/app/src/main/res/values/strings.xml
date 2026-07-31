@@ -22,4 +22,8 @@
     <string name="distillation_notification_stopped_result_text">已有整理结果会保留，点击查看书架。</string>
     <string name="distillation_notification_failed_title">蒸馏需要查看</string>
     <string name="distillation_notification_failed_text">%1$d/%2$d 个任务未完成，点击查看书架中的详情。</string>
+    <string name="content_disclaimer_title">内容使用声明</string>
+    <string name="content_disclaimer_message">本应用仅供个人学习、创作及整理已获授权的内容。请勿使用本应用处理、生成、存储或传播违法、淫秽色情、暴力恐怖、侵权或其他有害内容。\n\n你应对导入、蒸馏、生成及分享的全部内容承担责任。继续使用即表示你已阅读并同意以上声明。</string>
+    <string name="content_disclaimer_accept">我已知悉并同意</string>
+    <string name="content_disclaimer_decline">不同意并退出</string>
 </resources>

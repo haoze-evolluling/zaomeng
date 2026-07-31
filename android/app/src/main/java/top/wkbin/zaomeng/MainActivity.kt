@@ -7,10 +7,16 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
@@ -18,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
+import top.wkbin.zaomeng.data.preferences.ContentDisclaimerPreferences
 import top.wkbin.zaomeng.data.update.AppUpdateDownloadState
 import top.wkbin.zaomeng.data.update.AppUpdateDownloadStatus
 import top.wkbin.zaomeng.data.update.AppUpdateManager
@@ -31,6 +38,7 @@ import top.wkbin.zaomeng.ui.theme.MyApplicationTheme
 class MainActivity : ComponentActivity() {
     private var appUpdateState by mutableStateOf(AppUpdateUiState())
     private var dismissedUpdateVersion by mutableStateOf("")
+    private var contentDisclaimerAccepted by mutableStateOf(false)
     private var startupUpdateCheckDisabled by mutableStateOf(false)
     private var appUpdateDownloadJob: Job? = null
     private var appUpdateDownloadGeneration = 0L
@@ -41,6 +49,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         startupUpdateCheckDisabled = AppUpdatePreferences.isStartupCheckDisabled(this)
+        contentDisclaimerAccepted = ContentDisclaimerPreferences.isAccepted(this)
         setContent {
             val preferencesRepository: AppPreferencesRepository = koinInject()
             val themeMode = preferencesRepository.themeMode.collectAsStateWithLifecycle(
@@ -67,6 +76,15 @@ class MainActivity : ComponentActivity() {
                                 onDownload = ::downloadAppUpdate,
                             )
                         }
+                    }
+                    if (!contentDisclaimerAccepted) {
+                        ContentDisclaimerDialog(
+                            onAccept = {
+                                ContentDisclaimerPreferences.accept(this@MainActivity)
+                                contentDisclaimerAccepted = true
+                            },
+                            onDecline = { finishAndRemoveTask() },
+                        )
                     }
                 }
             }
@@ -187,4 +205,24 @@ class MainActivity : ComponentActivity() {
                 .onSuccess { downloadState -> appUpdateState = appUpdateState.copy(downloadState = downloadState) }
         }
     }
+}
+
+@Composable
+private fun ContentDisclaimerDialog(
+    onAccept: () -> Unit,
+    onDecline: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDecline,
+        title = { Text(stringResource(R.string.content_disclaimer_title)) },
+        text = {
+            Text(stringResource(R.string.content_disclaimer_message))
+        },
+        confirmButton = {
+            Button(onClick = onAccept) { Text(stringResource(R.string.content_disclaimer_accept)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDecline) { Text(stringResource(R.string.content_disclaimer_decline)) }
+        },
+    )
 }
