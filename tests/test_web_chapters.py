@@ -45,8 +45,18 @@ class ChapterServiceTests(unittest.TestCase):
                 "title": "雨夜相逢",
                 "participants": ["小甲", "小乙"],
                 "transcript": [
-                    {"speaker": "小甲", "message": "你来了。"},
-                    {"speaker": "小乙", "message": "我一直在等。"},
+                    {"speaker": "小甲", "message": "你来了。", "role": "user", "turn_id": "turn-1"},
+                    {"speaker": "小乙", "message": "我一直在等。", "role": "character", "turn_id": "turn-1"},
+                    {"speaker": "小甲", "message": "这一路辛苦了。", "role": "user", "turn_id": "turn-2"},
+                    {"speaker": "小乙", "message": "不辛苦，能见到你就好。", "role": "character", "turn_id": "turn-2"},
+                    {"speaker": "小甲", "message": "那我们进去说。", "role": "user", "turn_id": "turn-3"},
+                    {"speaker": "小乙", "message": "好，屋里坐。", "role": "character", "turn_id": "turn-3"},
+                    {"speaker": "小甲", "message": "你最近还好吗。", "role": "user", "turn_id": "turn-4"},
+                    {"speaker": "小乙", "message": "挺好的，就是总想起从前。", "role": "character", "turn_id": "turn-4"},
+                    {"speaker": "小甲", "message": "我也常常想起。", "role": "user", "turn_id": "turn-5"},
+                    {"speaker": "小乙", "message": "那就别想太多了。", "role": "character", "turn_id": "turn-5"},
+                    {"speaker": "小甲", "message": "天色不早了。", "role": "user", "turn_id": "turn-6"},
+                    {"speaker": "小乙", "message": "我送送你。", "role": "character", "turn_id": "turn-6"},
                 ],
             }
         )
@@ -58,6 +68,23 @@ class ChapterServiceTests(unittest.TestCase):
         self.assertEqual(chapter["source_session_id"], "session-1")
         self.assertIn("小甲：你来了。", chapter["content"])
         self.assertIn("小乙：我一直在等。", chapter["content"])
+
+    def test_archive_rejects_short_dialogue_for_novel_conversion(self) -> None:
+        self.service.dialogue.get_session = Mock(
+            return_value={
+                "session_id": "session-short",
+                "participants": ["小甲", "小乙"],
+                "transcript": [
+                    {"speaker": "小甲", "message": "你来了。", "role": "user", "turn_id": "turn-1"},
+                    {"speaker": "小乙", "message": "我一直在等。", "role": "character", "turn_id": "turn-1"},
+                ],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "至少需要"):
+            self.service.archive_dialogue_session_as_chapter(
+                self.run["run_id"], session_id="session-short"
+            )
 
     def test_continue_chapter_uses_draft_as_local_session_context(self) -> None:
         chapter = self.service.save_chapter(

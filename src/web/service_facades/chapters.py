@@ -8,6 +8,27 @@ from src.core.llm_client import LLMClient
 from src.web.time_utils import utc_now as _utc_now
 
 
+MIN_DIALOGUE_TURNS_FOR_CHAPTER = 6
+
+
+def _dialogue_turn_count(transcript: list[dict[str, Any]]) -> int:
+    meaningful = [
+        dict(item or {})
+        for item in list(transcript or [])
+        if isinstance(item, dict)
+        and str(item.get("message", "")).strip()
+        and str(item.get("role", "")).strip() not in {"scene", "director", "loading"}
+    ]
+    turn_ids = {
+        str(item.get("turn_id", "")).strip()
+        for item in meaningful
+        if str(item.get("turn_id", "")).strip()
+    }
+    if turn_ids:
+        return len(turn_ids)
+    return len(meaningful)
+
+
 class ChapterServiceMixin:
     """Local, run-scoped chapter drafts assembled from writing sessions."""
 
@@ -191,6 +212,12 @@ class ChapterServiceMixin:
         transcript = list(session.get("transcript", []) or [])
         if not transcript:
             raise ValueError("这个会话还没有可归档的内容。")
+        dialogue_turns = _dialogue_turn_count(transcript)
+        if dialogue_turns < MIN_DIALOGUE_TURNS_FOR_CHAPTER:
+            raise ValueError(
+                f"当前只有 {dialogue_turns} 轮有效对话，"
+                f"至少需要 {MIN_DIALOGUE_TURNS_FOR_CHAPTER} 轮才能转为小说章节。"
+            )
         content = "\n\n".join(
             f"{str(item.get('speaker', '')).strip() or '旁白'}：{str(item.get('message', '')).strip()}"
             for item in transcript

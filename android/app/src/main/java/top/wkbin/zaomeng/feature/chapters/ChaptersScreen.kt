@@ -86,7 +86,7 @@ fun ChaptersScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } },
                 actions = {
                     IconButton(onClick = { showArchive = true }, enabled = state.sessions.isNotEmpty() && !state.saving) {
-                        Icon(Icons.Default.Forum, "归档会话")
+                        Icon(Icons.Default.Forum, "转为小说")
                     }
                     IconButton(onClick = { viewModel.export("markdown") }, enabled = !state.exporting) {
                         Icon(Icons.Default.FileDownload, "导出 Markdown")
@@ -228,10 +228,10 @@ fun ChaptersScreen(
             if (!state.loading && state.chapters.isEmpty()) item {
                 Card { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("还没有章节", fontWeight = FontWeight.SemiBold)
-                    Text("新建一个空白章节，或把现有聊天会话归档为草稿。")
+                    Text("新建一个空白章节，或把现有聊天会话转为小说草稿。")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { showCreate = true }) { Text("新建章节") }
-                        OutlinedButton(onClick = { showArchive = true }, enabled = state.sessions.isNotEmpty()) { Text("归档会话") }
+                        OutlinedButton(onClick = { showArchive = true }, enabled = state.sessions.isNotEmpty()) { Text("转为小说") }
                     }
                 } }
             }
@@ -335,12 +335,13 @@ private fun ChapterEditorDialog(chapter: ChapterDto? = null, onDismiss: () -> Un
 private fun ArchiveSessionDialog(sessions: List<top.wkbin.zaomeng.data.api.DialogueSessionDto>, onDismiss: () -> Unit, onArchive: (String, String) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("归档会话为章节") },
+        title = { Text("转为小说章节") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("至少需要 6 轮有效对话。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (sessions.isEmpty()) Text("还没有可归档的会话。")
             sessions.forEach { session ->
                 OutlinedButton(onClick = { onArchive(session.sessionId, "") }, modifier = Modifier.fillMaxWidth()) {
-                    Text(session.lastEntryPreview.ifBlank { "会话 ${session.sessionId.takeLast(6)}" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("转为小说 · " + session.lastEntryPreview.ifBlank { "会话 ${session.sessionId.takeLast(6)}" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         } },
