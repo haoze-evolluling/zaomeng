@@ -13,6 +13,7 @@ MIN_DIALOGUE_TURNS_FOR_CHAPTER = 6
 _NOVEL_REWRITE_MAX_TOKENS = 4096
 NOVEL_CHAPTER_TARGET_CHARS = 2500
 NOVEL_CHAPTER_MAX_CHARS = 3500
+_NOVEL_CONTEXT_PREVIOUS_CHARS = 1000
 
 
 _NOVEL_REWRITE_SYSTEM_PROMPT = """
@@ -342,7 +343,7 @@ class ChapterServiceMixin:
         if previous and previous_content:
             context_parts.append(
                 f"上一章《{str(previous.get('title', '')).strip()}》结尾：\n"
-                f"{previous_content[-1800:]}"
+                f"{previous_content[-_NOVEL_CONTEXT_PREVIOUS_CHARS:]}"
             )
         summary = str(story_recap.get("summary", "")).strip()
         if summary:
