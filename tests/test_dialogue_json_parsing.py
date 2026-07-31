@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from src.web.chat.helpers import build_dialogue_llm_messages, parse_dialogue_responses
@@ -50,6 +51,23 @@ class DialogueJsonParsingTests(unittest.TestCase):
             [{"speaker": "甲", "message": "你走吧。", "inner_thought": "别走。"}],
         )
 
+    def test_parse_dialogue_responses_trims_inner_thought_to_50_chars(self) -> None:
+        long_thought = "心" * 60
+        responses = parse_dialogue_responses(
+            json.dumps(
+                [
+                    {
+                        "speaker": "甲",
+                        "message": "你说。",
+                        "inner_thought": long_thought,
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            ["甲"],
+        )
+        self.assertLessEqual(len(responses[0]["inner_thought"]), 50)
+
     def test_build_dialogue_llm_messages_enables_inner_thought_contract(self) -> None:
         messages = build_dialogue_llm_messages(
             {
@@ -71,6 +89,7 @@ class DialogueJsonParsingTests(unittest.TestCase):
         self.assertIn("inner_thought", system_text)
         self.assertIn("第一人称", system_text)
         self.assertIn("没说出口", system_text)
+        self.assertIn("50 个汉字", system_text)
 
 
 if __name__ == "__main__":
