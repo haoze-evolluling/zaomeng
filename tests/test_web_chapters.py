@@ -158,10 +158,10 @@ class ChapterServiceTests(unittest.TestCase):
         )
         self.assertIn("上一章《第一章》", user_payload)
         self.assertIn("旧桥", user_payload)
-        self.assertIn("最多不超过 2000 字", user_payload)
+        self.assertIn("最多不超过 3500 字", user_payload)
 
     def test_novel_chapter_content_is_trimmed_to_max_chars(self) -> None:
-        text = "句。" * 1100
+        text = "句。" * 2000
         trimmed = _trim_chapter_content(text, NOVEL_CHAPTER_MAX_CHARS)
         self.assertLessEqual(len(trimmed), NOVEL_CHAPTER_MAX_CHARS)
 

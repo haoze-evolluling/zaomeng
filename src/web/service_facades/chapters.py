@@ -11,8 +11,8 @@ from src.web.time_utils import utc_now as _utc_now
 
 MIN_DIALOGUE_TURNS_FOR_CHAPTER = 6
 _NOVEL_REWRITE_MAX_TOKENS = 4096
-NOVEL_CHAPTER_TARGET_CHARS = 1200
-NOVEL_CHAPTER_MAX_CHARS = 2000
+NOVEL_CHAPTER_TARGET_CHARS = 2500
+NOVEL_CHAPTER_MAX_CHARS = 3500
 
 
 _NOVEL_REWRITE_SYSTEM_PROMPT = """
@@ -41,7 +41,7 @@ _NOVEL_REWRITE_SYSTEM_PROMPT = """
 
 不要写总结、分析、创作说明或标题，只输出小说正文。
 
-章节字数：正文目标约 1200 字，最多不超过 2000 字。不要为了凑字数堆砌环境或动作。
+章节字数：正文目标约 2500 字，最多不超过 3500 字。不要为了凑字数堆砌环境或动作。
 
 输入格式：
 {
