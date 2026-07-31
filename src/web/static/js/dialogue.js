@@ -2476,6 +2476,16 @@ function renderTranscript(items) {
     }
 
     row.appendChild(inline);
+    if (
+      role !== "user" &&
+      window.dialogueInnerThoughtsEnabled &&
+      String(item.inner_thought || "").trim()
+    ) {
+      const inner = document.createElement("div");
+      inner.className = "message-inner-thought";
+      inner.textContent = `内心独白：${String(item.inner_thought || "").trim()}`;
+      bubble.appendChild(inner);
+    }
 
     if (String(item.sendState || "").trim() === "failed") {
       const actions = document.createElement("div");

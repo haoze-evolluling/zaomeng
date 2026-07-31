@@ -584,6 +584,7 @@ data class PendingTurnDto(
 data class TranscriptItemDto(
     val speaker: String = "",
     val message: String = "",
+    @SerialName("inner_thought") val innerThought: String = "",
     val role: String = "character",
     @SerialName("turn_id") val turnId: String = "",
     val timestamp: String = "",
@@ -623,6 +624,7 @@ data class DialogueReplyRequest(
     val message: String,
     @SerialName("message_kind") val messageKind: String = "dialogue",
     @SerialName("suppress_transcript_message") val suppressTranscriptMessage: Boolean = false,
+    @SerialName("include_inner_thoughts") val includeInnerThoughts: Boolean = false,
     @SerialName("operation_id") val operationId: String = "",
 )
 

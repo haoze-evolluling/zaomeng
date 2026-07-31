@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Psychology
@@ -260,6 +261,7 @@ fun ChatScreen(
                     onOpenDirector = { directorOpen = true },
                     onSend = viewModel::send,
                     onToggleContinuousObserve = viewModel::toggleContinuousObserve,
+                    onToggleInnerThoughts = viewModel::toggleInnerThoughts,
                     onRecover = viewModel::recoverPending,
                     onReconcile = viewModel::reconcileUnknownSend,
                     onRetry = viewModel::retryLastSend,
@@ -315,6 +317,7 @@ fun ChatScreen(
                         pendingUserMessage = state.pendingUserMessage,
                         displayPreferences = state.chatDisplay,
                         actionsEnabled = state.canUseTools,
+                        includeInnerThoughts = state.includeInnerThoughts,
                         onRegenerate = viewModel::correctLatest,
                         onBranch = viewModel::branchFromTurn,
                         onPendingRetry = viewModel::retryLastSend,
@@ -720,6 +723,7 @@ private fun Transcript(
     pendingUserMessage: PendingUserMessage?,
     displayPreferences: ChatDisplayPreferences,
     actionsEnabled: Boolean,
+    includeInnerThoughts: Boolean,
     onRegenerate: () -> Unit,
     onBranch: (String) -> Unit,
     onPendingRetry: () -> Unit,
@@ -816,6 +820,7 @@ private fun Transcript(
                     avatarBytes = avatarBytes,
                     displayPreferences = displayPreferences,
                     actionsEnabled = actionsEnabled,
+                    includeInnerThoughts = includeInnerThoughts,
                     canRegenerate = index == latestAssistantIndex && !sending,
                     onCopy = { clipboard.setText(AnnotatedString(item.message)) },
                     onRegenerate = onRegenerate,
@@ -849,6 +854,7 @@ private fun Transcript(
                     avatarBytes = avatarBytes,
                     displayPreferences = displayPreferences,
                     actionsEnabled = false,
+                    includeInnerThoughts = includeInnerThoughts,
                     streaming = true,
                     onCopy = {},
                     onRegenerate = {},
@@ -1209,6 +1215,7 @@ private fun TranscriptBubble(
     avatarBytes: Map<String, ByteArray>,
     displayPreferences: ChatDisplayPreferences,
     actionsEnabled: Boolean,
+    includeInnerThoughts: Boolean,
     streaming: Boolean = false,
     canRegenerate: Boolean = false,
     onCopy: () -> Unit,
@@ -1382,6 +1389,20 @@ private fun TranscriptBubble(
                             MaterialTheme.colorScheme.onSurface
                         },
                     )
+                    if (includeInnerThoughts && item.innerThought.isNotBlank() && !isUser) {
+                        androidx.compose.material3.HorizontalDivider(
+                            modifier = Modifier.padding(top = 6.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                        Text(
+                            text = "内心独白：${item.innerThought}",
+                            modifier = Modifier.padding(top = 6.dp),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontStyle = FontStyle.Italic,
+                            ),
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
                     if (streaming) {
                         Text(
                             "正在生成",
@@ -1544,6 +1565,7 @@ private fun ChatComposer(
     onOpenDirector: () -> Unit,
     onSend: () -> Unit,
     onToggleContinuousObserve: () -> Unit,
+    onToggleInnerThoughts: () -> Unit,
     onRecover: () -> Unit,
     onReconcile: () -> Unit,
     onRetry: () -> Unit,
@@ -1707,6 +1729,21 @@ private fun ChatComposer(
                             }
                         }
                     }
+                }
+                item {
+                    FilterChip(
+                        selected = state.includeInnerThoughts,
+                        onClick = onToggleInnerThoughts,
+                        enabled = inputEnabled,
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Visibility,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        label = { Text("读心") },
+                    )
                 }
                 if (state.session?.mode == "observe") {
                     item {

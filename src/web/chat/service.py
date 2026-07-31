@@ -1547,6 +1547,7 @@ class DialogueService:
         message_kind: str = "dialogue",
         speaker_override: str = "",
         transcript_message: str | None = None,
+        include_inner_thoughts: bool = False,
         _serialize_result: bool = True,
     ) -> dict[str, Any]:
         run_id = str(run_manifest.get("run_id", "")).strip()
@@ -1574,6 +1575,7 @@ class DialogueService:
             message=message,
             speaker_override=effective_speaker_override,
             message_kind=normalized_message_kind,
+            include_inner_thoughts=include_inner_thoughts,
         )
         turn_dir = self._session_dir(run_id, session_id) / "turns"
         turn_dir.mkdir(parents=True, exist_ok=True)
@@ -1977,10 +1979,16 @@ class DialogueService:
         for item in responses:
             speaker = str(item.get("speaker", "")).strip()
             message = str(item.get("message", "")).strip()
+            inner_thought = str(item.get("inner_thought", "")).strip()
             if not speaker or not message:
                 continue
             clean_responses.append(
-                {"speaker": speaker, "message": message, "ts": _utc_now()}
+                {
+                    "speaker": speaker,
+                    "message": message,
+                    "ts": _utc_now(),
+                    **({"inner_thought": inner_thought} if inner_thought else {}),
+                }
             )
         if not clean_responses:
             raise ValueError("No valid responses provided.")
@@ -2215,6 +2223,7 @@ class DialogueService:
         message: str,
         message_kind: str = "dialogue",
         speaker_override: str = "",
+        include_inner_thoughts: bool = False,
     ) -> dict[str, Any]:
         participants = list(session.get("participants", []))
         mode = str(session.get("mode", "observe")).strip() or "observe"
@@ -2358,6 +2367,7 @@ class DialogueService:
                 else ""
             ),
         }
+        include_inner_thoughts = bool(include_inner_thoughts)
         speaker_activity = _speaker_balance.build_speaker_activity(
             participants,
             self._completed_turn_records(
@@ -2389,6 +2399,7 @@ class DialogueService:
 
         return {
             "kind": "zaomeng_dialogue_turn",
+            "include_inner_thoughts": include_inner_thoughts,
             "run_id": run_manifest.get("run_id", ""),
             "session_id": session.get("session_id", ""),
             "turn_id": turn_id,
@@ -2430,11 +2441,32 @@ class DialogueService:
             "host_action": {
                 "expected_output": (
                     [
-                        {"speaker": "场景提示", "message": "A concrete event or state change happening now."},
-                        {"speaker": "CharacterName", "message": "An in-character reaction with a next hook."},
+                        {
+                            "speaker": "场景提示",
+                            "message": "A concrete event or state change happening now.",
+                        },
+                        {
+                            "speaker": "CharacterName",
+                            "message": "An in-character reaction with a next hook.",
+                            **(
+                                {"inner_thought": "What the character thinks but does not say."}
+                                if include_inner_thoughts
+                                else {}
+                            ),
+                        },
                     ]
                     if normalized_message_kind == "plot"
-                    else [{"speaker": "CharacterName", "message": "..."}]
+                    else [
+                        {
+                            "speaker": "CharacterName",
+                            "message": "...",
+                            **(
+                                {"inner_thought": "What the character thinks but does not say."}
+                                if include_inner_thoughts
+                                else {}
+                            ),
+                        }
+                    ]
                 ),
                 "response_limit_hint": response_limit_hint,
                 "output_rule": (

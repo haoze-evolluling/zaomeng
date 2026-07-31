@@ -211,6 +211,7 @@ def reply_dialogue_turn_payload(
     message: str,
     message_kind: str,
     suppress_transcript_message: bool = False,
+    include_inner_thoughts: bool = False,
     manifest: dict[str, Any],
     dialogue: Any,
     load_pending_turn_payload: Callable[[str, str], dict[str, Any]],
@@ -237,6 +238,7 @@ def reply_dialogue_turn_payload(
         message_kind=message_kind,
         speaker_override=speaker_override,
         transcript_message="" if suppress_transcript_message or is_plot_push else None,
+        include_inner_thoughts=include_inner_thoughts,
         _serialize_result=False,
     )
     return _complete_prepared_dialogue_turn(

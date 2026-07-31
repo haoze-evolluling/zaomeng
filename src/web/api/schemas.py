@@ -283,6 +283,7 @@ class PrepareDialogueTurnRequest(BaseModel):
     message_kind: str = Field(default="dialogue")
     suppress_transcript_message: bool = Field(default=False)
     operation_id: str = Field(default="", max_length=128)
+    include_inner_thoughts: bool = Field(default=False)
 
 
 class SuggestDialogueTurnRequest(BaseModel):

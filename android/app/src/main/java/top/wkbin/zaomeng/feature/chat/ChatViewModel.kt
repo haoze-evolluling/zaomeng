@@ -75,6 +75,7 @@ data class ChatUiState(
     val streamingReplies: List<StreamingReplyPart> = emptyList(),
     val pendingUserMessage: PendingUserMessage? = null,
     val continuousObserveEnabled: Boolean = false,
+    val includeInnerThoughts: Boolean = false,
     val toolBusy: String = "",
     val session: DialogueSessionDto? = null,
     val avatarBytes: Map<String, ByteArray> = emptyMap(),
@@ -346,6 +347,18 @@ class ChatViewModel(
         mutableState.update { it.copy(messageKind = kind, error = "") }
     }
 
+    fun toggleInnerThoughts() {
+        val current = state.value
+        if (current.sending || current.recovering || current.toolBusy.isNotBlank()) return
+        mutableState.update {
+            it.copy(
+                includeInnerThoughts = !it.includeInnerThoughts,
+                error = "",
+                notice = if (!it.includeInnerThoughts) "读心模式已开启。" else "读心模式已关闭。",
+            )
+        }
+    }
+
     fun send() {
         val snapshot = state.value
         if (
@@ -545,6 +558,7 @@ class ChatViewModel(
                     messageKind = messageKind,
                     operationId = operationId,
                     suppressTranscriptMessage = suppressTranscriptMessage,
+                    includeInnerThoughts = snapshot.includeInnerThoughts,
                 ).collect { event ->
                     when (event) {
                         is DialogueStreamEvent.Status -> updateSendState(snapshot, operationId) {

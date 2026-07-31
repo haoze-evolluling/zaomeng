@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.web.chat.helpers import parse_dialogue_responses
+from src.web.chat.helpers import build_dialogue_llm_messages, parse_dialogue_responses
 
 
 class DialogueJsonParsingTests(unittest.TestCase):
@@ -39,6 +39,37 @@ class DialogueJsonParsingTests(unittest.TestCase):
         self.assertEqual(len(responses), 1)
         self.assertEqual(responses[0]["speaker"], "祥子")
         self.assertIn("第二行", responses[0]["message"])
+
+    def test_parse_dialogue_responses_keeps_inner_thought(self) -> None:
+        responses = parse_dialogue_responses(
+            '[{"speaker":"甲","message":"你走吧。","inner_thought":"别走。"}]',
+            ["甲"],
+        )
+        self.assertEqual(
+            responses,
+            [{"speaker": "甲", "message": "你走吧。", "inner_thought": "别走。"}],
+        )
+
+    def test_build_dialogue_llm_messages_enables_inner_thought_contract(self) -> None:
+        messages = build_dialogue_llm_messages(
+            {
+                "include_inner_thoughts": True,
+                "mode": "observe",
+                "input": {
+                    "message_kind": "dialogue",
+                    "participants": ["甲"],
+                    "active_participants": ["甲"],
+                },
+                "host_action": {"response_limit_hint": 1},
+            }
+        )
+        system_text = " ".join(
+            str(message.get("content", ""))
+            for message in messages
+            if message.get("role") == "system"
+        )
+        self.assertIn("inner_thought", system_text)
+        self.assertIn("没说出口的话", system_text)
 
 
 if __name__ == "__main__":

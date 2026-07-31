@@ -42,16 +42,18 @@ class ReplyOperationStore:
     @staticmethod
     def request_fingerprint(
         *,
-        message: str,
-        message_kind: str,
-        suppress_transcript_message: bool,
-    ) -> str:
+          message: str,
+          message_kind: str,
+          suppress_transcript_message: bool,
+          include_inner_thoughts: bool = False,
+      ) -> str:
         canonical = json.dumps(
             {
                 "message": str(message),
-                "message_kind": str(message_kind or "dialogue").strip().lower(),
-                "suppress_transcript_message": bool(suppress_transcript_message),
-            },
+                  "message_kind": str(message_kind or "dialogue").strip().lower(),
+                  "suppress_transcript_message": bool(suppress_transcript_message),
+                  "include_inner_thoughts": bool(include_inner_thoughts),
+              },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

@@ -302,6 +302,7 @@ def prepare_dialogue_turn(
             message=payload.message,
             message_kind=payload.message_kind,
             suppress_transcript_message=payload.suppress_transcript_message,
+            include_inner_thoughts=payload.include_inner_thoughts,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
@@ -331,6 +332,7 @@ def reply_dialogue_turn(
             message=payload.message,
             message_kind=payload.message_kind,
             suppress_transcript_message=payload.suppress_transcript_message,
+            include_inner_thoughts=payload.include_inner_thoughts,
             fast_response=True,
             operation_id=operation_id,
         )
@@ -362,6 +364,7 @@ def stream_dialogue_turn(
             message=payload.message,
             message_kind=payload.message_kind,
             suppress_transcript_message=payload.suppress_transcript_message,
+            include_inner_thoughts=payload.include_inner_thoughts,
         )
         run_service.reply_operations.load(
             run_id,
@@ -384,6 +387,7 @@ def stream_dialogue_turn(
                 message=payload.message,
                 message_kind=payload.message_kind,
                 suppress_transcript_message=payload.suppress_transcript_message,
+                include_inner_thoughts=payload.include_inner_thoughts,
                 operation_id=operation_id,
             )
             for event, data in events:

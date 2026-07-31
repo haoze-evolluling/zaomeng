@@ -25,6 +25,7 @@ def serialize_transcript(session: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "speaker": speaker,
                 "message": str(entry.get("message", "")).strip(),
+                "inner_thought": str(entry.get("inner_thought", "")).strip(),
                 "role": role,
                 "turn_id": str(entry.get("turn_id", "")).strip(),
                 "timestamp": str(entry.get("ts", "")).strip(),

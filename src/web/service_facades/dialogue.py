@@ -374,6 +374,7 @@ class DialogueServiceMixin:
         message: str,
         message_kind: str = "dialogue",
         suppress_transcript_message: bool = False,
+        include_inner_thoughts: bool = False,
     ) -> dict[str, Any]:
         manifest = self._require_manifest(run_id)
         return self.dialogue.prepare_turn(
@@ -382,6 +383,7 @@ class DialogueServiceMixin:
             message=message,
             message_kind=message_kind,
             transcript_message="" if suppress_transcript_message else None,
+            include_inner_thoughts=include_inner_thoughts,
         )
 
     def reply_dialogue_turn(
@@ -392,6 +394,7 @@ class DialogueServiceMixin:
         message: str,
         message_kind: str = "dialogue",
         suppress_transcript_message: bool = False,
+        include_inner_thoughts: bool = False,
         fast_response: bool = False,
         operation_id: str = "",
     ) -> dict[str, Any]:
@@ -402,6 +405,7 @@ class DialogueServiceMixin:
                 message=message,
                 message_kind=message_kind,
                 suppress_transcript_message=suppress_transcript_message,
+                include_inner_thoughts=include_inner_thoughts,
                 operation_id=operation_id,
                 emit_deltas=False,
             ):
@@ -440,6 +444,7 @@ class DialogueServiceMixin:
             message=message,
             message_kind=message_kind,
             suppress_transcript_message=suppress_transcript_message,
+            include_inner_thoughts=include_inner_thoughts,
             manifest=manifest,
             dialogue=self.dialogue,
             load_pending_turn_payload=self._load_pending_turn_payload,
@@ -457,6 +462,7 @@ class DialogueServiceMixin:
         message: str,
         message_kind: str = "dialogue",
         suppress_transcript_message: bool = False,
+        include_inner_thoughts: bool = False,
         operation_id: str,
         emit_deltas: bool = True,
     ):
@@ -467,6 +473,7 @@ class DialogueServiceMixin:
             message=message,
             message_kind=normalized_kind,
             suppress_transcript_message=suppress_transcript_message,
+            include_inner_thoughts=include_inner_thoughts,
         )
 
         def reconciled_session(current: dict[str, Any]) -> dict[str, Any] | None:
@@ -659,6 +666,7 @@ class DialogueServiceMixin:
                     transcript_message=(
                         "" if suppress_transcript_message or is_plot_push else None
                     ),
+                    include_inner_thoughts=include_inner_thoughts,
                     _serialize_result=False,
                 )
                 turn_id = str(

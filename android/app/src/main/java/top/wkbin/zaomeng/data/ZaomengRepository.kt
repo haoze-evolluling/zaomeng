@@ -629,6 +629,7 @@ class ZaomengRepository(
         sessionId: String,
         message: String,
         messageKind: String,
+        includeInnerThoughts: Boolean = false,
     ): DialogueSessionDto = request {
         backend.requireApi().replyDialogue(
             runId,
@@ -637,6 +638,7 @@ class ZaomengRepository(
                 message = message,
                 messageKind = messageKind,
                 suppressTranscriptMessage = messageKind == "plot",
+                includeInnerThoughts = includeInnerThoughts,
             ),
         )
     }
@@ -648,6 +650,7 @@ class ZaomengRepository(
         messageKind: String,
         operationId: String,
         suppressTranscriptMessage: Boolean = messageKind == "plot",
+        includeInnerThoughts: Boolean = false,
     ): Flow<DialogueStreamEvent> = flow {
         try {
             val response = backend.requireApi().streamDialogueReply(
@@ -658,6 +661,7 @@ class ZaomengRepository(
                     message = message,
                     messageKind = messageKind,
                     suppressTranscriptMessage = suppressTranscriptMessage,
+                    includeInnerThoughts = includeInnerThoughts,
                     operationId = operationId,
                 ),
             )

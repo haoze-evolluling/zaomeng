@@ -679,6 +679,7 @@ def build_dialogue_llm_messages(
 ) -> list[dict[str, Any]]:
     input_block = dict(payload.get("input", {}) or {})
     session_mode = str(payload.get("mode", "")).strip() or "observe"
+    include_inner_thoughts = bool(payload.get("include_inner_thoughts", False))
     message_kind = (
         str(input_block.get("message_kind", "dialogue")).strip() or "dialogue"
     )
@@ -758,6 +759,11 @@ def build_dialogue_llm_messages(
         "角色的明显小动作不要单独写成旁白或场景提示；应尽量内嵌到该角色自己的台词里，用很短的括号动作来带出。",
         "只返回 JSON 数组，每项必须包含 speaker 和 message。",
     ]
+    if include_inner_thoughts:
+        stable_system_parts.append(
+            "角色回复还必须包含 inner_thought：只用一句符合人物性格的内心独白，"
+            "写角色真正想但没说出口的话，不要解释角色，不要写成旁白或分析。"
+        )
     stable_context = {
         "mode": session_mode,
         "participants": participants,
@@ -843,7 +849,18 @@ def build_dialogue_llm_messages(
         "history": history,
         "relation_excerpt": relation_excerpt,
         "expected_output": host_action.get(
-            "expected_output", [{"speaker": "角色名", "message": "回复内容"}]
+            "expected_output",
+            [
+                {
+                    "speaker": "角色名",
+                    "message": "回复内容",
+                    **(
+                        {"inner_thought": "角色没说出口的真实想法"}
+                        if include_inner_thoughts
+                        else {}
+                    ),
+                }
+            ],
         ),
         "retry_on_empty": retry_on_empty,
     }
@@ -1488,7 +1505,14 @@ def parse_dialogue_responses(
             if not canonical:
                 continue
             speaker = canonical
-        clean_responses.append({"speaker": speaker, "message": message})
+        inner_thought = _trim_text(str(item.get("inner_thought", "")).strip(), 180)
+        clean_responses.append(
+            {
+                "speaker": speaker,
+                "message": message,
+                **({"inner_thought": inner_thought} if inner_thought else {}),
+            }
+        )
     if not clean_responses:
         raise ValueError("Model reply did not contain usable character responses.")
     return clean_responses
@@ -2159,13 +2183,20 @@ def _normalize_dialogue_responses(
     for item in responses:
         speaker = str(item.get("speaker", "")).strip()
         message = str(item.get("message", "")).strip()
+        inner_thought = str(item.get("inner_thought", "")).strip()
         if not speaker or not message:
             continue
         if speaker not in {"旁白", "场景提示"}:
             if speaker in seen_character_speakers:
                 continue
             seen_character_speakers.add(speaker)
-        cleaned.append({"speaker": speaker, "message": message})
+        cleaned.append(
+            {
+                "speaker": speaker,
+                "message": message,
+                **({"inner_thought": inner_thought} if inner_thought else {}),
+            }
+        )
 
     if not cleaned:
         raise ValueError("Model reply did not contain usable character responses.")

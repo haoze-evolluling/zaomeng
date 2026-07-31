@@ -1996,6 +1996,19 @@
   color: rgba(155, 141, 133, 0.72);
 }
 
+.message-inner-thought {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(120, 105, 95, 0.18);
+  color: rgba(105, 118, 157, 0.92);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .message-bubble.user .message-aside {
   color: rgba(167, 109, 89, 0.7);
 }

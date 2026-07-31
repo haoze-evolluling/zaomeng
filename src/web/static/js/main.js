@@ -7,6 +7,7 @@ let exportRunPackagePendingId = "";
 let dialogueAssociationRequestId = 0;
 let dialogueAssociationLastRequestKey = "";
 const DIALOGUE_ASSOCIATION_ENABLED_KEY = "zaomeng:dialogue-associations-enabled";
+const DIALOGUE_INNER_THOUGHT_ENABLED_KEY = "zaomeng:dialogue-inner-thoughts-enabled";
 let dialogueAssociationsEnabled = (() => {
   try {
     return window.localStorage?.getItem(DIALOGUE_ASSOCIATION_ENABLED_KEY) !== "0";
@@ -14,6 +15,14 @@ let dialogueAssociationsEnabled = (() => {
     return true;
   }
 })();
+let dialogueInnerThoughtsEnabled = (() => {
+  try {
+    return window.localStorage?.getItem(DIALOGUE_INNER_THOUGHT_ENABLED_KEY) === "1";
+  } catch (_error) {
+    return false;
+  }
+})();
+window.dialogueInnerThoughtsEnabled = dialogueInnerThoughtsEnabled;
 let dialogueAssociationState = {
   sessionId: "",
   status: "idle",
@@ -3074,6 +3083,30 @@ function setDialogueAssociationsEnabled(enabled) {
   publishComposerUiState("composer-association-toggle");
 }
 
+function syncDialogueInnerThoughtToggle() {
+  const toggle = el("dialogue-inner-thought-toggle");
+  if (toggle) {
+    toggle.checked = dialogueInnerThoughtsEnabled;
+  }
+}
+
+function setDialogueInnerThoughtsEnabled(enabled) {
+  dialogueInnerThoughtsEnabled = Boolean(enabled);
+  window.dialogueInnerThoughtsEnabled = dialogueInnerThoughtsEnabled;
+  try {
+    window.localStorage?.setItem(
+      DIALOGUE_INNER_THOUGHT_ENABLED_KEY,
+      dialogueInnerThoughtsEnabled ? "1" : "0"
+    );
+  } catch (_error) {
+    // The in-memory preference still applies when storage is unavailable.
+  }
+  syncDialogueInnerThoughtToggle();
+  if (currentDialogueSession) {
+    renderDialogueTranscript(currentDialogueSession);
+  }
+}
+
 function renderDialogueAssociations() {
   el("dialogue-association-panel")?.remove();
   if (!dialogueAssociationsEnabled) return;
@@ -3373,6 +3406,7 @@ async function handleSendTurn(messageOverride = "", messageKindOverride = "", op
           message,
           message_kind: messageKind,
           suppress_transcript_message: suppressTranscriptMessage,
+          include_inner_thoughts: dialogueInnerThoughtsEnabled,
         }),
       },
       "发送失败。"
@@ -3776,7 +3810,11 @@ function bindEvents() {
   el("dialogue-association-toggle")?.addEventListener("change", (event) => {
     setDialogueAssociationsEnabled(Boolean(event.target?.checked));
   });
+  el("dialogue-inner-thought-toggle")?.addEventListener("change", (event) => {
+    setDialogueInnerThoughtsEnabled(Boolean(event.target?.checked));
+  });
   syncDialogueAssociationToggle();
+  syncDialogueInnerThoughtToggle();
   el("dialogue-message-kind")?.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
