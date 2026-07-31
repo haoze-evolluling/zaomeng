@@ -3,16 +3,21 @@ package top.wkbin.zaomeng.data.update
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
 import top.wkbin.zaomeng.BuildConfig
-import java.io.File
 
 data class AppUpdateInfo(
     val version: String,
@@ -167,22 +172,26 @@ class AppUpdateManager(
 }
 
 internal fun parseLatestRelease(payload: String, currentVersion: String): AppUpdateInfo? {
-    val release = JSONObject(payload)
-    val remoteVersion = release.optString("tag_name").trim()
+    val release = runCatching {
+        Json.parseToJsonElement(payload).jsonObject
+    }.getOrElse {
+        throw IllegalArgumentException("无效的 GitHub release JSON", it)
+    }
+    val remoteVersion = release.stringValue("tag_name")
     if (!isNewerVersion(remoteVersion, currentVersion)) return null
-    val assets = release.optJSONArray("assets") ?: JSONArray()
-    val asset = (0 until assets.length()).mapNotNull(assets::optJSONObject)
-        .firstOrNull { it.optString("name").endsWith(".apk", true) && it.optString("name").contains("arm64-v8a", true) }
-        ?: (0 until assets.length()).mapNotNull(assets::optJSONObject)
-            .firstOrNull { it.optString("name").endsWith(".apk", true) }
-        ?: error("最新版本未提供 Android APK")
-    val downloadUrl = asset.optString("browser_download_url").trim()
+    val assets = release.arrayValue("assets")
+    val asset = assets.firstOrNull {
+        it.stringValue("name").endsWith(".apk", true) && it.stringValue("name").contains("arm64-v8a", true)
+    } ?: assets.firstOrNull {
+        it.stringValue("name").endsWith(".apk", true)
+    } ?: error("最新版本未提供 Android APK")
+    val downloadUrl = asset.stringValue("browser_download_url")
     if (downloadUrl.isBlank()) error("更新包下载地址无效")
     return AppUpdateInfo(
         version = remoteVersion.removePrefix("v"),
         downloadUrl = downloadUrl,
-        fileName = asset.optString("name").ifBlank { "zaomeng-$remoteVersion.apk" },
-        releaseNotes = release.optString("body").trim(),
+        fileName = asset.stringValue("name").ifBlank { "zaomeng-$remoteVersion.apk" },
+        releaseNotes = release.stringValue("body"),
     )
 }
 
@@ -200,3 +209,11 @@ internal fun isNewerVersion(remote: String, current: String): Boolean {
     }
     return false
 }
+
+private fun JsonObject.stringValue(key: String): String =
+    this[key]?.jsonPrimitive?.content?.trim().orEmpty()
+
+private fun JsonObject.arrayValue(key: String): List<JsonObject> =
+    this[key]?.jsonArray?.mapNotNull(JsonElement::asObjectOrNull).orEmpty()
+
+private fun JsonElement.asObjectOrNull(): JsonObject? = runCatching { jsonObject }.getOrNull()

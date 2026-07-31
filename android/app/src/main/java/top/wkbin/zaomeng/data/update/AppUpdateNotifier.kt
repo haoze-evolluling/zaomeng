@@ -1,6 +1,7 @@
 package top.wkbin.zaomeng.data.update
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -25,6 +26,7 @@ class AppUpdateNotifier(private val context: Context) {
         }
     }
 
+    @SuppressLint("MissingPermission")
     fun showProgress(update: AppUpdateInfo, downloadedBytes: Long, totalBytes: Long) {
         if (!canPostNotifications()) return
         val percentage = if (totalBytes > 0L) ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(0, 100) else 0
@@ -40,6 +42,7 @@ class AppUpdateNotifier(private val context: Context) {
             .build())
     }
 
+    @SuppressLint("MissingPermission")
     fun showCompleted(update: AppUpdateInfo) {
         if (!canPostNotifications()) return
         notificationManager.notify(NOTIFICATION_ID, NotificationCompat.Builder(context, CHANNEL_ID)
@@ -51,6 +54,7 @@ class AppUpdateNotifier(private val context: Context) {
             .build())
     }
 
+    @SuppressLint("MissingPermission")
     fun clear() = notificationManager.cancel(NOTIFICATION_ID)
 
     private fun canPostNotifications() = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||

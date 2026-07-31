@@ -59,11 +59,6 @@ data class PendingUserMessage(
     val retryable: Boolean = true,
 )
 
-data class DirectorReceipt(
-    val operationId: String,
-    val message: String,
-)
-
 data class ChatUiState(
     val runId: String = "",
     val sessionId: String = "",
@@ -79,7 +74,6 @@ data class ChatUiState(
     val streamStatus: String = "",
     val streamingReplies: List<StreamingReplyPart> = emptyList(),
     val pendingUserMessage: PendingUserMessage? = null,
-    val directorReceipts: List<DirectorReceipt> = emptyList(),
     val continuousObserveEnabled: Boolean = false,
     val toolBusy: String = "",
     val session: DialogueSessionDto? = null,
@@ -588,16 +582,6 @@ class ChatViewModel(
                         }
                         is DialogueStreamEvent.Complete -> {
                             updateSendState(snapshot, operationId) {
-                                val receipts = if (messageKind == "plot" &&
-                                    it.directorReceipts.none { receipt ->
-                                        receipt.operationId == operationId
-                                    }
-                                ) {
-                                    (it.directorReceipts + DirectorReceipt(operationId, message))
-                                        .takeLast(12)
-                                } else {
-                                    it.directorReceipts
-                                }
                                 it.copy(
                                     sending = false,
                                     session = event.session,
@@ -609,7 +593,6 @@ class ChatViewModel(
                                     streamStatus = "",
                                     streamingReplies = emptyList(),
                                     pendingUserMessage = null,
-                                    directorReceipts = receipts,
                                     notice = if (event.replayed) "已恢复这次发送的本地结果。" else it.notice,
                                     error = "",
                                 )

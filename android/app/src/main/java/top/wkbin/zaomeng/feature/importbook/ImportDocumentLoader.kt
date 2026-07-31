@@ -38,7 +38,7 @@ internal fun textStatistics(text: String): TextStatistics {
     return TextStatistics(
         charCount = normalized.length,
         sentenceCount = normalized
-            .split(Regex("[。！？!?；;\\n]+"))
+            .split(Regex("[。！？!?;；.\\n]+"))
             .count { it.trim().isNotEmpty() },
     )
 }

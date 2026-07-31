@@ -51,6 +51,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -227,6 +228,7 @@ fun ChatScreen(
             if (state.session != null) {
                 ChatComposer(
                     state = state,
+                    avatarBytes = state.avatarBytes,
                     onDraftChange = viewModel::updateDraft,
                     onMessageKindChange = viewModel::selectMessageKind,
                     onSend = viewModel::send,
@@ -274,7 +276,6 @@ fun ChatScreen(
                         streamStatus = state.streamStatus,
                         streamingReplies = state.streamingReplies,
                         pendingUserMessage = state.pendingUserMessage,
-                        directorReceipts = state.directorReceipts,
                         displayPreferences = state.chatDisplay,
                         actionsEnabled = state.canUseTools,
                         onRegenerate = viewModel::correctLatest,
@@ -583,7 +584,6 @@ private fun Transcript(
     streamStatus: String,
     streamingReplies: List<StreamingReplyPart>,
     pendingUserMessage: PendingUserMessage?,
-    directorReceipts: List<DirectorReceipt>,
     displayPreferences: ChatDisplayPreferences,
     actionsEnabled: Boolean,
     onRegenerate: () -> Unit,
@@ -606,7 +606,7 @@ private fun Transcript(
     var unseenMessages by remember(session.sessionId) { mutableIntStateOf(0) }
     var previousVisibleCount by remember(session.sessionId) {
         mutableIntStateOf(
-            transcript.size + streamingReplies.size + directorReceipts.size +
+            transcript.size + streamingReplies.size +
                 if (pendingUserMessage == null) 0 else 1,
         )
     }
@@ -631,13 +631,12 @@ private fun Transcript(
             }
     }
 
-    val visibleCount = transcript.size + streamingReplies.size + directorReceipts.size +
+    val visibleCount = transcript.size + streamingReplies.size +
         if (pendingUserMessage == null) 0 else 1
     val lastContentIndex = (visibleCount - 1).coerceAtLeast(0)
     val contentSignature = transcript.lastOrNull()?.message.orEmpty() +
         streamingReplies.joinToString(separator = "|") { it.text } +
-        pendingUserMessage?.let { "${it.operationId}|${it.status}|${it.statusText}" }.orEmpty() +
-        directorReceipts.joinToString(separator = "|") { it.operationId }
+        pendingUserMessage?.let { "${it.operationId}|${it.status}|${it.statusText}" }.orEmpty()
     LaunchedEffect(visibleCount, contentSignature, sending) {
         val added = (visibleCount - previousVisibleCount).coerceAtLeast(0)
         previousVisibleCount = visibleCount
@@ -661,9 +660,7 @@ private fun Transcript(
                 if (displayPreferences.compactMode) 3.dp else 8.dp,
             ),
         ) {
-            if (transcript.isEmpty() && streamingReplies.isEmpty() && pendingUserMessage == null &&
-                directorReceipts.isEmpty()
-            ) {
+            if (transcript.isEmpty() && streamingReplies.isEmpty() && pendingUserMessage == null) {
                 item {
                     Text(
                         "这一幕还没有留下台词。写下第一句话，让故事继续。",
@@ -703,10 +700,6 @@ private fun Transcript(
                         requiresRecovery = session.status != "ready",
                     )
                 }
-            }
-
-            items(directorReceipts, key = { "director-${it.operationId}" }) { receipt ->
-                DirectorReceiptCard(receipt = receipt)
             }
 
             items(
@@ -952,61 +945,6 @@ private fun PendingNarrationMessageCard(
                             modifier = Modifier.align(Alignment.End),
                         ) { Text(if (requiresRecovery) "恢复会话" else "核对结果") }
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DirectorReceiptCard(receipt: DirectorReceipt) {
-    var expanded by remember(receipt.operationId) { mutableStateOf(false) }
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Surface(
-            modifier = Modifier
-                .widthIn(max = 520.dp)
-                .clickable { expanded = !expanded },
-            color = androidx.compose.ui.graphics.Color.Transparent,
-            shape = RoundedCornerShape(0.dp),
-        ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                androidx.compose.material3.HorizontalDivider()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "导演指令已应用",
-                        modifier = Modifier.padding(start = 5.dp).weight(1f),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = if (expanded) "收起指令" else "展开指令",
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (expanded) {
-                    ParentheticalMessageText(
-                        text = receipt.message,
-                        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        baseColor = MaterialTheme.colorScheme.onSurface,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-                } else {
-                    Text(
-                        "作为下一拍的引导，不写入角色台词",
-                        modifier = Modifier.padding(top = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         }
@@ -1464,6 +1402,7 @@ private fun ParentheticalMessageText(
 @Composable
 private fun ChatComposer(
     state: ChatUiState,
+    avatarBytes: Map<String, ByteArray>,
     onDraftChange: (String) -> Unit,
     onMessageKindChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -1474,6 +1413,7 @@ private fun ChatComposer(
     onDiscardRetry: () -> Unit,
 ) {
     var mentionsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
+    var messageKindMenuOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
     var draftValue by rememberSaveable(state.sessionId, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.draft))
     }
@@ -1513,15 +1453,39 @@ private fun ChatComposer(
                 vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
             ),
     ) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(messageKindOptions, key = MessageKindOption::value) { option ->
-                    FilterChip(
-                        selected = state.messageKind == option.value,
-                        onClick = { onMessageKindChange(option.value) },
-                        enabled = inputEnabled,
-                        label = { Text(option.label) },
-                    )
+            if (participants.isNotEmpty() && mentionsOpen) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(vertical = 6.dp),
+                ) {
+                    items(participants, key = { it }) { participant ->
+                        Column(
+                            modifier = Modifier
+                                .width(60.dp)
+                                .clickable(enabled = inputEnabled) {
+                                    val next = draftValue.insertMention(participant)
+                                    draftValue = next
+                                    onDraftChange(next.text)
+                                    mentionsOpen = false
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            ChatPersonaAvatar(
+                                bytes = avatarBytes[participant],
+                                modifier = Modifier.size(48.dp),
+                            )
+                            Text(
+                                text = participant,
+                                modifier = Modifier.padding(top = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (participants.isNotEmpty()) {
                     item {
                         AssistChip(
@@ -1529,6 +1493,40 @@ private fun ChatComposer(
                             enabled = inputEnabled,
                             label = { Text("@") },
                         )
+                    }
+                }
+                item {
+                    Box {
+                        AssistChip(
+                            onClick = { messageKindMenuOpen = true },
+                            enabled = inputEnabled,
+                            label = {
+                                Text(
+                                    messageKindOptions.firstOrNull { it.value == state.messageKind }
+                                        ?.label ?: "对话",
+                                )
+                            },
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "切换输入模式",
+                                )
+                            },
+                        )
+                        DropdownMenu(
+                            expanded = messageKindMenuOpen,
+                            onDismissRequest = { messageKindMenuOpen = false },
+                        ) {
+                            messageKindOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.label) },
+                                    onClick = {
+                                        onMessageKindChange(option.value)
+                                        messageKindMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
                 if (state.session?.mode == "observe") {
@@ -1561,28 +1559,6 @@ private fun ChatComposer(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-
-            if (participants.isNotEmpty()) {
-                if (mentionsOpen) {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = PaddingValues(bottom = 5.dp),
-                    ) {
-                        items(participants, key = { it }) { participant ->
-                            AssistChip(
-                                onClick = {
-                                    val next = draftValue.insertMention(participant)
-                                    draftValue = next
-                                    onDraftChange(next.text)
-                                    mentionsOpen = false
-                                },
-                                enabled = inputEnabled,
-                                label = { Text(participant) },
-                            )
-                        }
-                    }
-                }
             }
 
             Row(verticalAlignment = Alignment.Bottom) {
