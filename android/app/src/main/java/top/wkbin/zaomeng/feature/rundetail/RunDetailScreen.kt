@@ -382,6 +382,29 @@ private fun RunDetailContent(
         }
 
         item {
+            NextActionCard(
+                run = run,
+                onResume = onResume,
+                onOpenRedistill = onOpenRedistill,
+                onOpenPersona = onOpenPersona,
+                onOpenRelations = onOpenRelations,
+                onOpenSessions = onOpenSessions,
+            )
+        }
+
+        if (state.reviewLoading || state.reviewOverview != null) {
+            item {
+                BookReviewCard(
+                    loading = state.reviewLoading,
+                    overview = state.reviewOverview,
+                    onOpenPersona = onOpenPersona,
+                    onOpenRelations = onOpenRelations,
+                    onOpenWorldTimeline = onOpenWorldTimeline,
+                )
+            }
+        }
+
+        item {
             ActionCard(
                 run = run,
                 stopping = state.stopping,
@@ -448,6 +471,117 @@ private fun RunDetailContent(
         }
 
         item { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+private fun NextActionCard(
+    run: RunManifestDto,
+    onResume: () -> Unit,
+    onOpenRedistill: () -> Unit,
+    onOpenPersona: (String) -> Unit,
+    onOpenRelations: () -> Unit,
+    onOpenSessions: () -> Unit,
+) {
+    val action = nextActionFor(run)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("推荐下一步", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text(action.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                action.description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Button(
+                onClick = {
+                    when (action.target) {
+                        RunNextActionTarget.ResumeDistillation -> onResume()
+                        RunNextActionTarget.OpenRedistill -> onOpenRedistill()
+                        RunNextActionTarget.OpenPersona -> onOpenPersona(action.character)
+                        RunNextActionTarget.OpenRelations -> onOpenRelations()
+                        RunNextActionTarget.OpenSessions -> onOpenSessions()
+                    }
+                },
+                modifier = Modifier.align(Alignment.End),
+            ) {
+                Text(action.label)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookReviewCard(
+    loading: Boolean,
+    overview: RunReviewOverview?,
+    onOpenPersona: (String) -> Unit,
+    onOpenRelations: () -> Unit,
+    onOpenWorldTimeline: () -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("作品体检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (loading) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("正在汇总人物、关系与时间线的待校对项…", style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                val report = checkNotNull(overview)
+                val hasIssues = report.relationConflictCount > 0 || report.timelineWarningCount > 0 ||
+                    report.charactersNeedingReview.isNotEmpty()
+                if (!hasIssues) {
+                    Text("当前没有发现需要优先处理的关系冲突或一致性提醒。", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    if (report.charactersNeedingReview.isNotEmpty()) {
+                        ReviewActionRow(
+                            text = "${report.charactersNeedingReview.size} 位人物资料建议校对",
+                            label = "校对 ${report.charactersNeedingReview.first()}",
+                            onClick = { onOpenPersona(report.charactersNeedingReview.first()) },
+                        )
+                    }
+                    if (report.relationConflictCount > 0) {
+                        ReviewActionRow(
+                            text = "${report.relationConflictCount} 组人物关系需要留意",
+                            label = "校对关系",
+                            onClick = onOpenRelations,
+                        )
+                    }
+                    if (report.timelineWarningCount > 0) {
+                        ReviewActionRow(
+                            text = "${report.timelineWarningCount} 条故事时间线提醒",
+                            label = "查看时间线",
+                            onClick = onOpenWorldTimeline,
+                        )
+                    }
+                }
+                if (report.checkedCharacterCount > 0) {
+                    Text(
+                        "已检查 ${report.checkedCharacterCount} 位人物的资料质量。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewActionRow(text: String, label: String, onClick: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        TextButton(onClick = onClick) { Text(label) }
     }
 }
 

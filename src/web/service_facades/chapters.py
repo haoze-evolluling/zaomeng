@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+from src.core.config import Config
+from src.core.llm_client import LLMClient
 from src.web.time_utils import utc_now as _utc_now
 
 
@@ -90,6 +92,33 @@ class ChapterServiceMixin:
             if len(results) >= limit:
                 break
         return results
+
+    def answer_book_question(self, run_id: str, *, question: str) -> dict[str, Any]:
+        normalized = str(question or "").strip()
+        if not normalized:
+            raise ValueError("问题不能为空。")
+        manifest = self._require_manifest(run_id)
+        character_names = [
+            str(item.get("name", "")).strip()
+            for item in list(manifest.get("artifact_index", {}).get("characters", []) or [])
+            if isinstance(item, dict) and str(item.get("name", "")).strip() in normalized
+        ]
+        queries = character_names or [normalized]
+        evidence: list[dict[str, Any]] = []
+        for query in queries:
+            for item in self.search_run_content(run_id, query=query, limit=8):
+                if item not in evidence:
+                    evidence.append(item)
+        if not evidence:
+            return {"answer": "没有在当前书卷中找到可引用的证据。请换用角色名、章节标题或更具体的关键词。", "evidence": []}
+        payload = self._load_model_settings_payload()
+        if not self._is_model_configured_payload(payload):
+            raise ValueError("请先在设置中完成模型配置，再使用问书卷。")
+        config = Config()
+        config.update({"llm": {"provider": payload["provider"], "model": payload["model"], "base_url": payload["base_url"], "api_key": payload["api_key"], "max_tokens": min(max(256, int(payload.get("max_tokens", 0) or 0)), 1200)}})
+        source_text = "\n\n".join(f"[{index + 1}] {item['title']}\n{item['preview']}" for index, item in enumerate(evidence[:12]))
+        result = LLMClient(config).chat_completion([{"role": "user", "content": f"只依据以下书卷证据回答问题；没有证据就说明不知道。不要编造。\n问题：{normalized}\n\n证据：\n{source_text}"}], temperature=0.2, max_tokens=900)
+        return {"answer": str(result.get("content", "")).strip(), "evidence": evidence[:12]}
 
     def save_chapter(
         self,

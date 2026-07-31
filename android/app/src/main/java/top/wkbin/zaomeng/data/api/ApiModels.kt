@@ -731,3 +731,12 @@ data class SearchResultDto(
     val title: String = "",
     val preview: String = "",
 )
+
+@Serializable
+data class AskBookQuestionRequest(val question: String)
+
+@Serializable
+data class AskBookResponseDto(
+    val answer: String = "",
+    val evidence: List<SearchResultDto> = emptyList(),
+)

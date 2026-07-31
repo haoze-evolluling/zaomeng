@@ -367,6 +367,10 @@ class ReorderChapterRequest(BaseModel):
     target_order: int = Field(..., ge=1)
 
 
+class AskBookQuestionRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=300)
+
+
 class SaveWorldFactRequest(BaseModel):
     category: str = Field(default="event", max_length=40)
     summary: str = Field(..., min_length=1, max_length=500)

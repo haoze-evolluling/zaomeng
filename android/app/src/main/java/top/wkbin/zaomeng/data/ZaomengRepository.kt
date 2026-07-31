@@ -14,6 +14,8 @@ import top.wkbin.zaomeng.data.api.BuiltinNovelDto
 import top.wkbin.zaomeng.data.api.BranchDialogueTurnRequest
 import top.wkbin.zaomeng.data.api.BranchDialogueSceneRequest
 import top.wkbin.zaomeng.data.api.ArchiveDialogueChapterRequest
+import top.wkbin.zaomeng.data.api.AskBookQuestionRequest
+import top.wkbin.zaomeng.data.api.AskBookResponseDto
 import top.wkbin.zaomeng.data.api.ChapterDto
 import top.wkbin.zaomeng.data.api.DeleteRunResponse
 import top.wkbin.zaomeng.data.api.DeleteStatusDto
@@ -376,6 +378,10 @@ class ZaomengRepository(
 
     suspend fun searchRunContent(runId: String, query: String): List<SearchResultDto> = request {
         backend.requireApi().searchRunContent(runId, query).items
+    }
+
+    suspend fun askBookQuestion(runId: String, question: String): AskBookResponseDto = request {
+        backend.requireApi().askBookQuestion(runId, AskBookQuestionRequest(question))
     }
 
     suspend fun saveChapter(

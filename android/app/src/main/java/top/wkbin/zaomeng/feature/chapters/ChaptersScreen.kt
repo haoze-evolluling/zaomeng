@@ -3,19 +3,24 @@ package top.wkbin.zaomeng.feature.chapters
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,18 +104,93 @@ fun ChaptersScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Card {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                     Text("把会话沉淀成章节草稿，再统一导出全书。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         OutlinedTextField(
                             value = state.searchQuery,
                             onValueChange = viewModel::updateSearchQuery,
                             label = { Text("搜索章节和会话") },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         )
-                        Button(onClick = viewModel::search, enabled = !state.searching && state.searchQuery.isNotBlank()) {
+                        Button(
+                            onClick = viewModel::search,
+                            enabled = !state.searching && state.searchQuery.isNotBlank(),
+                        ) {
                             Text(if (state.searching) "…" else "搜索")
+                        }
+                    }
+                    val suggestions = remember(state.chapters, state.sessions) {
+                        chapterSearchSuggestions(state.chapters, state.sessions)
+                    }
+                    if (state.searchQuery.isBlank() && suggestions.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(suggestions, key = { it }) { character ->
+                                AssistChip(
+                                    onClick = { viewModel.searchFor(character) },
+                                    label = { Text(character) },
+                                )
+                            }
+                        }
+                    }
+                    }
+                }
+            }
+            item {
+                Card {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("问书卷", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = state.bookQuestion,
+                            onValueChange = viewModel::updateBookQuestion,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("例如：宝玉和黛玉最近一次冲突是什么？") },
+                            minLines = 2,
+                            maxLines = 4,
+                        )
+                        Button(
+                            onClick = viewModel::askBook,
+                            enabled = state.bookQuestion.isNotBlank() && !state.askingBook,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (state.askingBook) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("根据书卷证据回答")
+                        }
+                    }
+                }
+            }
+            state.bookAnswer?.let { answer ->
+                item {
+                    Card {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("回答", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(answer.answer)
+                            if (answer.evidence.isNotEmpty()) {
+                                Text("引用证据", style = MaterialTheme.typography.labelLarge)
+                                answer.evidence.forEach { evidence ->
+                                    Text("${searchResultKindLabel(evidence.kind)} · ${evidence.title}", style = MaterialTheme.typography.labelMedium)
+                                    Text(evidence.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                    if (evidence.kind == "persona" && evidence.character.isNotBlank()) {
+                                        TextButton(onClick = { onOpenPersona(viewModel.runId, evidence.character) }) {
+                                            Text("打开人物档案")
+                                        }
+                                    }
+                                    if (evidence.kind == "session" && evidence.sessionId.isNotBlank()) {
+                                        TextButton(onClick = { onOpenChat(viewModel.runId, evidence.sessionId) }) {
+                                            Text("打开原始会话")
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -118,9 +198,18 @@ fun ChaptersScreen(
             if (state.error.isNotBlank()) item { Text(state.error, color = MaterialTheme.colorScheme.error) }
             if (state.message.isNotBlank()) item { Text(state.message, color = MaterialTheme.colorScheme.primary) }
             if (state.searchResults.isNotEmpty()) {
+                item {
+                    val kinds = state.searchResults.groupingBy { it.kind }.eachCount()
+                    Text(
+                        "搜索结果 · 章节 ${kinds["chapter"] ?: 0} · 人物 ${kinds["persona"] ?: 0} · 会话 ${kinds["session"] ?: 0}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 item { Text("搜索结果", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                 items(state.searchResults, key = { "${it.kind}:${it.chapterId}:${it.sessionId}:${it.character}" }) { result ->
                     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(searchResultKindLabel(result.kind), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         Text(if (result.kind == "session") "会话 · ${result.title}" else result.title, fontWeight = FontWeight.SemiBold)
                         Text(result.preview, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         if (result.kind == "persona" && result.character.isNotBlank()) {
@@ -131,6 +220,9 @@ fun ChaptersScreen(
                         }
                     } }
                 }
+            }
+            if (!state.searching && state.searchQuery.isNotBlank() && state.searchResults.isEmpty()) item {
+                Text("没有找到相关证据。可换一个角色名、章节标题或会话中的关键词再试。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (state.loading) item { CircularProgressIndicator() }
             if (!state.loading && state.chapters.isEmpty()) item {
@@ -178,6 +270,13 @@ fun ChaptersScreen(
         onDismiss = { showArchive = false },
         onArchive = { sessionId, title -> viewModel.archiveSession(sessionId, title); showArchive = false },
     )
+}
+
+private fun searchResultKindLabel(kind: String): String = when (kind) {
+    "chapter" -> "章节草稿"
+    "persona" -> "人物档案"
+    "session" -> "会话记录"
+    else -> "书卷内容"
 }
 
 @Composable

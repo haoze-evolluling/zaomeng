@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -43,9 +44,11 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -123,6 +126,15 @@ private val messageKindOptions = listOf(
     MessageKindOption("plot", "导演"),
 )
 
+private data class DirectorActionOption(val value: String, val label: String)
+
+private val directorActionOptions = listOf(
+    DirectorActionOption("advance", "推进剧情"),
+    DirectorActionOption("slow_emotion", "放慢情绪"),
+    DirectorActionOption("conflict", "加强冲突"),
+    DirectorActionOption("viewpoint", "切换视角"),
+)
+
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
@@ -136,6 +148,7 @@ fun ChatScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var directorOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(runId, sessionId) {
         viewModel.load(runId, sessionId)
@@ -174,8 +187,6 @@ fun ChatScreen(
         ChatToolsSheet(
             state = state,
             onDismiss = { toolsOpen = false },
-            onSuggest = viewModel::suggestReply,
-            onAssociations = viewModel::requestAssociations,
             onDirector = viewModel::requestDirectorOptions,
             onCorrectLatest = viewModel::correctLatest,
             onDeepReviewLatest = viewModel::deepReviewLatest,
@@ -206,6 +217,17 @@ fun ChatScreen(
         )
     }
 
+    if (directorOpen) {
+        DirectorDialog(
+            enabled = state.canUseTools,
+            onDismiss = { directorOpen = false },
+            onGenerate = { goal, action ->
+                directorOpen = false
+                viewModel.requestDirectorOptions(goal, action)
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             ChatTopBar(
@@ -231,6 +253,9 @@ fun ChatScreen(
                     avatarBytes = state.avatarBytes,
                     onDraftChange = viewModel::updateDraft,
                     onMessageKindChange = viewModel::selectMessageKind,
+                    onSuggest = viewModel::suggestReply,
+                    onAssociations = viewModel::requestAssociations,
+                    onOpenDirector = { directorOpen = true },
                     onSend = viewModel::send,
                     onToggleContinuousObserve = viewModel::toggleContinuousObserve,
                     onRecover = viewModel::recoverPending,
@@ -269,8 +294,18 @@ fun ChatScreen(
                         modifier = Modifier.weight(1f),
                     )
                 } else {
+                    val session = requireNotNull(state.session)
+                    val hasConsistencyIssue = session.consistencyMonitor.consistencyInsight()
+                        ?.issueCount
+                        ?.let { it > 0 } == true
+                    if (hasConsistencyIssue) {
+                        ChatContextStrip(
+                            session = session,
+                            onOpenTools = { toolsOpen = true },
+                        )
+                    }
                     Transcript(
-                        session = requireNotNull(state.session),
+                        session = session,
                         avatarBytes = state.avatarBytes,
                         sending = state.sending,
                         streamStatus = state.streamStatus,
@@ -290,6 +325,105 @@ fun ChatScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ChatContextStrip(session: DialogueSessionDto, onOpenTools: () -> Unit) {
+    val summary = remember(session) { chatContextSummary(session) }
+    val consistencyIssueCount = session.consistencyMonitor.consistencyInsight()
+        ?.issueCount
+        ?.takeIf { it > 0 }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onOpenTools),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "${summary.mode} · ${summary.scene}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    summary.participants,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                consistencyIssueCount?.let { count ->
+                    Text(
+                        "$count 项一致性提醒，点击查看工具与详情",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+            Text(
+                "工具",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DirectorDialog(
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onGenerate: (goal: String, action: String) -> Unit,
+) {
+    var goal by rememberSaveable { mutableStateOf("") }
+    var action by rememberSaveable { mutableStateOf("advance") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("剧情导演") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                directorActionOptions.chunked(2).forEach { actions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        actions.forEach { option ->
+                            FilterChip(
+                                selected = action == option.value,
+                                onClick = { action = option.value },
+                                label = { Text(option.label) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = goal,
+                    onValueChange = { goal = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("这一幕希望怎样发展") },
+                    placeholder = { Text("例如：让两人因为旧事发生正面冲突") },
+                    minLines = 3,
+                    maxLines = 6,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onGenerate(goal, action) },
+                enabled = enabled && goal.isNotBlank(),
+            ) { Text("生成方案") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -371,6 +505,8 @@ private fun ChatToolOptionsDialog(
                         onClick = { onChoose(option) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = enabled,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Column(Modifier.fillMaxWidth()) {
                             Text(option.label, fontWeight = FontWeight.SemiBold)
@@ -379,8 +515,6 @@ private fun ChatToolOptionsDialog(
                                     option.value,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             if (option.description.isNotBlank() && option.description != option.value) {
@@ -388,8 +522,6 @@ private fun ChatToolOptionsDialog(
                                     option.description,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -1405,6 +1537,9 @@ private fun ChatComposer(
     avatarBytes: Map<String, ByteArray>,
     onDraftChange: (String) -> Unit,
     onMessageKindChange: (String) -> Unit,
+    onSuggest: () -> Unit,
+    onAssociations: () -> Unit,
+    onOpenDirector: () -> Unit,
     onSend: () -> Unit,
     onToggleContinuousObserve: () -> Unit,
     onRecover: () -> Unit,
@@ -1434,6 +1569,7 @@ private fun ChatComposer(
     }
     val inputEnabled = !state.sending && !state.recovering &&
         !state.sendOutcomeUnknown && state.failedOperationId.isBlank()
+    val draftInputEnabled = inputEnabled && state.toolBusy != "suggest"
     val mentionColor = MaterialTheme.colorScheme.primary
     val mentionTransformation = remember(participants, mentionColor) {
         MentionVisualTransformation(participants, mentionColor)
@@ -1485,34 +1621,75 @@ private fun ChatComposer(
                     }
                 }
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(
+                modifier = Modifier.padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (participants.isNotEmpty()) {
                     item {
-                        AssistChip(
+                        OutlinedButton(
                             onClick = { mentionsOpen = !mentionsOpen },
                             enabled = inputEnabled,
-                            label = { Text("@") },
+                            modifier = Modifier.size(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(0.dp),
+                        ) { Text("@") }
+                    }
+                }
+                item {
+                    OutlinedButton(
+                        onClick = onAssociations,
+                        enabled = state.canUseTools && state.toolBusy != "associations",
+                        modifier = Modifier.size(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        if (state.toolBusy == "associations") {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Outlined.Psychology,
+                                contentDescription = "AI 联想",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                }
+                item {
+                    OutlinedButton(
+                        onClick = onOpenDirector,
+                        enabled = state.canUseTools,
+                        modifier = Modifier.size(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Movie,
+                            contentDescription = "剧情导演",
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }
                 item {
                     Box {
-                        AssistChip(
+                        OutlinedButton(
                             onClick = { messageKindMenuOpen = true },
                             enabled = inputEnabled,
-                            label = {
-                                Text(
-                                    messageKindOptions.firstOrNull { it.value == state.messageKind }
-                                        ?.label ?: "对话",
-                                )
-                            },
-                            trailingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "切换输入模式",
-                                )
-                            },
-                        )
+                            modifier = Modifier.height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                        ) {
+                            Text(
+                                messageKindOptions.firstOrNull { it.value == state.messageKind }
+                                    ?.label ?: "对话",
+                            )
+                            Spacer(Modifier.size(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "切换输入模式",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                         DropdownMenu(
                             expanded = messageKindMenuOpen,
                             onDismissRequest = { messageKindMenuOpen = false },
@@ -1574,7 +1751,7 @@ private fun ChatComposer(
                         onDraftChange(resolved.text)
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = inputEnabled,
+                    enabled = draftInputEnabled,
                     visualTransformation = mentionTransformation,
                     placeholder = {
                         Text(
@@ -1588,6 +1765,21 @@ private fun ChatComposer(
                     minLines = 1,
                     maxLines = 4,
                     shape = RoundedCornerShape(24.dp),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = onSuggest,
+                            enabled = state.canUseTools && state.toolBusy != "suggest",
+                        ) {
+                            if (state.toolBusy == "suggest") {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(
+                                    Icons.Outlined.AutoAwesome,
+                                    contentDescription = "一键生成续写建议",
+                                )
+                            }
+                        }
+                    },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { if (state.canSend) onSend() }),
                 )

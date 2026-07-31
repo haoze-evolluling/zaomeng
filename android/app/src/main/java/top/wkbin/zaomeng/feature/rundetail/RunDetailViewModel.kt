@@ -19,6 +19,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +46,8 @@ data class RunDetailUiState(
     val exportRequestId: Long = 0,
     val avatarBytes: Map<String, ByteArray> = emptyMap(),
     val updatingAvatar: String = "",
+    val reviewLoading: Boolean = false,
+    val reviewOverview: RunReviewOverview? = null,
 )
 
 data class AvatarCrop(
@@ -62,6 +66,7 @@ class RunDetailViewModel(
 
     private var loadJob: Job? = null
     private var pollingJob: Job? = null
+    private var reviewJob: Job? = null
 
     init {
         require(runId.isNotBlank()) { "runId 不能为空。" }
@@ -331,6 +336,7 @@ class RunDetailViewModel(
             try {
                 val run = if (refreshManifest) repository.refreshRun(runId) else repository.getRun(runId)
                 acceptRun(run)
+                loadReviewOverview(run)
                 run.artifactIndex.characters.forEach { persona -> loadAvatar(persona.name, persona.avatarVersion) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -406,8 +412,12 @@ class RunDetailViewModel(
                     delay(POLL_INTERVAL_MS)
                     try {
                         val run = repository.getRun(runId)
+                        val wasRunning = state.value.run?.status == RUNNING_STATUS
                         mutableState.update { it.copy(run = run, error = "") }
-                        if (run.status != RUNNING_STATUS) return@launch
+                        if (run.status != RUNNING_STATUS) {
+                            if (wasRunning) loadReviewOverview(run)
+                            return@launch
+                        }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Throwable) {
@@ -428,6 +438,44 @@ class RunDetailViewModel(
         pollingJob = null
     }
 
+    private fun loadReviewOverview(run: RunManifestDto) {
+        reviewJob?.cancel()
+        if (run.status == RUNNING_STATUS || run.availableCharacters.isEmpty()) {
+            mutableState.update { it.copy(reviewLoading = false, reviewOverview = null) }
+            return
+        }
+        reviewJob = viewModelScope.launch {
+            mutableState.update { it.copy(reviewLoading = true, reviewOverview = null) }
+            val relations = async { fetchReviewData { repository.getRelations(runId) } }
+            val worldMemory = async { fetchReviewData { repository.getWorldMemory(runId) } }
+            val qualityReports = run.availableCharacters
+                .take(MAX_QUALITY_REPORTS)
+                .map { character ->
+                    async { fetchReviewData { repository.getPersonaQuality(runId, character) } }
+                }
+                .awaitAll()
+                .filterNotNull()
+            mutableState.update {
+                it.copy(
+                    reviewLoading = false,
+                    reviewOverview = buildRunReviewOverview(
+                        relations = relations.await(),
+                        worldMemory = worldMemory.await(),
+                        qualityReports = qualityReports,
+                    ),
+                )
+            }
+        }
+    }
+
+    private suspend fun <T> fetchReviewData(block: suspend () -> T): T? = try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        null
+    }
+
     private fun markDeleted() {
         stopPolling()
         mutableState.update { it.copy(deleting = false, deleted = true) }
@@ -443,6 +491,7 @@ class RunDetailViewModel(
 
     override fun onCleared() {
         pollingJob?.cancel()
+        reviewJob?.cancel()
         state.value.exportedPackage?.file?.delete()
         super.onCleared()
     }
@@ -450,5 +499,6 @@ class RunDetailViewModel(
     private companion object {
         const val RUNNING_STATUS = "running"
         const val POLL_INTERVAL_MS = 2_000L
+        const val MAX_QUALITY_REPORTS = 12
     }
 }

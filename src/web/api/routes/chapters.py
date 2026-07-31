@@ -7,7 +7,7 @@ from fastapi.responses import PlainTextResponse
 
 from src.web.api.compat import model_to_dict
 from src.web.api.deps import get_run_service
-from src.web.api.schemas import ArchiveDialogueChapterRequest, ReorderChapterRequest, SaveChapterRequest
+from src.web.api.schemas import ArchiveDialogueChapterRequest, AskBookQuestionRequest, ReorderChapterRequest, SaveChapterRequest
 from src.web.workflow import WebRunService
 
 router = APIRouter()
@@ -32,6 +32,16 @@ def search_run_content(
         return {"items": run_service.search_run_content(run_id, query=query, limit=limit)}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Run not found.") from exc
+
+
+@router.post("/api/web/runs/{run_id}/ask")
+def ask_book_question(run_id: str, payload: AskBookQuestionRequest, run_service: WebRunService = Depends(get_run_service)) -> dict[str, Any]:
+    try:
+        return run_service.answer_book_question(run_id, question=payload.question)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/api/web/runs/{run_id}/chapters")

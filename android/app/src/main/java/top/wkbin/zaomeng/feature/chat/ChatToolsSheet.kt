@@ -78,8 +78,6 @@ private val directorActions = listOf(
 fun ChatToolsSheet(
     state: ChatUiState,
     onDismiss: () -> Unit,
-    onSuggest: () -> Unit,
-    onAssociations: () -> Unit,
     onDirector: (String, String) -> Unit,
     onCorrectLatest: () -> Unit,
     onDeepReviewLatest: () -> Unit,
@@ -259,31 +257,6 @@ fun ChatToolsSheet(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-
-            item {
-                ToolSection("创作辅助") {
-                    ToolButton(
-                        label = "续写建议",
-                        icon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
-                        busy = state.toolBusy == "suggest",
-                        enabled = toolsEnabled,
-                        onClick = onSuggest,
-                    )
-                    ToolButton(
-                        label = "AI 联想",
-                        icon = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
-                        busy = state.toolBusy == "associations",
-                        enabled = toolsEnabled,
-                        onClick = onAssociations,
-                    )
-                    ToolButton(
-                        label = "剧情导演",
-                        icon = { Icon(Icons.Outlined.Movie, contentDescription = null) },
-                        enabled = toolsEnabled,
-                        onClick = { directorDialog = true },
-                    )
-                }
             }
 
             item {

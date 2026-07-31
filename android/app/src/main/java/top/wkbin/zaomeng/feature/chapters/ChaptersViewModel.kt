@@ -11,6 +11,7 @@ import top.wkbin.zaomeng.data.api.DialogueSessionDto
 import top.wkbin.zaomeng.data.api.ExportedChapterManuscript
 import top.wkbin.zaomeng.data.api.SaveChapterRequest
 import top.wkbin.zaomeng.data.api.SearchResultDto
+import top.wkbin.zaomeng.data.api.AskBookResponseDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,9 @@ data class ChaptersUiState(
     val searchQuery: String = "",
     val searching: Boolean = false,
     val searchResults: List<SearchResultDto> = emptyList(),
+    val bookQuestion: String = "",
+    val askingBook: Boolean = false,
+    val bookAnswer: AskBookResponseDto? = null,
     val error: String = "",
     val message: String = "",
 )
@@ -69,16 +73,40 @@ class ChaptersViewModel(
     }
 
     fun search() {
-        val query = state.value.searchQuery.trim()
+        searchFor(state.value.searchQuery)
+    }
+
+    fun searchFor(value: String) {
+        val query = value.trim()
         if (query.isBlank() || state.value.searching) return
         viewModelScope.launch {
-            mutableState.update { it.copy(searching = true, error = "") }
+            mutableState.update { it.copy(searchQuery = query, searching = true, error = "") }
             try {
                 mutableState.update { it.copy(searching = false, searchResults = repository.searchRunContent(runId, query)) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
                 mutableState.update { it.copy(searching = false, error = error.message ?: "搜索失败。") }
+            }
+        }
+    }
+
+    fun updateBookQuestion(value: String) {
+        mutableState.update { it.copy(bookQuestion = value.take(300), bookAnswer = null) }
+    }
+
+    fun askBook() {
+        val question = state.value.bookQuestion.trim()
+        if (question.isBlank() || state.value.askingBook) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(askingBook = true, bookAnswer = null, error = "") }
+            try {
+                val answer = repository.askBookQuestion(runId, question)
+                mutableState.update { it.copy(askingBook = false, bookAnswer = answer) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update { it.copy(askingBook = false, error = error.message ?: "问书卷失败。") }
             }
         }
     }

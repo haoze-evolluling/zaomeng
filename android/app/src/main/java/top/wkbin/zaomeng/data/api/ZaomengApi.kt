@@ -115,6 +115,12 @@ interface ZaomengApi {
         @Query("limit") limit: Int = 30,
     ): SearchResultsResponse
 
+    @POST("api/web/runs/{runId}/ask")
+    suspend fun askBookQuestion(
+        @Path("runId") runId: String,
+        @Body request: AskBookQuestionRequest,
+    ): AskBookResponseDto
+
     @POST("api/web/runs/{runId}/chapters")
     suspend fun createChapter(@Path("runId") runId: String, @Body request: SaveChapterRequest): ChapterDto
 
