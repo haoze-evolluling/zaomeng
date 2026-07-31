@@ -23,6 +23,7 @@ import top.wkbin.zaomeng.feature.rundetail.RunDetailViewModel
 import top.wkbin.zaomeng.feature.redistill.RedistillViewModel
 import top.wkbin.zaomeng.feature.relations.RelationsViewModel
 import top.wkbin.zaomeng.feature.sessions.SessionsViewModel
+import top.wkbin.zaomeng.feature.timeline.WorldTimelineViewModel
 import top.wkbin.zaomeng.feature.settings.SettingsViewModel
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
 import top.wkbin.zaomeng.feature.settings.ModelProfilesViewModel
@@ -65,6 +66,7 @@ val appModule = module {
     viewModel { parameters -> RunDetailViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RedistillViewModel(get(), parameters.get(), androidContext()) }
     viewModel { parameters -> RelationsViewModel(get(), parameters.get()) }
+    viewModel { parameters -> WorldTimelineViewModel(get(), parameters.get()) }
     viewModel { parameters -> ChaptersViewModel(get(), parameters.get(), androidContext()) }
     viewModel { CardLibraryViewModel(get()) }
     viewModel { PersonaViewModel(get()) }

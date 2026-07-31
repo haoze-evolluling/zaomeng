@@ -48,6 +48,9 @@ data class RedistillDestination(val runId: String)
 data class RelationsDestination(val runId: String)
 
 @Serializable
+data class WorldTimelineDestination(val runId: String)
+
+@Serializable
 data class ChaptersDestination(val runId: String)
 
 @Serializable

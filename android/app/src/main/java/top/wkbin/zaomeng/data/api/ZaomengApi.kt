@@ -68,6 +68,18 @@ interface ZaomengApi {
     @DELETE("api/web/runs/{runId}")
     suspend fun deleteRun(@Path("runId") runId: String): DeleteRunResponse
 
+    @GET("api/web/runs/{runId}/world-memory")
+    suspend fun getWorldMemory(@Path("runId") runId: String): WorldMemoryDto
+
+    @POST("api/web/runs/{runId}/world-memory/facts")
+    suspend fun createWorldFact(@Path("runId") runId: String, @Body request: SaveWorldFactRequest): WorldFactDto
+
+    @PUT("api/web/runs/{runId}/world-memory/facts/{factId}")
+    suspend fun updateWorldFact(@Path("runId") runId: String, @Path("factId") factId: String, @Body request: SaveWorldFactRequest): WorldFactDto
+
+    @DELETE("api/web/runs/{runId}/world-memory/facts/{factId}")
+    suspend fun deleteWorldFact(@Path("runId") runId: String, @Path("factId") factId: String): DeleteStatusDto
+
     @POST("api/web/runs/{runId}/refresh")
     suspend fun refreshRun(@Path("runId") runId: String): RunManifestDto
 

@@ -39,6 +39,8 @@ import top.wkbin.zaomeng.feature.rundetail.RunDetailScreen
 import top.wkbin.zaomeng.feature.rundetail.RunDetailViewModel
 import top.wkbin.zaomeng.feature.sessions.SessionsScreen
 import top.wkbin.zaomeng.feature.sessions.SessionsViewModel
+import top.wkbin.zaomeng.feature.timeline.WorldTimelineScreen
+import top.wkbin.zaomeng.feature.timeline.WorldTimelineViewModel
 import top.wkbin.zaomeng.feature.settings.ModelSettingsScreen
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorScreen
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
@@ -232,6 +234,7 @@ fun ZaomengApp(
                 onOpenSessions = { runId -> navController.navigate(SessionsDestination(runId)) },
                 onOpenChapters = { runId -> navController.navigate(ChaptersDestination(runId)) },
                 onOpenRelations = { runId -> navController.navigate(RelationsDestination(runId)) },
+                onOpenWorldTimeline = { runId -> navController.navigate(WorldTimelineDestination(runId)) },
                 onOpenRedistill = { runId -> navController.navigate(RedistillDestination(runId)) },
                 onDeleted = { navController.popBackStack() },
             )
@@ -255,6 +258,20 @@ fun ZaomengApp(
                 parameters = { parametersOf(destination.runId) },
             )
             RelationsScreen(viewModel = viewModel, onBack = navController::navigateUp)
+        }
+
+        composable<WorldTimelineDestination> { entry ->
+            val destination = entry.toRoute<WorldTimelineDestination>()
+            val viewModel: WorldTimelineViewModel = koinViewModel(
+                parameters = { parametersOf(destination.runId) },
+            )
+            WorldTimelineScreen(
+                viewModel = viewModel,
+                onBack = navController::navigateUp,
+                onOpenChat = { runId, sessionId ->
+                    navController.navigate(ChatDestination(runId, sessionId))
+                },
+            )
         }
 
         composable<ChaptersDestination> { entry ->
@@ -375,6 +392,7 @@ private fun RunDetailWithExporter(
     onOpenSessions: (String) -> Unit,
     onOpenChapters: (String) -> Unit,
     onOpenRelations: (String) -> Unit,
+    onOpenWorldTimeline: (String) -> Unit,
     onOpenRedistill: (String) -> Unit,
     onDeleted: () -> Unit,
 ) {
@@ -397,6 +415,7 @@ private fun RunDetailWithExporter(
         onOpenSessions = onOpenSessions,
         onOpenChapters = onOpenChapters,
         onOpenRelations = onOpenRelations,
+        onOpenWorldTimeline = onOpenWorldTimeline,
         onOpenRedistill = onOpenRedistill,
         onDeleted = onDeleted,
         onExportReady = { exported ->

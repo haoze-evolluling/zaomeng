@@ -97,6 +97,7 @@ fun RunDetailScreen(
     onOpenSessions: (runId: String) -> Unit,
     onOpenChapters: (runId: String) -> Unit,
     onOpenRelations: (runId: String) -> Unit,
+    onOpenWorldTimeline: (runId: String) -> Unit,
     onOpenRedistill: (runId: String) -> Unit,
     onExportReady: (ExportedRunPackage) -> Unit,
     onDeleted: () -> Unit,
@@ -319,6 +320,7 @@ fun RunDetailScreen(
                 onOpenSessions = { onOpenSessions(viewModel.runId) },
                 onOpenChapters = { onOpenChapters(viewModel.runId) },
                 onOpenRelations = { onOpenRelations(viewModel.runId) },
+                onOpenWorldTimeline = { onOpenWorldTimeline(viewModel.runId) },
                 onOpenRedistill = { onOpenRedistill(viewModel.runId) },
                 onDelete = { confirmDelete = true },
                 modifier = Modifier.padding(innerPadding),
@@ -341,6 +343,7 @@ private fun RunDetailContent(
     onOpenSessions: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenRelations: () -> Unit,
+    onOpenWorldTimeline: () -> Unit,
     onOpenRedistill: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -392,6 +395,7 @@ private fun RunDetailContent(
                 onOpenSessions = onOpenSessions,
                 onOpenChapters = onOpenChapters,
                 onOpenRelations = onOpenRelations,
+                onOpenWorldTimeline = onOpenWorldTimeline,
                 onOpenRedistill = onOpenRedistill,
                 onDelete = onDelete,
             )
@@ -651,6 +655,7 @@ private fun ActionCard(
     onOpenSessions: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenRelations: () -> Unit,
+    onOpenWorldTimeline: () -> Unit,
     onOpenRedistill: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -672,6 +677,10 @@ private fun ActionCard(
                 Icon(Icons.Outlined.People, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("查看与校对人物关系")
+            }
+
+            OutlinedButton(onClick = onOpenWorldTimeline, modifier = Modifier.fillMaxWidth()) {
+                Text("查看故事时间线与剧情事实")
             }
 
             OutlinedButton(

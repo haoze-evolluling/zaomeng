@@ -16,6 +16,7 @@ import top.wkbin.zaomeng.data.api.BranchDialogueSceneRequest
 import top.wkbin.zaomeng.data.api.ArchiveDialogueChapterRequest
 import top.wkbin.zaomeng.data.api.ChapterDto
 import top.wkbin.zaomeng.data.api.DeleteRunResponse
+import top.wkbin.zaomeng.data.api.DeleteStatusDto
 import top.wkbin.zaomeng.data.api.DeleteSessionsRequest
 import top.wkbin.zaomeng.data.api.DeleteSessionsResponse
 import top.wkbin.zaomeng.data.api.DialogueAssociationsRequest
@@ -56,6 +57,9 @@ import top.wkbin.zaomeng.data.api.SwitchDialogueSceneRequest
 import top.wkbin.zaomeng.data.api.UpdateRelationDetailRequest
 import top.wkbin.zaomeng.data.api.UpdateDialogueBranchMetaRequest
 import top.wkbin.zaomeng.data.api.UpdateDialogueRelationLockRequest
+import top.wkbin.zaomeng.data.api.SaveWorldFactRequest
+import top.wkbin.zaomeng.data.api.WorldMemoryDto
+import top.wkbin.zaomeng.data.api.WorldFactDto
 import top.wkbin.zaomeng.data.api.UpsertDialogueMemoryRequest
 import top.wkbin.zaomeng.data.preferences.AppPreferences
 import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
@@ -232,6 +236,19 @@ class ZaomengRepository(
 
     suspend fun getRun(runId: String): RunManifestDto = request {
         backend.requireApi().getRun(runId)
+    }
+
+    suspend fun getWorldMemory(runId: String): WorldMemoryDto = request {
+        backend.requireApi().getWorldMemory(runId)
+    }
+
+    suspend fun saveWorldFact(runId: String, factId: String, requestBody: SaveWorldFactRequest): WorldFactDto = request {
+        if (factId.isBlank()) backend.requireApi().createWorldFact(runId, requestBody)
+        else backend.requireApi().updateWorldFact(runId, factId, requestBody)
+    }
+
+    suspend fun deleteWorldFact(runId: String, factId: String): DeleteStatusDto = request {
+        backend.requireApi().deleteWorldFact(runId, factId)
     }
 
     suspend fun deleteRun(runId: String): DeleteRunResponse = request {

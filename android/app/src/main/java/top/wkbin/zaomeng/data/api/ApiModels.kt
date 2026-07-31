@@ -622,6 +622,56 @@ data class UpdateDialogueRelationLockRequest(
 @Serializable
 data class DeleteStatusDto(val status: String = "")
 
+@Serializable
+data class WorldMemoryDto(
+    val version: Int = 1,
+    val facts: List<WorldFactDto> = emptyList(),
+    val timeline: List<WorldTimelineItemDto> = emptyList(),
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class WorldFactDto(
+    @SerialName("fact_id") val factId: String = "",
+    val category: String = "event",
+    val summary: String = "",
+    val characters: List<String> = emptyList(),
+    val location: String = "",
+    @SerialName("time_hint") val timeHint: String = "",
+    val source: String = "manual",
+    @SerialName("source_session_id") val sourceSessionId: String = "",
+    @SerialName("source_turn_id") val sourceTurnId: String = "",
+    val locked: Boolean = false,
+    val active: Boolean = true,
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class WorldTimelineItemDto(
+    @SerialName("timeline_id") val timelineId: String = "",
+    val title: String = "",
+    val participants: List<String> = emptyList(),
+    @SerialName("event_types") val eventTypes: List<String> = emptyList(),
+    val location: String = "",
+    @SerialName("time_hint") val timeHint: String = "",
+    @SerialName("consistency_status") val consistencyStatus: String = "pass",
+    @SerialName("source_session_id") val sourceSessionId: String = "",
+    @SerialName("source_turn_id") val sourceTurnId: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class SaveWorldFactRequest(
+    val category: String = "event",
+    val summary: String,
+    val characters: List<String> = emptyList(),
+    val location: String = "",
+    @SerialName("time_hint") val timeHint: String = "",
+    val locked: Boolean = false,
+    val active: Boolean = true,
+)
+
 data class ExportedRunPackage(
     val filename: String,
     val file: File,
