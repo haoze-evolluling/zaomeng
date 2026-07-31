@@ -352,6 +352,11 @@ fun ZaomengApp(
                         launchSingleTop = true
                     }
                 },
+                onOpenStoryRecap = {
+                    navController.navigate(
+                        StoryRecapDestination(destination.runId, destination.sessionId),
+                    )
+                },
             )
         }
     }
