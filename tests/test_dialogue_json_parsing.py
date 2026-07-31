@@ -69,7 +69,8 @@ class DialogueJsonParsingTests(unittest.TestCase):
             if message.get("role") == "system"
         )
         self.assertIn("inner_thought", system_text)
-        self.assertIn("没说出口的话", system_text)
+        self.assertIn("第一人称", system_text)
+        self.assertIn("没说出口", system_text)
 
 
 if __name__ == "__main__":

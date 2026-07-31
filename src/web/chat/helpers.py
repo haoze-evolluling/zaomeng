@@ -761,8 +761,9 @@ def build_dialogue_llm_messages(
     ]
     if include_inner_thoughts:
         stable_system_parts.append(
-            "角色回复还必须包含 inner_thought：只用一句符合人物性格的内心独白，"
-            "写角色真正想但没说出口的话，不要解释角色，不要写成旁白或分析。"
+            "角色回复还必须包含 inner_thought：用第一人称写一句该角色真正想但没说出口的内心独白。"
+            "严禁包含环境、场景、动作、时间、地点、物件或第三人称叙述；"
+            "不要解释角色，不要复述 message，不要写成旁白或分析。"
         )
     stable_context = {
         "mode": session_mode,

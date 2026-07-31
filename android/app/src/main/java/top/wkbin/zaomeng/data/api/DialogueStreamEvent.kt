@@ -11,6 +11,7 @@ sealed interface DialogueStreamEvent {
         val speaker: String,
         val role: String,
         val text: String,
+        val field: String = "message",
     ) : DialogueStreamEvent
 
     data class Reset(

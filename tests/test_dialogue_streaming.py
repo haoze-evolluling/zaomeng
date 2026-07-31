@@ -70,6 +70,27 @@ class DialogueStreamingTests(unittest.TestCase):
         self.assertIn("😀", encoded)
         encoded.encode("utf-8")
 
+    def test_inner_thought_is_projected_as_stream_deltas(self):
+        projector = DialogueJsonDeltaProjector(chunk_size=4)
+
+        first = projector.feed(
+            '{"responses":[{"speaker":"甲","message":"你走吧。","inner_thought":"别'
+        )
+        second = projector.feed('走。"}]}')
+        events = [*first, *second]
+
+        message_text = "".join(
+            item["text"] for item in events if item.get("field") == "message"
+        )
+        inner_text = "".join(
+            item["text"] for item in events if item.get("field") == "inner_thought"
+        )
+        self.assertEqual(message_text, "你走吧。")
+        self.assertEqual(inner_text, "别走。")
+        self.assertTrue(
+            any(item.get("field") == "inner_thought" for item in events)
+        )
+
     def test_reply_operation_store_rejects_key_reuse_for_another_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             runs_root = Path(tmp) / "runs"

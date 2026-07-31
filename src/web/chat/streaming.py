@@ -7,6 +7,7 @@ from typing import Any
 
 _SPEAKER_KEY = re.compile(r'"speaker"\s*:\s*"')
 _MESSAGE_KEY = re.compile(r'"message"\s*:\s*"')
+_INNER_THOUGHT_KEY = re.compile(r'"inner_thought"\s*:\s*"')
 _ESCAPES = {
     '"': '"',
     "\\": "\\",
@@ -91,7 +92,7 @@ class DialogueJsonDeltaProjector:
     def __init__(self, *, chunk_size: int = 24) -> None:
         self.chunk_size = max(1, int(chunk_size or 1))
         self._raw = ""
-        self._emitted_lengths: dict[int, int] = {}
+        self._emitted_lengths: dict[tuple[int, str], int] = {}
 
     def reset(self) -> None:
         self._raw = ""
@@ -101,26 +102,32 @@ class DialogueJsonDeltaProjector:
         self._raw += str(raw_delta or "")
         projected = self._project_messages()
         events: list[dict[str, Any]] = []
-        for index, speaker, message in projected:
-            emitted = self._emitted_lengths.get(index, 0)
-            if len(message) <= emitted:
-                continue
-            suffix = message[emitted:]
-            self._emitted_lengths[index] = len(message)
+        for index, speaker, message, inner_thought in projected:
             role = "scene" if speaker in {"旁白", "场景提示"} else "assistant"
-            for offset in range(0, len(suffix), self.chunk_size):
-                events.append(
-                    {
-                        "index": index,
-                        "speaker": speaker,
-                        "role": role,
-                        "text": suffix[offset : offset + self.chunk_size],
-                    }
-                )
+            for field, value in (
+                ("message", message),
+                ("inner_thought", inner_thought),
+            ):
+                key = (index, field)
+                emitted = self._emitted_lengths.get(key, 0)
+                if len(value) <= emitted:
+                    continue
+                suffix = value[emitted:]
+                self._emitted_lengths[key] = len(value)
+                for offset in range(0, len(suffix), self.chunk_size):
+                    events.append(
+                        {
+                            "index": index,
+                            "speaker": speaker,
+                            "role": role,
+                            "field": field,
+                            "text": suffix[offset : offset + self.chunk_size],
+                        }
+                    )
         return events
 
-    def _project_messages(self) -> list[tuple[int, str, str]]:
-        items: list[tuple[int, str, str]] = []
+    def _project_messages(self) -> list[tuple[int, str, str, str]]:
+        items: list[tuple[int, str, str, str]] = []
         speaker_matches = list(_SPEAKER_KEY.finditer(self._raw))
         for item_index, match in enumerate(speaker_matches):
             speaker, speaker_complete, speaker_end = _decode_partial_json_string(
@@ -139,8 +146,17 @@ class DialogueJsonDeltaProjector:
             message, _complete, _message_end = _decode_partial_json_string(
                 self._raw, message_match.end()
             )
-            if message:
-                items.append((item_index, speaker.strip(), message))
+            if not message:
+                continue
+            inner_thought_match = _INNER_THOUGHT_KEY.search(
+                self._raw, _message_end, boundary
+            )
+            inner_thought = ""
+            if inner_thought_match is not None:
+                inner_thought, _inner_complete, _inner_end = _decode_partial_json_string(
+                    self._raw, inner_thought_match.end()
+                )
+            items.append((item_index, speaker.strip(), message, inner_thought))
         return items
 
 

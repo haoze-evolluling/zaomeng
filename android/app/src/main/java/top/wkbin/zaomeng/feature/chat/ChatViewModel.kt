@@ -42,6 +42,7 @@ data class StreamingReplyPart(
     val speaker: String = "",
     val role: String = "character",
     val text: String = "",
+    val innerThought: String = "",
 )
 
 enum class PendingUserMessageStatus {
@@ -571,12 +572,23 @@ class ChatViewModel(
                         is DialogueStreamEvent.Delta -> updateSendState(snapshot, operationId) { current ->
                             val existing = current.streamingReplies
                                 .firstOrNull { it.index == event.index }
-                            val updated = StreamingReplyPart(
-                                index = event.index,
-                                speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
-                                role = event.role.ifBlank { existing?.role ?: "character" },
-                                text = existing?.text.orEmpty() + event.text,
-                            )
+                            val updated = if (event.field == "inner_thought") {
+                                StreamingReplyPart(
+                                    index = event.index,
+                                    speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
+                                    role = event.role.ifBlank { existing?.role ?: "character" },
+                                    text = existing?.text.orEmpty(),
+                                    innerThought = existing?.innerThought.orEmpty() + event.text,
+                                )
+                            } else {
+                                StreamingReplyPart(
+                                    index = event.index,
+                                    speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
+                                    role = event.role.ifBlank { existing?.role ?: "character" },
+                                    text = existing?.text.orEmpty() + event.text,
+                                    innerThought = existing?.innerThought.orEmpty(),
+                                )
+                            }
                             current.copy(
                                 streamStatus = "回复正在生成…",
                                 pendingUserMessage = current.pendingUserMessage?.copy(

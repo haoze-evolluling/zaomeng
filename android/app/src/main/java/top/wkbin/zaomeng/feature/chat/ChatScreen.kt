@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Psychology
@@ -849,6 +850,7 @@ private fun Transcript(
                     item = TranscriptItemDto(
                         speaker = item.speaker.ifBlank { "生成中" },
                         message = item.text,
+                        innerThought = item.innerThought,
                         role = item.role,
                     ),
                     avatarBytes = avatarBytes,
@@ -1735,9 +1737,14 @@ private fun ChatComposer(
                         selected = state.includeInnerThoughts,
                         onClick = onToggleInnerThoughts,
                         enabled = inputEnabled,
+                        modifier = Modifier.height(36.dp),
                         leadingIcon = {
                             Icon(
-                                Icons.Default.Visibility,
+                                if (state.includeInnerThoughts) {
+                                    Icons.Default.Visibility
+                                } else {
+                                    Icons.Default.VisibilityOff
+                                },
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp),
                             )

@@ -752,6 +752,7 @@ class ZaomengRepository(
                 role = payload["role"]?.jsonPrimitive?.contentOrNull ?: "character",
                 text = payload["text"]?.jsonPrimitive?.contentOrNull
                     ?: payload["delta"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                field = payload["field"]?.jsonPrimitive?.contentOrNull ?: "message",
             )
             "reset" -> DialogueStreamEvent.Reset(
                 message = payload["message"]?.jsonPrimitive?.contentOrNull
