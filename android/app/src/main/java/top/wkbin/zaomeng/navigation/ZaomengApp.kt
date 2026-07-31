@@ -41,6 +41,8 @@ import top.wkbin.zaomeng.feature.sessions.SessionsScreen
 import top.wkbin.zaomeng.feature.sessions.SessionsViewModel
 import top.wkbin.zaomeng.feature.timeline.WorldTimelineScreen
 import top.wkbin.zaomeng.feature.timeline.WorldTimelineViewModel
+import top.wkbin.zaomeng.feature.storyrecap.StoryRecapScreen
+import top.wkbin.zaomeng.feature.storyrecap.StoryRecapViewModel
 import top.wkbin.zaomeng.feature.settings.ModelSettingsScreen
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorScreen
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
@@ -311,6 +313,20 @@ fun ZaomengApp(
                 onOpenChat = { runId, sessionId ->
                     navController.navigate(ChatDestination(runId, sessionId))
                 },
+                onOpenStoryRecap = { runId, sessionId ->
+                    navController.navigate(StoryRecapDestination(runId, sessionId))
+                },
+            )
+        }
+
+        composable<StoryRecapDestination> { entry ->
+            val destination = entry.toRoute<StoryRecapDestination>()
+            val viewModel: StoryRecapViewModel = koinViewModel(
+                parameters = { parametersOf(destination.runId, destination.sessionId) },
+            )
+            StoryRecapScreen(
+                viewModel = viewModel,
+                onBack = navController::navigateUp,
             )
         }
 

@@ -64,3 +64,6 @@ data class SessionsDestination(val runId: String = "")
 
 @Serializable
 data class ChatDestination(val runId: String, val sessionId: String)
+
+@Serializable
+data class StoryRecapDestination(val runId: String, val sessionId: String)

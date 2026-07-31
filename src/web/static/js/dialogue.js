@@ -2167,6 +2167,8 @@ function renderDialogueSceneTimeline(session) {
 
 function buildDialogueMemoryClipboardText(session) {
   if (!session) return "";
+  const storyRecap = String(session?.story_recap?.share_text || "").trim();
+  if (storyRecap) return storyRecap;
   const snapshot = buildDialogueMemorySnapshot(session);
   const participants = Array.isArray(session?.session_card?.participants) ? session.session_card.participants : [];
   const participantText = participants.length ? joinCharacters(participants) : "未记录";

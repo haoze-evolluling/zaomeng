@@ -89,6 +89,7 @@ fun SessionsScreen(
     runId: String? = null,
     onBack: () -> Unit,
     onOpenChat: (runId: String, sessionId: String) -> Unit,
+    onOpenStoryRecap: (runId: String, sessionId: String) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var pendingDeletion by remember { mutableStateOf<DialogueSessionDto?>(null) }
@@ -214,6 +215,7 @@ fun SessionsScreen(
             else -> SessionsContent(
                 state = state,
                 onOpenChat = onOpenChat,
+                onOpenStoryRecap = onOpenStoryRecap,
                 onDelete = { pendingDeletion = it },
                 onToggleSelection = viewModel::toggleSessionSelection,
                 onSearchQueryChange = viewModel::updateSearchQuery,
@@ -302,6 +304,7 @@ private fun LoadingSessions(modifier: Modifier = Modifier) {
 private fun SessionsContent(
     state: SessionsUiState,
     onOpenChat: (String, String) -> Unit,
+    onOpenStoryRecap: (String, String) -> Unit,
     onDelete: (DialogueSessionDto) -> Unit,
     onToggleSelection: (String) -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -376,6 +379,7 @@ private fun SessionsContent(
                     selectionMode = state.selectionMode,
                     selected = session.key in state.selectedSessionKeys,
                     onOpen = { onOpenChat(session.runId, session.sessionId) },
+                    onOpenStoryRecap = { onOpenStoryRecap(session.runId, session.sessionId) },
                     onDelete = { onDelete(session) },
                     onToggleSelection = { onToggleSelection(session.key) },
                 )
@@ -481,6 +485,7 @@ private fun SessionCard(
     selectionMode: Boolean,
     selected: Boolean,
     onOpen: () -> Unit,
+    onOpenStoryRecap: () -> Unit,
     onDelete: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
@@ -570,6 +575,9 @@ private fun SessionCard(
                                 tint = MaterialTheme.colorScheme.error,
                             )
                         }
+                    }
+                    TextButton(onClick = onOpenStoryRecap, enabled = !deleting) {
+                        Text("剧情复盘")
                     }
                     Button(onClick = onOpen, enabled = !deleting) {
                         Text("继续聊天")

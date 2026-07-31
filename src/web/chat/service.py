@@ -33,6 +33,7 @@ import src.web.chat.runtime_overview as _runtime_overview
 import src.web.chat.scene_progress as _scene_progress
 import src.web.chat.scene_signals as _scene_signals
 import src.web.chat.speaker_balance as _speaker_balance
+import src.web.chat.story_recap as _story_recap
 from src.web.chat.session_storage import SessionFileStore, with_session_lock
 from src.web.chat.world_memory import WorldMemoryStore
 import src.web.chat.session_views as _session_views
@@ -3056,7 +3057,18 @@ class DialogueService:
         session["character_arcs"] = self._serialize_character_arcs(
             run_id, session, records=turn_records
         )
-        session["runtime_state_overview"] = self._build_runtime_state_overview(session)
+        runtime_overview = self._build_runtime_state_overview(session)
+        session["runtime_state_overview"] = runtime_overview
+        session["story_recap"] = _story_recap.build_story_recap(
+            session=session,
+            transcript=transcript,
+            chapter_outline=session["chapter_outline"],
+            event_timeline=session["event_timeline"],
+            relation_timeline=session["relation_timeline"],
+            character_arcs=session["character_arcs"],
+            runtime_state_overview=runtime_overview,
+            session_memory_summary=session["session_memory_summary"],
+        )
         monitor = dict(session.get("consistency_monitor", {}) or {})
         monitor_history = list(monitor.get("history", []) or [])
         if monitor_history:

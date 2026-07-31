@@ -498,6 +498,77 @@ data class DialogueSessionDto(
     @SerialName("event_signals") val eventSignals: JsonObject = JsonObject(emptyMap()),
     @SerialName("generation_cache_stats") val generationCacheStats: JsonObject = JsonObject(emptyMap()),
     @SerialName("latest_context_usage") val latestContextUsage: JsonObject = JsonObject(emptyMap()),
+    @SerialName("story_recap") val storyRecap: StoryRecapDto? = null,
+)
+
+@Serializable
+data class StoryRecapDto(
+    val title: String = "",
+    val summary: String = "",
+    val location: String = "",
+    @SerialName("time_hint") val timeHint: String = "",
+    val atmosphere: String = "",
+    val participants: List<String> = emptyList(),
+    @SerialName("event_count") val eventCount: Int = 0,
+    @SerialName("chapter_count") val chapterCount: Int = 0,
+    @SerialName("unresolved_hook_count") val unresolvedHookCount: Int = 0,
+    val events: List<StoryEventDto> = emptyList(),
+    val relations: List<StoryRelationChangeDto> = emptyList(),
+    @SerialName("character_arcs") val characterArcs: List<StoryCharacterArcDto> = emptyList(),
+    val hooks: List<String> = emptyList(),
+    val quotes: List<StoryQuoteDto> = emptyList(),
+    @SerialName("next_hint") val nextHint: String = "",
+    @SerialName("share_text") val shareText: String = "",
+)
+
+@Serializable
+data class StoryEventDto(
+    val title: String = "",
+    @SerialName("turn_id") val turnId: String = "",
+    @SerialName("time_hint") val timeHint: String = "",
+    val location: String = "",
+    val participants: List<String> = emptyList(),
+    @SerialName("event_types") val eventTypes: List<String> = emptyList(),
+    val responses: List<StoryResponseDto> = emptyList(),
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class StoryResponseDto(
+    val speaker: String = "",
+    val message: String = "",
+)
+
+@Serializable
+data class StoryRelationChangeDto(
+    @SerialName("pair_key") val pairKey: String = "",
+    val label: String = "",
+    val characters: List<String> = emptyList(),
+    val current: Map<String, Int> = emptyMap(),
+    val changes: List<StoryMetricChangeDto> = emptyList(),
+    val reason: String = "",
+    val evidence: String = "",
+    @SerialName("turn_id") val turnId: String = "",
+)
+
+@Serializable
+data class StoryMetricChangeDto(
+    val metric: String = "",
+    val label: String = "",
+    val delta: Int = 0,
+)
+
+@Serializable
+data class StoryCharacterArcDto(
+    val name: String = "",
+    @SerialName("growth_summary") val growthSummary: String = "",
+    val current: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class StoryQuoteDto(
+    val speaker: String = "",
+    val message: String = "",
 )
 
 @Serializable
