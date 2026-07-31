@@ -34,6 +34,7 @@ import src.web.chat.scene_progress as _scene_progress
 import src.web.chat.scene_signals as _scene_signals
 import src.web.chat.speaker_balance as _speaker_balance
 from src.web.chat.session_storage import SessionFileStore, with_session_lock
+from src.web.chat.world_memory import WorldMemoryStore
 import src.web.chat.session_views as _session_views
 import src.web.chat.state_utils as _state_utils
 import src.web.chat.text_utils as _text_utils
@@ -101,6 +102,16 @@ class DialogueService:
         self.runs_root = self._session_files.runs_root
         self._memory_store_resolver = memory_store_resolver
         self._memory_stores: dict[str, MarkdownSessionStore] = {}
+        self._world_memory = WorldMemoryStore(self.runs_root)
+
+    def get_world_memory(self, run_id: str) -> dict[str, Any]:
+        return self._world_memory.get(run_id)
+
+    def save_world_fact(self, run_id: str, *, fields: dict[str, Any], fact_id: str = "") -> dict[str, Any]:
+        return self._world_memory.save_fact(run_id, fields=fields, fact_id=fact_id)
+
+    def delete_world_fact(self, run_id: str, fact_id: str) -> dict[str, str]:
+        return self._world_memory.delete_fact(run_id, fact_id)
 
     @classmethod
     def _empty_session_state(cls) -> dict[str, Any]:
@@ -2120,6 +2131,24 @@ class DialogueService:
             )
         self._write_json(result_path, result_payload)
         self._write_json(self._session_file(run_id, session_id), session)
+        current_turn_events = [
+            dict(event or {})
+            for event in self._build_session_event_excerpt(session)
+            if str(dict(event or {}).get("turn_id", "")).strip() == pending_turn_id
+        ]
+        self._world_memory.sync_completed_turn(
+            run_id,
+            session_id=session_id,
+            turn_id=str(pending.get("turn_id", "")).strip(),
+            title=str(pending.get("user_message", "")).strip()[:160],
+            participants=list(session.get("participants", []) or []),
+            events=current_turn_events,
+            location=str(dict(pending_payload.get("scene_progress", {}) or {}).get("location", "")),
+            time_hint="",
+            consistency_status=str(consistency_report.get("status", "pass")),
+            knowledge_ledger=list(session.get("consistency_monitor", {}).get("knowledge_ledger", []) or []),
+            updated_at=completed_at,
+        )
         return self._serialize_session(run_id, session)
 
     def _build_turn_checkpoint(self, session: dict[str, Any]) -> dict[str, Any]:
@@ -2832,6 +2861,9 @@ class DialogueService:
             }
             for item in controlled_memories[:20]
         ]
+        context["world_facts"] = self._world_memory.relevant_facts(
+            run_id, participants=participants, message=message, limit=18
+        )
         return context
 
     @staticmethod

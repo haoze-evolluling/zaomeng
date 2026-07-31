@@ -34,6 +34,7 @@ def merge_event_signals_state(
         time_hint = trim_summary_text(str(event.get("time_hint", "")).strip(), 40)
         location_hint = trim_summary_text(str(event.get("location_hint", "")).strip(), 60)
         ts = str(event.get("ts", "")).strip() or updated_at
+        turn_id = str(event.get("turn_id", "")).strip()
         if actor and allowed_participants and actor not in allowed_participants and actor not in {"场景提示", "旁白", "User"}:
             actor = ""
         if target and allowed_participants and target not in allowed_participants:
@@ -52,6 +53,8 @@ def merge_event_signals_state(
             normalized["time_hint"] = time_hint
         if location_hint:
             normalized["location_hint"] = location_hint
+        if turn_id:
+            normalized["turn_id"] = turn_id
         return normalized
 
     event_map: dict[str, dict[str, Any]] = {}
@@ -124,6 +127,9 @@ def build_session_event_excerpt(event_signals: dict[str, Any]) -> list[dict[str,
             normalized_event["time_hint"] = time_hint
         if location_hint:
             normalized_event["location_hint"] = location_hint
+        turn_id = str(event.get("turn_id", "")).strip()
+        if turn_id:
+            normalized_event["turn_id"] = turn_id
         normalized.append(
             {
                 key: value

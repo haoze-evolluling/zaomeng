@@ -6,6 +6,7 @@ from .runs import router as runs_router
 from .scene_cards import router as scene_cards_router
 from .self_cards import router as self_cards_router
 from .settings import router as settings_router
+from .world_memory import router as world_memory_router
 
 ROUTERS = (
     settings_router,
@@ -16,6 +17,7 @@ ROUTERS = (
     runs_router,
     dialogue_router,
     chapters_router,
+    world_memory_router,
 )
 
 __all__ = [

@@ -365,3 +365,13 @@ class ArchiveDialogueChapterRequest(BaseModel):
 
 class ReorderChapterRequest(BaseModel):
     target_order: int = Field(..., ge=1)
+
+
+class SaveWorldFactRequest(BaseModel):
+    category: str = Field(default="event", max_length=40)
+    summary: str = Field(..., min_length=1, max_length=500)
+    characters: list[str] = Field(default_factory=list, max_length=20)
+    location: str = Field(default="", max_length=100)
+    time_hint: str = Field(default="", max_length=80)
+    locked: bool = Field(default=False)
+    active: bool = Field(default=True)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.core.runtime_factory import build_runtime_parts
 from src.web.chat import DialogueService
+from src.web.chat.world_memory import WorldMemoryStore
 from src.web.chat.reply_operations import ReplyOperationStore
 from src.web.secrets import ProtectedSecretStore
 from src.web.review import (
@@ -238,6 +239,7 @@ class WebRunService(
             self.runs_root,
             memory_store_resolver=self._dialogue_memory_store_for_run,
         )
+        self.world_memory = WorldMemoryStore(self.runs_root)
         self.reply_operations = ReplyOperationStore(self.runs_root)
         self._active_run_threads: dict[str, threading.Thread] = {}
         self._run_manifest_locks_guard = threading.Lock()
@@ -262,6 +264,18 @@ class WebRunService(
             "last_update_stdout": "",
         }
         self._launcher_path_hint = ""
+
+    def get_world_memory(self, run_id: str) -> dict:
+        self._require_manifest(run_id)
+        return self.world_memory.get(run_id)
+
+    def save_world_fact(self, run_id: str, *, fields: dict, fact_id: str = "") -> dict:
+        self._require_manifest(run_id)
+        return self.world_memory.save_fact(run_id, fields=fields, fact_id=fact_id)
+
+    def delete_world_fact(self, run_id: str, fact_id: str) -> dict[str, str]:
+        self._require_manifest(run_id)
+        return self.world_memory.delete_fact(run_id, fact_id)
 
     @staticmethod
     def _build_runtime_parts(config, **kwargs):

@@ -1412,6 +1412,12 @@ class DialogueServiceMixin:
                 character_snapshots,
                 dict(refined_state.get("character_snapshots", {}) or {}),
             )
+            current_turn_id = str(pending_payload.get("turn_id", "")).strip()
+            if current_turn_id:
+                detected_events = [
+                    {**event, "turn_id": current_turn_id}
+                    for event in detected_events
+                ]
             event_signals = self.dialogue._merge_event_signals_state(
                 session,
                 detected_events,
