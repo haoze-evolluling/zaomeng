@@ -54,7 +54,10 @@ _NOVEL_REWRITE_SYSTEM_PROMPT = """
   ]
 }
 
-输出要求：直接输出经过小说化处理的正文。不得输出 JSON，不得解释改写过程，不得添加输入中没有依据的重要剧情。
+输出要求：
+1. 第一行输出章节标题，标题不超过 15 个汉字，不要使用书名号，不要输出 JSON。
+2. 从第二行开始输出小说正文。
+3. 不得解释改写过程，不得添加输入中没有依据的重要剧情。
 """.strip()
 
 
@@ -389,12 +392,25 @@ class ChapterServiceMixin:
                 _NOVEL_REWRITE_MAX_TOKENS,
             ),
         )
-        content = str(result.get("content", "")).strip()
-        if not content:
+        raw_content = str(result.get("content", "")).strip()
+        if not raw_content:
             raise ValueError("模型没有返回小说正文，请稍后重试。")
+        raw_lines = raw_content.splitlines()
+        generated_title = next(
+            (
+                line.strip(" #《》「」\"'").strip()
+                for line in raw_lines
+                if line.strip()
+            ),
+            "",
+        )
+        body = "\n".join(raw_lines[1:]).strip()
+        if not body:
+            body = raw_content
 
         chapter_title = (
             str(title or "").strip()
+            or generated_title
             or str(story_recap.get("title", "")).strip()
             or f"第 {len(chapters) + 1} 章"
         )
@@ -408,7 +424,7 @@ class ChapterServiceMixin:
             title=chapter_title,
             goal="由对话改写成小说正文。",
             participants=participants,
-            content=content,
+            content=body,
             source_session_id=str(
                 session.get("session_id", session_id)
             ).strip(),

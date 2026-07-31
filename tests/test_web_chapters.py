@@ -134,13 +134,17 @@ class ChapterServiceTests(unittest.TestCase):
             "src.web.service_facades.chapters.LLMClient"
         ) as client:
             client.return_value.chat_completion.return_value = {
-                "content": "雨落在旧桥上，两人隔着水声望了彼此一眼。"
+                "content": (
+                    "雨夜重逢\n\n"
+                    "雨落在旧桥上，两人隔着水声望了彼此一眼。"
+                )
             }
             chapter = self.service.convert_dialogue_session_to_novel(
                 self.run["run_id"], session_id="session-novel"
             )
 
         self.assertIn("雨落在旧桥上", chapter["content"])
+        self.assertEqual(chapter["title"], "雨夜重逢")
         self.assertEqual(chapter["source_session_id"], "session-novel")
         sent_messages = client.return_value.chat_completion.call_args.args[0]
         user_payload = next(
