@@ -223,6 +223,7 @@ class ChapterServiceMixin:
         participants: list[str] | None = None,
         content: str = "",
         source_session_id: str = "",
+        context_summary: str = "",
     ) -> dict[str, Any]:
         self._ensure_run_exists(run_id)
         normalized_title = str(title or "").strip()
@@ -261,6 +262,8 @@ class ChapterServiceMixin:
             )
             if source_session_id:
                 chapter["source_session_id"] = str(source_session_id).strip()
+            if context_summary:
+                chapter["context_summary"] = str(context_summary).strip()
             chapters[target_index] = chapter
         else:
             chapter = {
@@ -271,6 +274,7 @@ class ChapterServiceMixin:
                 "participants": normalized_participants,
                 "content": normalized_content,
                 "source_session_id": str(source_session_id or "").strip(),
+                "context_summary": str(context_summary or "").strip(),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -341,6 +345,9 @@ class ChapterServiceMixin:
         story_recap = dict(session.get("story_recap", {}) or {})
         context_parts: list[str] = []
         if previous and previous_content:
+            previous_summary = str(previous.get("context_summary", "")).strip()
+            if previous_summary:
+                context_parts.append(f"上一章摘要：{previous_summary}")
             context_parts.append(
                 f"上一章《{str(previous.get('title', '')).strip()}》结尾：\n"
                 f"{previous_content[-_NOVEL_CONTEXT_PREVIOUS_CHARS:]}"
@@ -442,6 +449,7 @@ class ChapterServiceMixin:
             or str(story_recap.get("title", "")).strip()
             or f"第 {len(chapters) + 1} 章"
         )
+        context_summary = summary or body[:180]
         participants = [
             str(name).strip()
             for name in list(session.get("participants", []) or [])
@@ -456,6 +464,7 @@ class ChapterServiceMixin:
             source_session_id=str(
                 session.get("session_id", session_id)
             ).strip(),
+            context_summary=context_summary,
         )
 
     def delete_chapter(self, run_id: str, chapter_id: str) -> dict[str, str]:
@@ -600,6 +609,7 @@ class ChapterServiceMixin:
             item["participants"] = [str(name).strip() for name in item.get("participants", []) if str(name).strip()]
             item["content"] = str(item.get("content", "")).strip()
             item["source_session_id"] = str(item.get("source_session_id", "")).strip()
+            item["context_summary"] = str(item.get("context_summary", "")).strip()
             item["last_session_id"] = str(item.get("last_session_id", "")).strip()
             try:
                 item["synced_transcript_count"] = max(0, int(item.get("synced_transcript_count", 0) or 0))

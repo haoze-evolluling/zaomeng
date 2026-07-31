@@ -108,6 +108,7 @@ class ChapterServiceTests(unittest.TestCase):
                 + "第一章结尾：雨夜重逢。"
             ),
             participants=["小甲", "小乙"],
+            context_summary="上一章雨夜重逢，两人在旧桥相认。",
         )
         self.service.dialogue.get_session = Mock(
             return_value={
@@ -161,9 +162,11 @@ class ChapterServiceTests(unittest.TestCase):
             if message["role"] == "user"
         )
         self.assertIn("上一章《第一章》", user_payload)
+        self.assertIn("上一章摘要：上一章雨夜重逢", user_payload)
         self.assertIn("旧桥", user_payload)
         self.assertIn("最多不超过 3500 字", user_payload)
         self.assertNotIn("不应该出现的开头。", user_payload)
+        self.assertEqual(chapter["context_summary"], "两人在雨夜重逢。")
 
     def test_novel_chapter_content_is_trimmed_to_max_chars(self) -> None:
         text = "句。" * 2000
