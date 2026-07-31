@@ -344,6 +344,35 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
         self.assertGreaterEqual(first_budget, 1600)
         self.assertGreater(second_budget, first_budget)
 
+    def test_single_reply_uses_smaller_initial_token_budget(self):
+        payload = {
+            "mode": "act",
+            "input": {"message_kind": "dialogue"},
+            "host_action": {"response_limit_hint": 1},
+        }
+        completion = Mock(
+            return_value={
+                "content": '[{"speaker":"祥子","message":"好。"}]',
+                "finish_reason": "stop",
+            }
+        )
+
+        generate_dialogue_responses(
+            payload=payload,
+            allowed_speakers=["祥子"],
+            temperature=0.2,
+            max_tokens=0,
+            chat_completion=completion,
+            build_messages=lambda _payload, retry: [
+                {"role": "user", "content": "retry" if retry else "first"}
+            ],
+            parse_responses=parse_dialogue_responses,
+        )
+
+        first_budget = completion.call_args_list[0].args[2]
+        self.assertGreaterEqual(first_budget, 640)
+        self.assertLess(first_budget, 1600)
+
     def test_truncation_on_final_attempt_reports_the_token_limit(self):
         payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
         completion = Mock(

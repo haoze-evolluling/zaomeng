@@ -20,51 +20,23 @@ DIALOGUE_RESPONSE_MAX_MAX_TOKENS = 4_096
 _INNER_THOUGHT_RULE = """
 开启读心功能时，角色回复对象中必须包含 inner_thought 字段。
 
-inner_thought 是角色脑中直接闪过、没有说出口的一句心里话，不是小说旁白、心理描写、剧情描述或角色分析。
+inner_thought 必须是角色第一人称、没说出口的一句心里话，不是旁白、心理描写、剧情描述或角色分析。
 
 生成规则：
 1. 必须使用第一人称，以角色自己的口吻直接表达。
 2. 只允许表达角色隐藏的：
-   - 真实态度
-   - 欲望或期待
-   - 怀疑或戒备
-   - 害怕或担忧
-   - 嫉妒或不满
-   - 犹豫或矛盾
-   - 隐瞒的事实
-   - 接下来的真实打算
-3. 必须只有一句，建议 8～36 个汉字，最多不得超过 50 个汉字。
-4. 必须像一句可以直接在脑中说出来的话，而不是对角色心理进行解释。
-5. 应当补充 message 没有直接说出的真实想法，不能复述、改写或总结 message。
-6. 不得为了生成内心独白而编造新的事件、背景、关系或客观事实。
-7. 如果角色此时没有明确且有价值的隐藏想法，输出空字符串 ""，不要用动作、环境或旁白凑内容。
+   真实态度、欲望/期待、怀疑/戒备、害怕/担忧、嫉妒/不满、犹豫/矛盾、隐瞒事实、真实打算。
+3. 一句话，建议 8～36 字，最多 50 字。
+4. 补充 message 没有说出的新想法，不复述、改写或总结 message。
+5. 不编造新事件、背景、关系或客观事实。
+6. 没有明确且有价值的隐藏想法时，输出空字符串 ""，不要用动作、环境或旁白凑内容。
 
 inner_thought 严禁包含：
-- 环境、场景、天气、时间或地点描写
-- 动作、姿势、神态、表情或身体反应
-- 衣服、家具、物件、光线、声音等外部描写
-- "我看着……""我低下头……""我握紧……""我的嘴角……"等动作性描述
-- "他其实是在……""她此刻觉得……"等第三人称心理分析
-- "我之所以这样说，是因为……"等解释性分析
-- 旁白、括号、星号动作、舞台指示或小说化修辞
+- 环境、场景、天气、时间、地点、动作、神态、物件、光线、声音等外部描写
+- 第三人称心理分析、解释性分析、旁白、括号/星号动作、舞台指示或小说化修辞
 - 对 message 的复述和同义改写
 
-正确示例：
-{"speaker":"沈知夏","message":"没关系，你先走吧。","inner_thought":"我其实很怕你真的丢下我。"}
-{"speaker":"顾临川","message":"我只是随口问问。","inner_thought":"我想知道你到底在不在乎我。"}
-{"speaker":"林晚","message":"当然，我相信你。","inner_thought":"我还没有完全相信他。"}
-
-错误示例：
-{"inner_thought":"我低下头，手指不安地攥紧了衣角。"}  # 动作和物件
-{"inner_thought":"窗外的雨越来越大，我的心也沉了下去。"}  # 环境描写和小说化比喻
-{"inner_thought":"她表面装作平静，其实内心非常害怕。"}  # 第三人称分析
-{"inner_thought":"我说没关系，但其实我心里并不觉得没关系。"}  # 解释和复述 message
-
-输出前，在内部检查 inner_thought：
-- 是否只有角色心里的直接话语？
-- 是否删除后不会影响场景、动作和剧情描述？
-- 是否包含了角色没说出口的新态度、动机或顾虑？
-- 是否能在不描述任何外部画面的情况下独立成立？
+输出前检查：是否只是角色心里的直接话语；是否删除后不影响外部画面；是否包含新的态度、动机或顾虑。
 """.strip()
 
 
@@ -1866,7 +1838,23 @@ def generate_dialogue_responses(
     parse_responses: Callable[[str, list[str]], list[dict[str, str]]],
     completion_observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, str]]:
-    initial_max_tokens = max(DIALOGUE_RESPONSE_MIN_MAX_TOKENS, int(max_tokens or 0))
+    response_limit = int(
+        dict(payload.get("host_action", {}) or {}).get(
+            "response_limit_hint", 0
+        )
+        or 0
+    )
+    configured_max_tokens = int(max_tokens or 0)
+    if response_limit > 0:
+        estimated_max_tokens = max(640, 520 + response_limit * 360)
+        initial_max_tokens = min(
+            max(estimated_max_tokens, configured_max_tokens),
+            DIALOGUE_RESPONSE_MAX_MAX_TOKENS,
+        )
+    else:
+        initial_max_tokens = max(
+            DIALOGUE_RESPONSE_MIN_MAX_TOKENS, configured_max_tokens
+        )
     attempts = (
         (build_messages(payload, False), initial_max_tokens),
         (
