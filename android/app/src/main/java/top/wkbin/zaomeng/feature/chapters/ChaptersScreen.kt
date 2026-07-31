@@ -41,10 +41,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.zaomeng.backend.NovelConversionForegroundController
 import top.wkbin.zaomeng.data.api.ChapterDto
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +61,19 @@ fun ChaptersScreen(
     var editing by remember { mutableStateOf<ChapterDto?>(null) }
     var showCreate by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
+    var pendingNovelConversion by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        pendingNovelConversion?.let { (sessionId, title) ->
+            if (granted) {
+                viewModel.convertSession(sessionId, title)
+                showArchive = false
+            }
+            pendingNovelConversion = null
+        }
+    }
     var launchedRequestId by remember { mutableStateOf(0L) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri == null) viewModel.discardExport() else viewModel.saveExport(uri)
@@ -268,7 +283,17 @@ fun ChaptersScreen(
     if (showArchive) ArchiveSessionDialog(
         sessions = state.sessions,
         onDismiss = { showArchive = false },
-        onArchive = { sessionId, title -> viewModel.convertSession(sessionId, title); showArchive = false },
+        onArchive = { sessionId, title ->
+            if (NovelConversionForegroundController.hasNotificationPermission(context)) {
+                viewModel.convertSession(sessionId, title)
+                showArchive = false
+            } else {
+                pendingNovelConversion = sessionId to title
+                notificationPermissionLauncher.launch(
+                    NovelConversionForegroundController.NOTIFICATION_PERMISSION,
+                )
+            }
+        },
     )
 }
 

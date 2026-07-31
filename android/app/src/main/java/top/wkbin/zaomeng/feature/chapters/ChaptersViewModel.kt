@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import top.wkbin.zaomeng.backend.NovelConversionForegroundController
 import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.copyStream
 import top.wkbin.zaomeng.data.api.ChapterDto
@@ -155,23 +156,19 @@ class ChaptersViewModel(
 
     fun convertSession(sessionId: String, title: String = "") {
         if (state.value.saving || sessionId.isBlank()) return
-        viewModelScope.launch {
-            mutableState.update { it.copy(saving = true, error = "", message = "") }
-            try {
-                repository.convertSessionAsNovel(runId, sessionId, title)
-                mutableState.update {
-                    it.copy(
-                        saving = false,
-                        chapters = repository.listChapters(runId),
-                        message = "小说章节已生成。",
-                    )
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                mutableState.update {
-                    it.copy(saving = false, error = error.message ?: "对话转小说失败。")
-                }
+        val started = NovelConversionForegroundController.start(
+            context,
+            runId,
+            sessionId,
+            title,
+        )
+        if (started) {
+            mutableState.update {
+                it.copy(message = "已放到后台生成小说章节，完成后会通过通知提醒。")
+            }
+        } else {
+            mutableState.update {
+                it.copy(error = "无法启动后台小说生成，请稍后重试。")
             }
         }
     }
