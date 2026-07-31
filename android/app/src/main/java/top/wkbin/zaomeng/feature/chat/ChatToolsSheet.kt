@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BookmarkAdd
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
@@ -92,6 +93,7 @@ fun ChatToolsSheet(
     onSaveMemory: (DialogueMemoryDto) -> Unit,
     onDeleteMemory: (String) -> Unit,
     onRelationLock: (String, Boolean) -> Unit,
+    onOpenStoryRecap: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var directorDialog by remember { mutableStateOf(false) }
@@ -257,6 +259,17 @@ fun ChatToolsSheet(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+
+            item {
+                ToolSection("剧情复盘") {
+                    ToolButton(
+                        label = "查看剧情卡并分享",
+                        icon = { Icon(Icons.Filled.History, contentDescription = null) },
+                        enabled = toolsEnabled,
+                        onClick = onOpenStoryRecap,
+                    )
+                }
             }
 
             item {

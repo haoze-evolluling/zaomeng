@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -206,6 +205,7 @@ fun ChatScreen(
             onSaveMemory = viewModel::saveMemory,
             onDeleteMemory = viewModel::deleteMemory,
             onRelationLock = viewModel::setRelationLock,
+            onOpenStoryRecap = onOpenStoryRecap,
         )
     }
 
@@ -245,7 +245,6 @@ fun ChatScreen(
                     searchOpen = !searchOpen
                     if (!searchOpen) viewModel.updateSearchQuery("")
                 },
-                onOpenStoryRecap = onOpenStoryRecap,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -441,7 +440,6 @@ private fun ChatTopBar(
     onRefresh: () -> Unit,
     onOpenTools: () -> Unit,
     onToggleSearch: () -> Unit,
-    onOpenStoryRecap: () -> Unit,
 ) {
     TopAppBar(
         title = {
@@ -473,9 +471,6 @@ private fun ChatTopBar(
                     if (searchOpen) Icons.Default.Close else Icons.Default.Search,
                     contentDescription = if (searchOpen) "关闭聊天搜索" else "搜索聊天记录",
                 )
-            }
-            IconButton(onClick = onOpenStoryRecap) {
-                Icon(Icons.Default.History, contentDescription = "剧情复盘")
             }
             IconButton(onClick = onOpenTools, enabled = toolsEnabled) {
                 Icon(Icons.Default.MoreVert, contentDescription = "会话工具")

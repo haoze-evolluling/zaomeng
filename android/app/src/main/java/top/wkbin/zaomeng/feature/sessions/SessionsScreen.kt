@@ -557,6 +557,8 @@ private fun SessionCard(
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (selectionMode) {
                     Text(
@@ -576,6 +578,14 @@ private fun SessionCard(
                             )
                         }
                     }
+                }
+            }
+            if (!selectionMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     TextButton(onClick = onOpenStoryRecap, enabled = !deleting) {
                         Text("剧情复盘")
                     }
