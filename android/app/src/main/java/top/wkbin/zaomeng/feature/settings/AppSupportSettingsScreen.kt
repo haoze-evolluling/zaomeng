@@ -20,30 +20,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.net.toUri
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, viewModel) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshUpdateDownloadState()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
     val diagnosticsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri -> if (uri != null) viewModel.exportDiagnostics(uri) }
@@ -69,8 +57,6 @@ fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             SettingsSupportGroup(
                 modifier = Modifier.fillMaxWidth(),
                 state = state,
-                onCheck = viewModel::checkForAppUpdate,
-                onDownload = viewModel::downloadUpdate,
                 onExportDiagnostics = { diagnosticsLauncher.launch("zaomeng-diagnostics.json") },
                 onOpenProject = {
                     context.startActivity(
@@ -113,8 +99,6 @@ fun AppSupportSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 private fun SettingsSupportGroup(
     modifier: Modifier,
     state: SettingsUiState,
-    onCheck: () -> Unit,
-    onDownload: () -> Unit,
     onExportDiagnostics: () -> Unit,
     onOpenProject: () -> Unit,
     onOpenPackageLibrary: () -> Unit,
@@ -126,8 +110,6 @@ private fun SettingsSupportGroup(
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         androidx.compose.foundation.layout.Column {
-            AppUpdateRow(state, onCheck, onDownload)
-            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             SettingsRow(
                 title = "运行诊断",
                 subtitle = "导出启动自检、任务状态与模型连接摘要，不包含密钥或小说内容。",
