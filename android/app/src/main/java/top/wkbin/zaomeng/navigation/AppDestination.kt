@@ -36,6 +36,9 @@ data object StartupRecoverySettingsDestination
 data object AppSupportSettingsDestination
 
 @Serializable
+data object AppUpdateDestination
+
+@Serializable
 data class RunDetailDestination(val runId: String)
 
 @Serializable

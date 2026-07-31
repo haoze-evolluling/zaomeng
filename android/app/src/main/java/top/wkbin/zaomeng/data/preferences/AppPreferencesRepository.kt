@@ -5,7 +5,6 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
@@ -53,8 +52,6 @@ data class AppPreferences(
     val lastSessionId: String = "",
     val chatDisplay: ChatDisplayPreferences = ChatDisplayPreferences(),
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val appUpdateDownloadId: Long = NO_DOWNLOAD_ID,
-    val appUpdateDownloadVersion: String = "",
 )
 
 class AppPreferencesRepository(
@@ -76,8 +73,6 @@ class AppPreferencesRepository(
                     compactMode = values[CHAT_COMPACT_MODE] ?: false,
                 ),
                 themeMode = ThemeMode.fromStorageValue(values[THEME_MODE]),
-                appUpdateDownloadId = values[APP_UPDATE_DOWNLOAD_ID] ?: NO_DOWNLOAD_ID,
-                appUpdateDownloadVersion = values[APP_UPDATE_DOWNLOAD_VERSION].orEmpty(),
             )
         }
 
@@ -175,20 +170,6 @@ class AppPreferencesRepository(
         dataStore.edit { values -> values[THEME_MODE] = themeMode.storageValue }
     }
 
-    suspend fun rememberAppUpdateDownload(downloadId: Long, version: String) {
-        dataStore.edit { values ->
-            values[APP_UPDATE_DOWNLOAD_ID] = downloadId
-            values[APP_UPDATE_DOWNLOAD_VERSION] = version.trim()
-        }
-    }
-
-    suspend fun clearAppUpdateDownload() {
-        dataStore.edit { values ->
-            values.remove(APP_UPDATE_DOWNLOAD_ID)
-            values.remove(APP_UPDATE_DOWNLOAD_VERSION)
-        }
-    }
-
     private companion object {
         val DEFAULT_CHARACTERS = stringPreferencesKey("default_characters")
         val AUTO_DISTILL = booleanPreferencesKey("auto_distill")
@@ -198,9 +179,6 @@ class AppPreferencesRepository(
         val CHAT_FONT_SIZE = stringPreferencesKey("chat_font_size")
         val CHAT_COMPACT_MODE = booleanPreferencesKey("chat_compact_mode")
         val THEME_MODE = stringPreferencesKey("theme_mode")
-        val APP_UPDATE_DOWNLOAD_ID = longPreferencesKey("app_update_download_id")
-        val APP_UPDATE_DOWNLOAD_VERSION = stringPreferencesKey("app_update_download_version")
     }
 }
 
-private const val NO_DOWNLOAD_ID = -1L

@@ -64,11 +64,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import top.wkbin.zaomeng.BuildConfig
 import top.wkbin.zaomeng.R
 import top.wkbin.zaomeng.data.api.ModelProfileDto
-import top.wkbin.zaomeng.data.update.AppUpdateDownloadStatus
-import top.wkbin.zaomeng.feature.update.AppUpdateDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -641,41 +638,3 @@ internal fun SettingsRow(
     }
 }
 
-@Composable
-internal fun AppUpdateRow(state: SettingsUiState, onCheck: () -> Unit, onDownload: () -> Unit) {
-    var showDetails by remember(state.availableUpdate?.version) { mutableStateOf(false) }
-    Column {
-        SettingsRow(
-            title = "应用更新",
-            subtitle = state.availableUpdate?.let { "发现新版本 ${it.version}" } ?: state.updateError.ifBlank { state.updateMessage.ifBlank { "当前版本 ${BuildConfig.VERSION_NAME} · GitHub Release" } },
-            value = if (state.checkingUpdate) "检查中" else "检查",
-            enabled = !state.checkingUpdate,
-            onClick = onCheck,
-        )
-        state.availableUpdate?.let { update ->
-            val downloadStatus = state.updateDownloadState.status.takeIf {
-                state.updateDownloadState.version == update.version
-            } ?: AppUpdateDownloadStatus.Idle
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            SettingsRow(
-                title = "新版本 ${update.version}",
-                subtitle = when (downloadStatus) {
-                    AppUpdateDownloadStatus.Downloading -> "正在通过系统下载器下载"
-                    AppUpdateDownloadStatus.Downloaded -> "安装包已下载，可从系统通知打开"
-                    AppUpdateDownloadStatus.Failed -> "上次下载失败，可查看日志后重试"
-                    AppUpdateDownloadStatus.Idle -> "点击查看详细更新日志"
-                },
-                value = "查看",
-                onClick = { showDetails = true },
-            )
-            if (showDetails) {
-                AppUpdateDialog(
-                    update = update,
-                    downloadState = state.updateDownloadState,
-                    onDismiss = { showDetails = false },
-                    onDownload = onDownload,
-                )
-            }
-        }
-    }
-}

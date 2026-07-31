@@ -47,6 +47,7 @@ fun SettingsHomeScreen(
     onOpenAppearance: () -> Unit,
     onOpenStartupRecovery: () -> Unit,
     onOpenAppSupport: () -> Unit,
+    onOpenAppUpdate: () -> Unit,
     preferencesRepository: AppPreferencesRepository = koinInject(),
 ) {
     val preferences by preferencesRepository.preferences.collectAsStateWithLifecycle(
@@ -109,8 +110,15 @@ fun SettingsHomeScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsHomeRow(
+                        title = "检查更新",
+                        subtitle = "检查 GitHub Release 中的最新应用版本。",
+                        icon = Icons.Outlined.Info,
+                        onClick = onOpenAppUpdate,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsHomeRow(
                         title = "应用与支持",
-                        subtitle = "检查更新并导出脱敏运行诊断。",
+                        subtitle = "导出脱敏运行诊断并查看项目资源。",
                         icon = Icons.Outlined.Info,
                         onClick = onOpenAppSupport,
                     )

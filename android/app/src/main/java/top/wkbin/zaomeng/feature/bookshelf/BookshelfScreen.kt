@@ -69,7 +69,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.BackendState
 import top.wkbin.zaomeng.data.api.RunManifestDto
-import top.wkbin.zaomeng.feature.update.AppUpdateDialog
 import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,19 +85,6 @@ fun BookshelfScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
-    var dismissedUpdateVersion by rememberSaveable { mutableStateOf("") }
-
-    state.availableUpdate?.let { update ->
-        if (dismissedUpdateVersion != update.version) {
-            AppUpdateDialog(
-                update = update,
-                downloadState = state.updateDownloadState,
-                onDismiss = { dismissedUpdateVersion = update.version },
-                onDownload = viewModel::downloadUpdate,
-            )
-        }
-    }
-
     // NavHost retains this destination while import/detail is displayed. Refresh the
     // list when it returns to the foreground so a new book appears immediately.
     DisposableEffect(lifecycleOwner, viewModel) {

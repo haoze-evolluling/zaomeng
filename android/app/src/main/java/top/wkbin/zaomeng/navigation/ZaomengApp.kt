@@ -49,6 +49,8 @@ import top.wkbin.zaomeng.feature.settings.ChatDisplaySettingsScreen
 import top.wkbin.zaomeng.feature.settings.SettingsHomeScreen
 import top.wkbin.zaomeng.feature.settings.StartupRecoverySettingsScreen
 import top.wkbin.zaomeng.feature.settings.AppSupportSettingsScreen
+import top.wkbin.zaomeng.feature.update.AppUpdateScreen
+import top.wkbin.zaomeng.data.update.AppUpdateUiState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import org.koin.androidx.compose.koinViewModel
@@ -59,6 +61,11 @@ import org.koin.core.parameter.parametersOf
 fun ZaomengApp(
     navController: NavHostController = rememberNavController(),
     repository: ZaomengRepository = koinInject(),
+    appUpdateState: AppUpdateUiState,
+    onCheckForAppUpdate: () -> Unit,
+    onDownloadAppUpdate: () -> Unit,
+    startupUpdateCheckDisabled: Boolean,
+    onStartupUpdateCheckDisabledChange: (Boolean) -> Unit,
 ) {
     var restoreAttempted by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -152,6 +159,7 @@ fun ZaomengApp(
                 onOpenAppearance = { navController.navigate(AppearanceSettingsDestination) },
                 onOpenStartupRecovery = { navController.navigate(StartupRecoverySettingsDestination) },
                 onOpenAppSupport = { navController.navigate(AppSupportSettingsDestination) },
+                onOpenAppUpdate = { navController.navigate(AppUpdateDestination) },
             )
         }
 
@@ -188,6 +196,17 @@ fun ZaomengApp(
         composable<AppSupportSettingsDestination> {
             val viewModel: SettingsViewModel = koinViewModel()
             AppSupportSettingsScreen(viewModel = viewModel, onBack = navController::navigateUp)
+        }
+
+        composable<AppUpdateDestination> {
+            AppUpdateScreen(
+                state = appUpdateState,
+                onBack = navController::navigateUp,
+                onCheck = onCheckForAppUpdate,
+                onDownload = onDownloadAppUpdate,
+                startupUpdateCheckDisabled = startupUpdateCheckDisabled,
+                onStartupUpdateCheckDisabledChange = onStartupUpdateCheckDisabledChange,
+            )
         }
 
         composable<RunDetailDestination> { entry ->
