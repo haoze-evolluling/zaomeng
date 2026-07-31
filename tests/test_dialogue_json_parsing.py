@@ -91,6 +91,36 @@ class DialogueJsonParsingTests(unittest.TestCase):
         self.assertIn("没说出口", system_text)
         self.assertIn("50 字", system_text)
 
+    def test_inner_thought_rule_lives_in_cache_static_system_message(self) -> None:
+        base_payload = {
+            "mode": "observe",
+            "input": {
+                "message_kind": "dialogue",
+                "participants": ["甲"],
+                "active_participants": ["甲"],
+            },
+            "host_action": {"response_limit_hint": 1},
+        }
+        enabled = build_dialogue_llm_messages(
+            {**base_payload, "include_inner_thoughts": True}
+        )
+        disabled = build_dialogue_llm_messages(
+            {**base_payload, "include_inner_thoughts": False}
+        )
+
+        enabled_static = next(
+            message
+            for message in enabled
+            if message.get("cache_static") is True
+        )
+        disabled_static = next(
+            message
+            for message in disabled
+            if message.get("cache_static") is True
+        )
+        self.assertIn("inner_thought", str(enabled_static.get("content", "")))
+        self.assertNotIn("inner_thought", str(disabled_static.get("content", "")))
+
 
 if __name__ == "__main__":
     unittest.main()
