@@ -11,6 +11,8 @@ from src.web.time_utils import utc_now as _utc_now
 
 MIN_DIALOGUE_TURNS_FOR_CHAPTER = 6
 _NOVEL_REWRITE_MAX_TOKENS = 4096
+NOVEL_CHAPTER_TARGET_CHARS = 1200
+NOVEL_CHAPTER_MAX_CHARS = 2000
 
 
 _NOVEL_REWRITE_SYSTEM_PROMPT = """
@@ -38,6 +40,8 @@ _NOVEL_REWRITE_SYSTEM_PROMPT = """
 9. 文风要求。正文自然流畅、有画面感但不过度堆砌、情绪克制、避免模板化动作、避免华丽辞藻堆叠、避免把每个心理都解释清楚、留出适当的潜台词和空白。
 
 不要写总结、分析、创作说明或标题，只输出小说正文。
+
+章节字数：正文目标约 1200 字，最多不超过 2000 字。不要为了凑字数堆砌环境或动作。
 
 输入格式：
 {
@@ -77,6 +81,23 @@ def _dialogue_turn_count(transcript: list[dict[str, Any]]) -> int:
     if turn_ids:
         return len(turn_ids)
     return len(meaningful)
+
+
+def _trim_chapter_content(content: str, limit: int) -> str:
+    text = str(content or "").strip()
+    if len(text) <= limit:
+        return text
+    candidate = text[: max(1, limit - 1)]
+    boundary = max(
+        candidate.rfind("。"),
+        candidate.rfind("！"),
+        candidate.rfind("？"),
+        candidate.rfind("”"),
+        candidate.rfind("\n"),
+    )
+    if boundary > limit * 0.6:
+        candidate = candidate[: boundary + 1]
+    return candidate.rstrip() + "…"
 
 
 class ChapterServiceMixin:
@@ -376,6 +397,10 @@ class ChapterServiceMixin:
             "scene": scene,
             "point_of_view": "第三人称限知",
             "style": "自然、克制、有画面感",
+            "chapter_length": (
+                f"目标约 {NOVEL_CHAPTER_TARGET_CHARS} 字，"
+                f"最多不超过 {NOVEL_CHAPTER_MAX_CHARS} 字。"
+            ),
             "dialogues": dialogues,
         }
         result = LLMClient(config).chat_completion(
@@ -407,6 +432,8 @@ class ChapterServiceMixin:
         body = "\n".join(raw_lines[1:]).strip()
         if not body:
             body = raw_content
+        if len(body) > NOVEL_CHAPTER_MAX_CHARS:
+            body = _trim_chapter_content(body, NOVEL_CHAPTER_MAX_CHARS)
 
         chapter_title = (
             str(title or "").strip()
