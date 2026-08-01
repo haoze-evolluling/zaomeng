@@ -70,10 +70,25 @@ fun ZaomengApp(
     onDownloadAppUpdate: () -> Unit,
     startupUpdateCheckDisabled: Boolean,
     onStartupUpdateCheckDisabledChange: (Boolean) -> Unit,
+    launchChaptersRunId: String? = null,
+    onChaptersLaunchConsumed: () -> Unit = {},
 ) {
     var restoreAttempted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(launchChaptersRunId) {
+        val runId = launchChaptersRunId?.takeIf(String::isNotBlank).orEmpty()
+        if (runId.isNotBlank()) {
+            navController.navigate(ChaptersDestination(runId)) {
+                launchSingleTop = true
+            }
+            onChaptersLaunchConsumed()
+        }
+    }
     LaunchedEffect(Unit) {
         if (restoreAttempted) return@LaunchedEffect
+        if (!launchChaptersRunId.isNullOrBlank()) {
+            restoreAttempted = true
+            return@LaunchedEffect
+        }
         repository.startBackend()
         repository.backendState.first { it is BackendState.Ready }
         val restoredLocation = try {

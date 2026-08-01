@@ -1,5 +1,7 @@
 package top.wkbin.zaomeng.feature.storyrecap
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +37,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -42,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.zaomeng.backend.NovelConversionForegroundController
 import top.wkbin.zaomeng.data.api.StoryQuoteDto
 import top.wkbin.zaomeng.data.api.StoryRecapDto
 
@@ -54,6 +60,35 @@ fun StoryRecapScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val recap = state.session?.storyRecap
+    var novelConversionStarted by remember { mutableStateOf(false) }
+    var pendingNovelConversion by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (pendingNovelConversion && granted) {
+            novelConversionStarted = NovelConversionForegroundController.start(
+                context,
+                viewModel.runId,
+                viewModel.sessionId,
+            )
+        }
+        pendingNovelConversion = false
+    }
+
+    fun startNovelConversion() {
+        if (NovelConversionForegroundController.hasNotificationPermission(context)) {
+            novelConversionStarted = NovelConversionForegroundController.start(
+                context,
+                viewModel.runId,
+                viewModel.sessionId,
+            )
+        } else {
+            pendingNovelConversion = true
+            notificationPermissionLauncher.launch(
+                NovelConversionForegroundController.NOTIFICATION_PERMISSION,
+            )
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -121,6 +156,12 @@ fun StoryRecapScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item(key = "header") { RecapHeader(recap) }
+                item(key = "convert") {
+                    NovelConversionCard(
+                        started = novelConversionStarted,
+                        onClick = ::startNovelConversion,
+                    )
+                }
                 if (recap.quotes.isNotEmpty()) {
                     item(key = "quotes") { QuoteCard(recap.quotes) }
                 }
@@ -222,6 +263,41 @@ private fun HooksCard(hooks: List<String>) {
                 text = "· $hook",
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+    }
+}
+
+@Composable
+private fun NovelConversionCard(
+    started: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = if (started) "小说生成已在后台开始" else "生成本章小说",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = if (started) {
+                    "完成后会通过通知提醒你。"
+                } else {
+                    "把这段对话改写成连贯的小说章节，至少需要 6 轮有效对话。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!started) {
+                Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                    Text("开始生成")
+                }
+            }
         }
     }
 }

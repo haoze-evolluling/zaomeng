@@ -20,8 +20,8 @@ data class StoryRecapUiState(
 
 class StoryRecapViewModel(
     private val repository: ZaomengRepository,
-    private val runId: String,
-    private val sessionId: String,
+    val runId: String,
+    val sessionId: String,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(StoryRecapUiState())
     val state: StateFlow<StoryRecapUiState> = mutableState.asStateFlow()

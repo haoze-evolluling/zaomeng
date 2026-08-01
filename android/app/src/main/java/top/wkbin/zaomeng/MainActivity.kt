@@ -1,5 +1,6 @@
 package top.wkbin.zaomeng
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -38,6 +39,7 @@ import top.wkbin.zaomeng.ui.theme.MyApplicationTheme
 class MainActivity : ComponentActivity() {
     private var appUpdateState by mutableStateOf(AppUpdateUiState())
     private var dismissedUpdateVersion by mutableStateOf("")
+    private var pendingChaptersRunId by mutableStateOf<String?>(null)
     private var contentDisclaimerAccepted by mutableStateOf(false)
     private var startupUpdateCheckDisabled by mutableStateOf(false)
     private var appUpdateDownloadJob: Job? = null
@@ -50,6 +52,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         startupUpdateCheckDisabled = AppUpdatePreferences.isStartupCheckDisabled(this)
         contentDisclaimerAccepted = ContentDisclaimerPreferences.isAccepted(this)
+        pendingChaptersRunId = intent.getStringExtra("open_run_id")
         setContent {
             val preferencesRepository: AppPreferencesRepository = koinInject()
             val themeMode = preferencesRepository.themeMode.collectAsStateWithLifecycle(
@@ -66,6 +69,8 @@ class MainActivity : ComponentActivity() {
                         onDownloadAppUpdate = ::downloadAppUpdate,
                         startupUpdateCheckDisabled = startupUpdateCheckDisabled,
                         onStartupUpdateCheckDisabledChange = ::updateStartupUpdateCheckPreference,
+                        launchChaptersRunId = pendingChaptersRunId,
+                        onChaptersLaunchConsumed = { pendingChaptersRunId = null },
                     )
                     appUpdateState.availableUpdate?.let { update ->
                         if (dismissedUpdateVersion != update.version) {
@@ -90,6 +95,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (!startupUpdateCheckDisabled) checkForAppUpdate(manual = false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        pendingChaptersRunId = intent.getStringExtra("open_run_id")
+        setIntent(intent)
     }
 
     override fun onResume() {

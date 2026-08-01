@@ -32,6 +32,7 @@ class NovelConversionForegroundService : Service(), KoinComponent {
     private val backend: EmbeddedBackendController by inject()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var conversionJob: Job? = null
+    @Volatile private var pendingRunId = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -47,6 +48,7 @@ class NovelConversionForegroundService : Service(), KoinComponent {
             stopSelf()
             return START_NOT_STICKY
         }
+        pendingRunId = runId
         if (!startAsForeground(buildStartingNotification())) {
             stopSelf()
             return START_NOT_STICKY
@@ -147,6 +149,7 @@ class NovelConversionForegroundService : Service(), KoinComponent {
         0,
         Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_OPEN_RUN_ID, pendingRunId)
         },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
@@ -204,6 +207,7 @@ class NovelConversionForegroundService : Service(), KoinComponent {
     companion object {
         internal const val ACTION_START =
             "top.wkbin.zaomeng.action.START_NOVEL_CONVERSION"
+        internal const val EXTRA_OPEN_RUN_ID = "open_run_id"
         private const val EXTRA_RUN_ID = "run_id"
         private const val EXTRA_SESSION_ID = "session_id"
         private const val EXTRA_TITLE = "title"
