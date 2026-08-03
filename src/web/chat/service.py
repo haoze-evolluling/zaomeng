@@ -1860,6 +1860,7 @@ class DialogueService:
                     {
                         "label": "4-10字的推进选项",
                         "direction": "供下一步代写使用的明确剧情方向",
+                        "suggestion": "一至三句可直接发送的成品文案",
                         "anchor_speaker": "该方向所依据的最新回复角色",
                         "anchor_quote": "从该角色最新回复中原样摘录的4-20字",
                     }

@@ -169,6 +169,21 @@ class DialogueSuggestionTests(unittest.TestCase):
         self.assertEqual(parsed[1]["anchor_speaker"], "林黛玉")
         self.assertEqual(parsed[1]["anchor_quote"], "你别再逞强了")
 
+    def test_association_parser_requires_sendable_suggestions_when_requested(self):
+        with self.assertRaisesRegex(ValueError, "enough distinct"):
+            parse_dialogue_associations(
+                json.dumps(
+                    {
+                        "options": [
+                            {"label": "追问旧事", "direction": "继续追问对方刚提到的旧事"},
+                            {"label": "缓和气氛", "direction": "先回应对方的关心"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                require_suggestions=True,
+            )
+
     def test_dialogue_associations_retry_when_anchor_is_not_in_latest_reply(self):
         payload = {
             "mode": "act",

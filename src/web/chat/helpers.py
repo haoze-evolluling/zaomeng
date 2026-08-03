@@ -1060,7 +1060,7 @@ def build_dialogue_association_llm_messages(
         "只使用上下文中已经成立的事实，不剧透，不凭空引入核心秘密，不把成品台词直接放进 label。",
         "选项要符合当前 mode：act/insert 是用户所扮演角色能采取的表达或行动，observe 是观察者可施加的场景推进。",
         "每个选项都要提供 anchor_speaker 和 anchor_quote。anchor_quote 必须从该角色在 latest_exchange.replies 里的原话连续摘录 4-20 个字，不得改写；这是事实校验字段，不会显示给用户。",
-        "每个选项还要尽量提供 suggestion：把该 direction 写成符合当前 mode 与 user_persona、可直接发送的一至三句话；不得复述 label，不得解释写作意图。",
+        "每个选项必须提供 suggestion：把该 direction 写成符合当前 mode 与 user_persona、可直接发送的一至三句话；不得复述 label，不得解释写作意图。",
         '只返回合法 JSON，不要 markdown，不要解释。格式为：{"options":[{"label":"追问旧事","direction":"让当前用户角色顺着对方刚提到的旧事继续追问","suggestion":"你刚才说当年的事并未全忘，究竟还记得多少？","anchor_speaker":"林黛玉","anchor_quote":"当年的事你还记得"}]}。',
         str(instructions.get("generation_goal", "")).strip(),
         str(host_action.get("output_rule", "")).strip(),
@@ -1718,7 +1718,11 @@ def parse_dialogue_suggestion(content: str) -> str:
     return text
 
 
-def parse_dialogue_associations(content: str) -> list[dict[str, str]]:
+def parse_dialogue_associations(
+    content: str,
+    *,
+    require_suggestions: bool = False,
+) -> list[dict[str, str]]:
     text = str(content or "").strip()
     if not text:
         raise ValueError("Model returned empty dialogue associations.")
@@ -1773,7 +1777,10 @@ def parse_dialogue_associations(content: str) -> list[dict[str, str]]:
             try:
                 option["suggestion"] = parse_dialogue_suggestion(suggestion)[:600]
             except ValueError:
-                pass
+                if require_suggestions:
+                    continue
+        elif require_suggestions:
+            continue
         if isinstance(item, dict) and anchor_speaker and anchor_quote:
             option["anchor_speaker"] = anchor_speaker[:24].strip()
             option["anchor_quote"] = anchor_quote[:80].strip()

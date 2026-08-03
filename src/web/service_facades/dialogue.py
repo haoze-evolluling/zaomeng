@@ -1163,7 +1163,7 @@ class DialogueServiceMixin:
 
     @staticmethod
     def _parse_dialogue_associations(content: str) -> list[dict[str, str]]:
-        return parse_dialogue_associations(content)
+        return parse_dialogue_associations(content, require_suggestions=True)
 
     def _refresh_dialogue_scene_progress(
         self,
