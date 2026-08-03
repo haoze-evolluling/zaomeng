@@ -48,6 +48,7 @@ data class SessionsUiState(
     val refreshing: Boolean = false,
     val creating: Boolean = false,
     val sessions: List<DialogueSessionDto> = emptyList(),
+    val avatarBytes: Map<String, ByteArray> = emptyMap(),
     val runs: List<RunManifestDto> = emptyList(),
     val searchQuery: String = "",
     val sort: SessionsSort = SessionsSort.Recent,
@@ -147,6 +148,7 @@ class SessionsViewModel(
                         error = "",
                     )
                 }
+                loadSessionAvatars(loaded.sessions)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -531,6 +533,7 @@ class SessionsViewModel(
                 mutableState.update { current ->
                     current.afterSessionCreated(created)
                 }
+                loadSessionAvatars(listOf(created))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -718,6 +721,30 @@ class SessionsViewModel(
         emptyList()
     }
 
+    private suspend fun loadSessionAvatars(sessions: List<DialogueSessionDto>) {
+        sessions
+            .asSequence()
+            .flatMap { session ->
+                session.characterAvatars.asSequence().map { (character, version) ->
+                    SessionAvatarReference(session.runId, character, version)
+                }
+            }
+            .filter { it.runId.isNotBlank() && it.character.isNotBlank() && it.version.isNotBlank() }
+            .distinct()
+            .forEach { avatar ->
+                val bytes = try {
+                    repository.getPersonaAvatar(avatar.runId, avatar.character, avatar.version)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                } ?: return@forEach
+                mutableState.update { current ->
+                    current.copy(avatarBytes = current.avatarBytes + (avatar.key to bytes))
+                }
+            }
+    }
+
     private fun SessionsUiState.afterSessionCreated(created: DialogueSessionDto): SessionsUiState {
         val belongsToScope = scopedRunId == null || scopedRunId == created.runId
         return copy(
@@ -776,6 +803,15 @@ private data class LoadedSessionResources(
     val selfCards: List<ReusableCardDto>,
     val openingPresets: List<ReusableCardDto>,
 )
+
+private data class SessionAvatarReference(
+    val runId: String,
+    val character: String,
+    val version: String,
+) {
+    val key: String
+        get() = "$runId|$character"
+}
 
 internal fun filterSessions(state: SessionsUiState): List<DialogueSessionDto> {
     val runTitles = state.runs.associate { it.runId to it.title }

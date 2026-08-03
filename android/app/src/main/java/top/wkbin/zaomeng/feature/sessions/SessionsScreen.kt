@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,7 +25,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
@@ -39,7 +39,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +57,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,7 +95,9 @@ fun SessionsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var pendingDeletion by remember { mutableStateOf<DialogueSessionDto?>(null) }
     var pendingBatchDeletion by remember { mutableStateOf(false) }
-    val visibleSessions = filterSessions(state)
+    val visibleSessions = remember(state.sessions, state.searchQuery, state.sort) {
+        filterSessions(state)
+    }
     val visibleSessionKeys = visibleSessions.mapTo(mutableSetOf(), DialogueSessionDto::key)
     val allVisibleSelected = visibleSessionKeys.isNotEmpty() &&
         visibleSessionKeys.all(state.selectedSessionKeys::contains)
@@ -217,11 +219,15 @@ fun SessionsScreen(
         },
     ) { innerPadding ->
         when {
-            state.loading -> LoadingSessions(Modifier.padding(innerPadding))
+            state.loading -> LoadingSessions(
+                modifier = Modifier.padding(innerPadding),
+                error = state.error,
+                onDismissError = viewModel::clearError,
+            )
             else -> SessionsContent(
                 state = state,
+                visibleSessions = visibleSessions,
                 onOpenChat = onOpenChat,
-                onOpenStoryRecap = onOpenStoryRecap,
                 onDelete = { pendingDeletion = it },
                 onToggleSelection = viewModel::toggleSessionSelection,
                 onSearchQueryChange = viewModel::updateSearchQuery,
@@ -297,12 +303,24 @@ fun SessionsScreen(
 }
 
 @Composable
-private fun LoadingSessions(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun LoadingSessions(
+    modifier: Modifier = Modifier,
+    error: String = "",
+    onDismissError: () -> Unit = {},
+) {
+    Column(modifier.fillMaxSize().padding(16.dp)) {
+        if (error.isNotBlank()) {
+            ErrorCard(message = error, onDismiss = onDismissError)
+        }
+        Box(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
             Spacer(Modifier.height(12.dp))
             Text("正在整理本机会话…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -310,8 +328,8 @@ private fun LoadingSessions(modifier: Modifier = Modifier) {
 @Composable
 private fun SessionsContent(
     state: SessionsUiState,
+    visibleSessions: List<DialogueSessionDto>,
     onOpenChat: (String, String) -> Unit,
-    onOpenStoryRecap: (String, String) -> Unit,
     onDelete: (DialogueSessionDto) -> Unit,
     onToggleSelection: (String) -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -319,7 +337,14 @@ private fun SessionsContent(
     onDismissError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val visibleSessions = filterSessions(state)
+    val runsById = remember(state.runs) { state.runs.associateBy(RunManifestDto::runId) }
+    val sessionGroups = remember(visibleSessions, runsById) {
+        visibleSessions.groupBy { session ->
+            runsById[session.runId]?.title
+                ?.takeIf(String::isNotBlank)
+                ?: session.novelId.ifBlank { "未命名书卷" }
+        }
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 104.dp),
@@ -345,7 +370,7 @@ private fun SessionsContent(
             }
         }
 
-        if (state.sessions.isEmpty()) {
+        if (state.sessions.isEmpty() && state.error.isBlank()) {
             item {
                 Card(
                     colors = CardDefaults.cardColors(
@@ -378,18 +403,29 @@ private fun SessionsContent(
                 NoSessionMatches(onClearSearch = { onSearchQueryChange("") })
             }
         } else {
-            items(visibleSessions, key = DialogueSessionDto::key) { session ->
-                SessionCard(
-                    session = session,
-                    run = state.runs.firstOrNull { it.runId == session.runId },
-                    deleting = session.key in state.deletingSessionKeys,
-                    selectionMode = state.selectionMode,
-                    selected = session.key in state.selectedSessionKeys,
-                    onOpen = { onOpenChat(session.runId, session.sessionId) },
-                    onOpenStoryRecap = { onOpenStoryRecap(session.runId, session.sessionId) },
-                    onDelete = { onDelete(session) },
-                    onToggleSelection = { onToggleSelection(session.key) },
-                )
+            sessionGroups.forEach { (bookTitle, sessions) ->
+                item(key = "book-$bookTitle") {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(bookTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${sessions.size} 段会话",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                items(sessions, key = DialogueSessionDto::key) { session ->
+                    SessionCard(
+                        session = session,
+                        avatarBytes = state.avatarBytes,
+                        deleting = session.key in state.deletingSessionKeys,
+                        selectionMode = state.selectionMode,
+                        selected = session.key in state.selectedSessionKeys,
+                        onOpen = { onOpenChat(session.runId, session.sessionId) },
+                        onDelete = { onDelete(session) },
+                        onToggleSelection = { onToggleSelection(session.key) },
+                    )
+                }
             }
         }
     }
@@ -487,16 +523,14 @@ private fun NoSessionMatches(onClearSearch: () -> Unit) {
 @Composable
 private fun SessionCard(
     session: DialogueSessionDto,
-    run: RunManifestDto?,
+    avatarBytes: Map<String, ByteArray>,
     deleting: Boolean,
     selectionMode: Boolean,
     selected: Boolean,
     onOpen: () -> Unit,
-    onOpenStoryRecap: () -> Unit,
     onDelete: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
-    var actionsMenuOpen by remember(session.key) { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -511,32 +545,22 @@ private fun SessionCard(
             },
         ),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
                     Checkbox(
                         checked = selected,
-                        onCheckedChange = null,
+                        onCheckedChange = { onToggleSelection() },
                         enabled = !deleting,
                         modifier = Modifier.padding(end = 8.dp),
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = run?.title ?: session.novelId.ifBlank { "未命名书卷" },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "${session.mode.chineseMode()} · ${session.participants.joinToString("、").ifBlank { "未记录人物" }}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                ParticipantAvatarStack(
+                    participants = session.participants,
+                    runId = session.runId,
+                    avatarBytes = avatarBytes,
+                    modifier = Modifier.weight(1f),
+                )
                 Surface(
                     color = if (session.status == "ready") {
                         MaterialTheme.colorScheme.primaryContainer
@@ -551,6 +575,19 @@ private fun SessionCard(
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
+                if (!selectionMode) {
+                    IconButton(onClick = onDelete, enabled = !deleting) {
+                        if (deleting) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "删除会话",
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
             }
 
             Text(
@@ -560,10 +597,9 @@ private fun SessionCard(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "最近活跃 · ${session.updatedAt.toLocalDateTimeDisplay()}",
+                    text = "${session.mode.chineseMode()} · 最近活跃 · ${session.updatedAt.toLocalDateTimeDisplay()}",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -576,51 +612,84 @@ private fun SessionCard(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                } else {
-                    Box {
-                        IconButton(onClick = { actionsMenuOpen = true }, enabled = !deleting) {
-                            if (deleting) {
-                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.MoreVert, contentDescription = "会话操作")
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = actionsMenuOpen,
-                            onDismissRequest = { actionsMenuOpen = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("删除会话", color = MaterialTheme.colorScheme.error) },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.error,
-                                    )
-                                },
-                                onClick = {
-                                    actionsMenuOpen = false
-                                    onDelete()
-                                },
-                            )
-                        }
-                    }
                 }
             }
-            if (!selectionMode) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onOpenStoryRecap, enabled = !deleting) {
-                        Text("剧情复盘")
-                    }
-                    Button(onClick = onOpen, enabled = !deleting) {
-                        Text("继续聊天")
-                    }
+        }
+    }
+}
+
+@Composable
+private fun ParticipantAvatarStack(
+    participants: List<String>,
+    runId: String,
+    avatarBytes: Map<String, ByteArray>,
+    modifier: Modifier = Modifier,
+) {
+    val visibleParticipants = participants.filter(String::isNotBlank).take(3)
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (visibleParticipants.isEmpty()) {
+            InitialAvatar(label = "？", color = MaterialTheme.colorScheme.surfaceVariant)
+        } else {
+            visibleParticipants.forEachIndexed { index, participant ->
+                val color = when (index % 3) {
+                    0 -> MaterialTheme.colorScheme.primaryContainer
+                    1 -> MaterialTheme.colorScheme.secondaryContainer
+                    else -> MaterialTheme.colorScheme.tertiaryContainer
                 }
+                PersonaAvatar(
+                    name = participant,
+                    bytes = avatarBytes["$runId|$participant"],
+                    color = color,
+                )
             }
+            val remainingCount = participants.count(String::isNotBlank) - visibleParticipants.size
+            if (remainingCount > 0) {
+                InitialAvatar(label = "+$remainingCount", color = MaterialTheme.colorScheme.surfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InitialAvatar(label: String, color: androidx.compose.ui.graphics.Color) {
+    Surface(
+        modifier = Modifier.size(30.dp),
+        color = color,
+        shape = CircleShape,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun PersonaAvatar(
+    name: String,
+    bytes: ByteArray?,
+    color: androidx.compose.ui.graphics.Color,
+) {
+    Surface(
+        modifier = Modifier.size(30.dp),
+        color = color,
+        shape = CircleShape,
+    ) {
+        val bitmap = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+        if (bitmap == null) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(name.trim().take(1), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+        } else {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "$name 的头像",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
         }
     }
 }
