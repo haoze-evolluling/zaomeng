@@ -1,5 +1,6 @@
 package top.wkbin.zaomeng.feature.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -88,8 +89,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -153,6 +157,17 @@ fun ChatScreen(
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var directorOpen by rememberSaveable { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val closeSearch: () -> Unit = {
+        searchOpen = false
+        viewModel.updateSearchQuery("")
+        keyboardController?.hide()
+    }
+
+    BackHandler(enabled = searchOpen) {
+        closeSearch()
+    }
 
     LaunchedEffect(runId, sessionId) {
         viewModel.load(runId, sessionId)
@@ -184,6 +199,12 @@ fun ChatScreen(
             toolsOpen = false
             viewModel.consumeNavigationSession()
             onOpenBranch(session.runId, session.sessionId)
+        }
+    }
+    LaunchedEffect(searchOpen) {
+        if (searchOpen) {
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
         }
     }
 
@@ -241,13 +262,14 @@ fun ChatScreen(
                 refreshEnabled = state.canRefresh,
                 toolsEnabled = state.canUseTools,
                 searchOpen = searchOpen,
+                searchQuery = state.searchQuery,
+                searchFocusRequester = searchFocusRequester,
                 onBack = onBack,
                 onRefresh = viewModel::refresh,
                 onOpenTools = { toolsOpen = true },
-                onToggleSearch = {
-                    searchOpen = !searchOpen
-                    if (!searchOpen) viewModel.updateSearchQuery("")
-                },
+                onOpenSearch = { searchOpen = true },
+                onCloseSearch = closeSearch,
+                onSearchQueryChange = viewModel::updateSearchQuery,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -280,16 +302,6 @@ fun ChatScreen(
                 modifier = Modifier.padding(innerPadding),
             )
             else -> Column(Modifier.padding(innerPadding).fillMaxSize()) {
-                if (searchOpen) {
-                    ChatSearchBar(
-                        query = state.searchQuery,
-                        onQueryChange = viewModel::updateSearchQuery,
-                        onClose = {
-                            searchOpen = false
-                            viewModel.updateSearchQuery("")
-                        },
-                    )
-                }
                 if (searchOpen && state.searchQuery.isNotBlank()) {
                     ChatSearchResults(
                         query = state.searchQuery,
@@ -447,14 +459,29 @@ private fun ChatTopBar(
     refreshEnabled: Boolean,
     toolsEnabled: Boolean,
     searchOpen: Boolean,
+    searchQuery: String,
+    searchFocusRequester: FocusRequester,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenTools: () -> Unit,
-    onToggleSearch: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onSearchQueryChange: (String) -> Unit,
 ) {
     TopAppBar(
         title = {
-            Column {
+            if (searchOpen) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(searchFocusRequester),
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    placeholder = { Text("搜索台词、动作或人物") },
+                    singleLine = true,
+                )
+            } else Column {
                 Text(
                     text = session?.participants?.joinToString("、")?.ifBlank { "人物会话" } ?: "人物会话",
                     style = MaterialTheme.typography.titleMedium,
@@ -472,25 +499,27 @@ private fun ChatTopBar(
             }
         },
         navigationIcon = {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            IconButton(onClick = if (searchOpen) onCloseSearch else onBack) {
+                Icon(
+                    if (searchOpen) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = if (searchOpen) "关闭搜索" else "返回",
+                )
             }
         },
         actions = {
-            IconButton(onClick = onToggleSearch) {
-                Icon(
-                    if (searchOpen) Icons.Default.Close else Icons.Default.Search,
-                    contentDescription = if (searchOpen) "关闭聊天搜索" else "搜索聊天记录",
-                )
-            }
-            IconButton(onClick = onOpenTools, enabled = toolsEnabled) {
-                Icon(Icons.Default.MoreVert, contentDescription = "会话工具")
-            }
-            IconButton(onClick = onRefresh, enabled = refreshEnabled) {
-                if (refreshing) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Default.Refresh, contentDescription = "刷新聊天")
+            if (!searchOpen) {
+                IconButton(onClick = onOpenSearch) {
+                    Icon(Icons.Default.Search, contentDescription = "搜索聊天记录")
+                }
+                IconButton(onClick = onOpenTools, enabled = toolsEnabled) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "会话工具")
+                }
+                IconButton(onClick = onRefresh, enabled = refreshEnabled) {
+                    if (refreshing) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新聊天")
+                    }
                 }
             }
         },
@@ -578,42 +607,6 @@ private fun MissingChat(error: String, onRetry: () -> Unit, modifier: Modifier =
                 )
             }
             Button(onClick = onRetry, modifier = Modifier.padding(top = 16.dp)) { Text("重试") }
-        }
-    }
-}
-
-@Composable
-private fun ChatSearchBar(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier.weight(1f),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            trailingIcon = {
-                if (query.isNotBlank()) {
-                    IconButton(onClick = { onQueryChange("") }) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "清空搜索",
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            },
-            placeholder = { Text("搜索台词、动作或人物") },
-            shape = RoundedCornerShape(20.dp),
-        )
-        IconButton(onClick = onClose) {
-            Icon(Icons.Default.Close, contentDescription = "关闭搜索")
         }
     }
 }

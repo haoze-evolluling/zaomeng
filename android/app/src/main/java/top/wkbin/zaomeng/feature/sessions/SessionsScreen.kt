@@ -55,10 +55,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +99,14 @@ fun SessionsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var pendingDeletion by remember { mutableStateOf<DialogueSessionDto?>(null) }
     var pendingBatchDeletion by remember { mutableStateOf(false) }
+    var searchExpanded by rememberSaveable { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val dismissSearch = {
+        searchExpanded = false
+        viewModel.updateSearchQuery("")
+        keyboardController?.hide()
+    }
     val visibleSessions = remember(state.sessions, state.searchQuery, state.sort) {
         filterSessions(state)
     }
@@ -102,8 +114,12 @@ fun SessionsScreen(
     val allVisibleSelected = visibleSessionKeys.isNotEmpty() &&
         visibleSessionKeys.all(state.selectedSessionKeys::contains)
 
-    BackHandler(enabled = state.selectionMode) {
-        viewModel.exitSelectionMode()
+    BackHandler(enabled = state.selectionMode || searchExpanded) {
+        if (state.selectionMode) {
+            viewModel.exitSelectionMode()
+        } else {
+            dismissSearch()
+        }
     }
 
     LaunchedEffect(runId) {
@@ -122,6 +138,12 @@ fun SessionsScreen(
     LaunchedEffect(state.selectedSessionKeys.size) {
         if (state.selectedSessionKeys.isEmpty()) pendingBatchDeletion = false
     }
+    LaunchedEffect(searchExpanded) {
+        if (searchExpanded) {
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
     LaunchedEffect(state.sessions, state.deletingSessionKeys) {
         pendingDeletion?.let { pending ->
             if (state.sessions.none { it.key == pending.key }) pendingDeletion = null
@@ -134,6 +156,17 @@ fun SessionsScreen(
                 title = {
                     if (state.selectionMode) {
                         Text("已选择 ${state.selectedSessionKeys.size} 项")
+                    } else if (searchExpanded) {
+                        OutlinedTextField(
+                            value = state.searchQuery,
+                            onValueChange = viewModel::updateSearchQuery,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(searchFocusRequester),
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            placeholder = { Text("搜索会话") },
+                            singleLine = true,
+                        )
                     } else {
                         Column {
                             Text(if (runId.isNullOrBlank()) "全部会话" else "书中会话")
@@ -151,11 +184,20 @@ fun SessionsScreen(
                 },
                 navigationIcon = {
                     IconButton(
-                        onClick = if (state.selectionMode) viewModel::exitSelectionMode else onBack,
+                        onClick = {
+                            when {
+                                state.selectionMode -> viewModel.exitSelectionMode()
+                                searchExpanded -> dismissSearch()
+                                else -> onBack()
+                            }
+                        },
                         enabled = !state.deletingSelection,
                     ) {
-                        if (state.selectionMode) {
-                            Icon(Icons.Default.Close, contentDescription = "退出多选")
+                        if (state.selectionMode || searchExpanded) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = if (state.selectionMode) "退出多选" else "关闭搜索",
+                            )
                         } else {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                         }
@@ -187,21 +229,29 @@ fun SessionsScreen(
                             }
                         }
                     } else {
-                        IconButton(
-                            onClick = viewModel::enterSelectionMode,
-                            enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
-                        ) {
-                            Icon(Icons.Default.Checklist, contentDescription = "多选管理会话")
-                        }
-                        IconButton(
-                            onClick = viewModel::refresh,
-                            enabled = !state.loading && !state.refreshing && !state.creating &&
-                                state.deletingSessionKeys.isEmpty(),
-                        ) {
-                            if (state.refreshing) {
-                                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.Refresh, contentDescription = "刷新会话")
+                        if (!searchExpanded) {
+                            IconButton(
+                                onClick = { searchExpanded = true },
+                                enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
+                            ) {
+                                Icon(Icons.Default.Search, contentDescription = "搜索会话")
+                            }
+                            IconButton(
+                                onClick = viewModel::enterSelectionMode,
+                                enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
+                            ) {
+                                Icon(Icons.Default.Checklist, contentDescription = "多选管理会话")
+                            }
+                            IconButton(
+                                onClick = viewModel::refresh,
+                                enabled = !state.loading && !state.refreshing && !state.creating &&
+                                    state.deletingSessionKeys.isEmpty(),
+                            ) {
+                                if (state.refreshing) {
+                                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = "刷新会话")
+                                }
                             }
                         }
                     }
@@ -359,12 +409,10 @@ private fun SessionsContent(
         if (state.sessions.isNotEmpty()) {
             item {
                 SessionListControls(
-                    query = state.searchQuery,
                     sort = state.sort,
                     visibleCount = visibleSessions.size,
                     totalCount = state.sessions.size,
                     enabled = !state.deletingSelection,
-                    onQueryChange = onSearchQueryChange,
                     onSelectSort = onSelectSort,
                 )
             }
@@ -433,45 +481,20 @@ private fun SessionsContent(
 
 @Composable
 private fun SessionListControls(
-    query: String,
     sort: SessionsSort,
     visibleCount: Int,
     totalCount: Int,
     enabled: Boolean,
-    onQueryChange: (String) -> Unit,
     onSelectSort: (SessionsSort) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth(),
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            trailingIcon = if (query.isNotBlank()) {
-                {
-                    IconButton(onClick = { onQueryChange("") }) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "清空搜索",
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            } else {
-                null
-            },
-            label = { Text("搜索会话") },
-            placeholder = { Text("书名、人物或最近消息") },
-            singleLine = true,
-            enabled = enabled,
-        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = if (query.isBlank()) "$totalCount 个会话" else "找到 $visibleCount 个",
+                text = if (visibleCount == totalCount) "$totalCount 个会话" else "找到 $visibleCount 个",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
