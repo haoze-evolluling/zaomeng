@@ -262,21 +262,25 @@ fun ChatScreen(
 
     Scaffold(
         topBar = {
-            ChatTopBar(
-                session = state.session,
-                refreshing = state.refreshing,
-                refreshEnabled = state.canRefresh,
-                toolsEnabled = state.canUseTools,
-                searchOpen = searchOpen,
-                searchQuery = state.searchQuery,
-                searchFocusRequester = searchFocusRequester,
-                onBack = onBack,
-                onRefresh = viewModel::refresh,
-                onOpenTools = { toolsOpen = true },
-                onOpenSearch = { searchOpen = true },
-                onCloseSearch = closeSearch,
-                onSearchQueryChange = viewModel::updateSearchQuery,
-            )
+            if (searchOpen) {
+                ChatSearchTopBar(
+                    query = state.searchQuery,
+                    searchFocusRequester = searchFocusRequester,
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onClose = closeSearch,
+                )
+            } else {
+                ChatTopBar(
+                    session = state.session,
+                    refreshing = state.refreshing,
+                    refreshEnabled = state.canRefresh,
+                    toolsEnabled = state.canUseTools,
+                    onBack = onBack,
+                    onRefresh = viewModel::refresh,
+                    onOpenTools = { toolsOpen = true },
+                    onOpenSearch = { searchOpen = true },
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
@@ -464,39 +468,14 @@ private fun ChatTopBar(
     refreshing: Boolean,
     refreshEnabled: Boolean,
     toolsEnabled: Boolean,
-    searchOpen: Boolean,
-    searchQuery: String,
-    searchFocusRequester: FocusRequester,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenTools: () -> Unit,
     onOpenSearch: () -> Unit,
-    onCloseSearch: () -> Unit,
-    onSearchQueryChange: (String) -> Unit,
 ) {
     TopAppBar(
         title = {
-            if (searchOpen) {
-                SearchBar(
-                    inputField = {
-                        SearchBarDefaults.InputField(
-                            query = searchQuery,
-                            onQueryChange = onSearchQueryChange,
-                            onSearch = {},
-                            expanded = false,
-                            onExpandedChange = {},
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(searchFocusRequester),
-                            placeholder = { Text("搜索台词、动作或人物") },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        )
-                    },
-                    expanded = false,
-                    onExpandedChange = {},
-                    modifier = Modifier.fillMaxWidth(),
-                ) {}
-            } else Column {
+            Column {
                 Text(
                     text = session?.participants?.joinToString("、")?.ifBlank { "人物会话" } ?: "人物会话",
                     style = MaterialTheme.typography.titleMedium,
@@ -514,31 +493,66 @@ private fun ChatTopBar(
             }
         },
         navigationIcon = {
-            IconButton(onClick = if (searchOpen) onCloseSearch else onBack) {
-                Icon(
-                    if (searchOpen) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = if (searchOpen) "关闭搜索" else "返回",
-                )
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
         },
         actions = {
-            if (!searchOpen) {
-                IconButton(onClick = onOpenSearch) {
-                    Icon(Icons.Default.Search, contentDescription = "搜索聊天记录")
-                }
-                IconButton(onClick = onOpenTools, enabled = toolsEnabled) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "会话工具")
-                }
-                IconButton(onClick = onRefresh, enabled = refreshEnabled) {
-                    if (refreshing) {
-                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新聊天")
-                    }
+            IconButton(onClick = onOpenSearch) {
+                Icon(Icons.Default.Search, contentDescription = "搜索聊天记录")
+            }
+            IconButton(onClick = onOpenTools, enabled = toolsEnabled) {
+                Icon(Icons.Default.MoreVert, contentDescription = "会话工具")
+            }
+            IconButton(onClick = onRefresh, enabled = refreshEnabled) {
+                if (refreshing) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = "刷新聊天")
                 }
             }
         },
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatSearchTopBar(
+    query: String,
+    searchFocusRequester: FocusRequester,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    SearchBar(
+        inputField = {
+            SearchBarDefaults.InputField(
+                query = query,
+                onQueryChange = onQueryChange,
+                onSearch = {},
+                expanded = false,
+                onExpandedChange = {},
+                modifier = Modifier.focusRequester(searchFocusRequester),
+                placeholder = { Text("搜索台词、动作或人物") },
+                leadingIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭搜索")
+                    }
+                },
+                trailingIcon = if (query.isNotBlank()) {
+                    {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                        }
+                    }
+                } else {
+                    null
+                },
+            )
+        },
+        expanded = false,
+        onExpandedChange = {},
+        modifier = Modifier.fillMaxWidth(),
+    ) {}
 }
 
 @Composable

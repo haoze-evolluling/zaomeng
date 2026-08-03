@@ -46,6 +46,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SearchBar
+import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -106,6 +108,7 @@ fun SessionsScreen(
         searchExpanded = false
         viewModel.updateSearchQuery("")
         keyboardController?.hide()
+        Unit
     }
     val visibleSessions = remember(state.sessions, state.searchQuery, state.sort) {
         filterSessions(state)
@@ -152,21 +155,17 @@ fun SessionsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (searchExpanded) {
+                SessionsSearchTopBar(
+                    query = state.searchQuery,
+                    searchFocusRequester = searchFocusRequester,
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onClose = dismissSearch,
+                )
+            } else TopAppBar(
                 title = {
                     if (state.selectionMode) {
                         Text("已选择 ${state.selectedSessionKeys.size} 项")
-                    } else if (searchExpanded) {
-                        OutlinedTextField(
-                            value = state.searchQuery,
-                            onValueChange = viewModel::updateSearchQuery,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(searchFocusRequester),
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                            placeholder = { Text("搜索会话") },
-                            singleLine = true,
-                        )
                     } else {
                         Column {
                             Text(if (runId.isNullOrBlank()) "全部会话" else "书中会话")
@@ -187,16 +186,15 @@ fun SessionsScreen(
                         onClick = {
                             when {
                                 state.selectionMode -> viewModel.exitSelectionMode()
-                                searchExpanded -> dismissSearch()
-                                else -> onBack()
+                            else -> onBack()
                             }
                         },
                         enabled = !state.deletingSelection,
                     ) {
-                        if (state.selectionMode || searchExpanded) {
+                        if (state.selectionMode) {
                             Icon(
                                 Icons.Default.Close,
-                                contentDescription = if (state.selectionMode) "退出多选" else "关闭搜索",
+                                contentDescription = "退出多选",
                             )
                         } else {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -229,29 +227,27 @@ fun SessionsScreen(
                             }
                         }
                     } else {
-                        if (!searchExpanded) {
-                            IconButton(
-                                onClick = { searchExpanded = true },
-                                enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
-                            ) {
-                                Icon(Icons.Default.Search, contentDescription = "搜索会话")
-                            }
-                            IconButton(
-                                onClick = viewModel::enterSelectionMode,
-                                enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
-                            ) {
-                                Icon(Icons.Default.Checklist, contentDescription = "多选管理会话")
-                            }
-                            IconButton(
-                                onClick = viewModel::refresh,
-                                enabled = !state.loading && !state.refreshing && !state.creating &&
-                                    state.deletingSessionKeys.isEmpty(),
-                            ) {
-                                if (state.refreshing) {
-                                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                                } else {
-                                    Icon(Icons.Default.Refresh, contentDescription = "刷新会话")
-                                }
+                        IconButton(
+                            onClick = { searchExpanded = true },
+                            enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = "搜索会话")
+                        }
+                        IconButton(
+                            onClick = viewModel::enterSelectionMode,
+                            enabled = state.sessions.isNotEmpty() && state.deletingSessionKeys.isEmpty(),
+                        ) {
+                            Icon(Icons.Default.Checklist, contentDescription = "多选管理会话")
+                        }
+                        IconButton(
+                            onClick = viewModel::refresh,
+                            enabled = !state.loading && !state.refreshing && !state.creating &&
+                                state.deletingSessionKeys.isEmpty(),
+                        ) {
+                            if (state.refreshing) {
+                                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = "刷新会话")
                             }
                         }
                     }
@@ -373,6 +369,46 @@ private fun LoadingSessions(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SessionsSearchTopBar(
+    query: String,
+    searchFocusRequester: FocusRequester,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    SearchBar(
+        inputField = {
+            SearchBarDefaults.InputField(
+                query = query,
+                onQueryChange = onQueryChange,
+                onSearch = {},
+                expanded = false,
+                onExpandedChange = {},
+                modifier = Modifier.focusRequester(searchFocusRequester),
+                placeholder = { Text("搜索会话") },
+                leadingIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭搜索")
+                    }
+                },
+                trailingIcon = if (query.isNotBlank()) {
+                    {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                        }
+                    }
+                } else {
+                    null
+                },
+            )
+        },
+        expanded = false,
+        onExpandedChange = {},
+        modifier = Modifier.fillMaxWidth(),
+    ) {}
 }
 
 @Composable
