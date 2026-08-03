@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from src.plugin_system import (
     PluginError,
@@ -106,10 +107,14 @@ def create_plugin():
 
 
 def _plugin_package_bytes(
-    *, version: str = "1.0.0", api_version: str = "1", unsafe_path: str = ""
+    *,
+    plugin_id: str = "com.example.installable",
+    version: str = "1.0.0",
+    api_version: str = "1",
+    unsafe_path: str = "",
 ) -> bytes:
     manifest = {
-        "id": "com.example.installable",
+        "id": plugin_id,
         "name": "Installable Demo",
         "version": version,
         "apiVersion": api_version,
@@ -360,6 +365,98 @@ class PluginSystemTests(unittest.TestCase):
             self.assertFalse(inspected["compatible"])
             self.assertEqual(inspected["operation"], "blocked")
             self.assertIn("API 2", inspected["blockedReason"])
+
+    def test_plugin_package_rejects_corrupt_zip(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            with self.assertRaisesRegex(PluginError, "有效的 ZIP"):
+                service.inspect_plugin_package(
+                    filename="broken.zip",
+                    content_base64=base64.b64encode(b"not-a-zip").decode("ascii"),
+                )
+
+    def test_plugin_package_cannot_override_official_plugin(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            inspected = service.inspect_plugin_package(
+                filename="fake-official.zip",
+                content_base64=base64.b64encode(
+                    _plugin_package_bytes(plugin_id="com.zaomeng.ai-association")
+                ).decode("ascii"),
+            )
+            self.assertEqual(inspected["operation"], "blocked")
+            self.assertIn("内置插件", inspected["blockedReason"])
+
+    def test_plugin_update_requires_explicit_update_confirmation(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            first = service.inspect_plugin_package(
+                filename="v1.zip",
+                content_base64=base64.b64encode(_plugin_package_bytes()).decode("ascii"),
+            )
+            service.install_inspected_plugin_package(
+                first["token"], confirm_permissions=True, allow_update=False
+            )
+            update = service.inspect_plugin_package(
+                filename="v2.zip",
+                content_base64=base64.b64encode(
+                    _plugin_package_bytes(version="2.0.0")
+                ).decode("ascii"),
+            )
+            with self.assertRaisesRegex(PluginError, "明确选择更新"):
+                service.install_inspected_plugin_package(
+                    update["token"],
+                    confirm_permissions=True,
+                    allow_update=False,
+                )
+
+    def test_failed_plugin_update_restores_previous_working_version(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            first = service.inspect_plugin_package(
+                filename="v1.zip",
+                content_base64=base64.b64encode(_plugin_package_bytes()).decode("ascii"),
+            )
+            service.install_inspected_plugin_package(
+                first["token"], confirm_permissions=True, allow_update=False
+            )
+            service.enable_plugin("com.example.installable")
+            update = service.inspect_plugin_package(
+                filename="v2.zip",
+                content_base64=base64.b64encode(
+                    _plugin_package_bytes(version="2.0.0")
+                ).decode("ascii"),
+            )
+            with patch(
+                "src.web.service_facades.plugins.shutil.copytree",
+                side_effect=OSError("simulated copy failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "simulated copy failure"):
+                    service.install_inspected_plugin_package(
+                        update["token"],
+                        confirm_permissions=True,
+                        allow_update=True,
+                    )
+
+            restored = next(
+                item
+                for item in service.list_plugins()
+                if item["id"] == "com.example.installable"
+            )
+            self.assertEqual(restored["version"], "1.0.0")
+            self.assertTrue(restored["enabled"])
+            result = service.plugins.invoke_chat_action(
+                "com.example.installable", "run", {"run_id": "run-1"}
+            )
+            self.assertEqual(result["suggestion"], "installed")
     def test_android_chat_surfaces_plugins_in_a_dedicated_menu(self):
         chat_screen = Path(
             "android/app/src/main/java/top/wkbin/zaomeng/feature/chat/ChatScreen.kt"
