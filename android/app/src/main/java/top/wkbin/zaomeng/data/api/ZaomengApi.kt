@@ -37,6 +37,18 @@ interface ZaomengApi {
     @DELETE("api/web/settings/model/profiles/{profileId}")
     suspend fun deleteModelProfile(@Path("profileId") profileId: String): ModelSettingsDto
 
+    @GET("api/web/plugins")
+    suspend fun listPlugins(): PluginsResponse
+
+    @POST("api/web/plugins/refresh")
+    suspend fun refreshPlugins(): PluginsResponse
+
+    @POST("api/web/plugins/{pluginId}/enable")
+    suspend fun enablePlugin(@Path("pluginId") pluginId: String): PluginDto
+
+    @POST("api/web/plugins/{pluginId}/disable")
+    suspend fun disablePlugin(@Path("pluginId") pluginId: String): PluginDto
+
     @Streaming
     @GET("api/web/diagnostics/export")
     suspend fun exportDiagnostics(): Response<ResponseBody>

@@ -963,3 +963,58 @@
   background: linear-gradient(135deg, #b85f4d 0%, #9a3f2d 100%);
   border-color: rgba(154, 63, 45, 0.28);
 }
+
+.plugin-manager-modal-card {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.plugin-manager-toolbar,
+.plugin-manager-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-manager-toolbar p,
+.plugin-manager-description,
+.plugin-manager-meta,
+.plugin-manager-error {
+  margin: 0;
+}
+
+.plugin-manager-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.plugin-manager-card {
+  display: grid;
+  gap: 9px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+.plugin-manager-card-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.plugin-manager-card-head span,
+.plugin-manager-meta {
+  color: var(--ink-faint);
+  font-size: 0.76rem;
+}
+
+.plugin-manager-description {
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.plugin-manager-error,
+#plugin-manager-status.is-error {
+  color: #a34232;
+}

@@ -60,12 +60,35 @@
           </section>
 
           <div class="card-actions">
+            <button id="open-plugin-manager-button" type="button" class="soft-button">管理插件</button>
             <button id="close-settings-button" type="button" class="soft-button">稍后再说</button>
             <button id="save-model-settings-button" type="submit" class="primary-button">保存</button>
           </div>
         </form>
         <p id="model-settings-status" class="card-note"></p>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="plugin-manager-modal" class="modal hidden">
+  <div class="modal-backdrop" data-plugin-manager-close="true"></div>
+  <div class="modal-card plugin-manager-modal-card" role="dialog" aria-modal="true" aria-labelledby="plugin-manager-title">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">扩展能力</p>
+        <h3 id="plugin-manager-title">插件</h3>
+        <p class="panel-copy">查看插件权限和运行状态，并在不重启应用的情况下启用、停用或刷新。</p>
+      </div>
+      <button id="close-plugin-manager-button" type="button" class="soft-button">关闭</button>
+    </div>
+    <div class="modal-scroll">
+      <div class="plugin-manager-toolbar">
+        <p>API v1 插件在应用进程内运行，只安装你信任的第三方插件。</p>
+        <button id="refresh-plugins-button" type="button" class="soft-button">刷新插件</button>
+      </div>
+      <p id="plugin-manager-status" class="card-note"></p>
+      <div id="plugin-manager-list" class="plugin-manager-list"></div>
     </div>
   </div>
 </div>

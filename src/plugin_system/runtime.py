@@ -174,6 +174,7 @@ class PluginManifest:
 class _PluginRecord:
     manifest: PluginManifest
     root: Path
+    source: str = "third-party"
     instance: Any = None
     module: ModuleType | None = None
     module_prefix: str = ""
@@ -240,6 +241,11 @@ class PluginRegistry:
                         discovered[manifest.id] = _PluginRecord(
                             manifest=manifest,
                             root=manifest_path.parent,
+                            source=(
+                                "official"
+                                if base == self._roots[0]
+                                else "third-party"
+                            ),
                         )
                     except PluginError:
                         continue
@@ -376,4 +382,5 @@ class PluginRegistry:
             "enabled": record.enabled,
             "status": "enabled" if record.enabled else ("error" if record.error else "disabled"),
             "error": record.error,
+            "source": record.source,
         }

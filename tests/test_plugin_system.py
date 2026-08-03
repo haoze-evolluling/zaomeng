@@ -66,6 +66,20 @@ class PluginSystemTests(unittest.TestCase):
         build_script = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('include("plugins/**")', build_script)
 
+    def test_app_surfaces_plugin_management_entries(self):
+        settings_home = Path(
+            "android/app/src/main/java/top/wkbin/zaomeng/feature/settings/SettingsHomeScreen.kt"
+        ).read_text(encoding="utf-8")
+        web_modal = Path("src/web/static/fragments/settings-modal.html").read_text(
+            encoding="utf-8"
+        )
+        web_bootstrap = Path("src/web/static/js/bootstrap.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('title = "插件"', settings_home)
+        self.assertIn('id="plugin-manager-modal"', web_modal)
+        self.assertIn("/web/js/plugin-manager.js", web_bootstrap)
+
     def test_plugin_management_routes_are_registered(self):
         from src.web.app import create_app
         from src.web.workflow import WebRunService
@@ -102,6 +116,7 @@ class PluginSystemTests(unittest.TestCase):
             )
 
             self.assertTrue(registry.list_plugins()[0]["enabled"])
+            self.assertEqual(registry.list_plugins()[0]["source"], "official")
             self.assertEqual(
                 registry.invoke_chat_action(
                     "com.example.demo", "run", {"run_id": "run-1"}

@@ -6,7 +6,7 @@
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }
 
-  const version = "2026072306";
+  const version = "20260803075123";
   window.__ZAOMENG_WEB_UI_VERSION__ = version;
   const rootFragments = [
     { id: "header-root", url: `/web/fragments/header.html?v=${version}` },
@@ -62,6 +62,7 @@
     `/web/js/dialogue-state.js?v=${version}`,
     `/web/js/dialogue.js?v=${version}`,
     `/web/js/webui-api.js?v=${version}`,
+    `/web/js/plugin-manager.js?v=${version}`,
     `/web/js/main.js?v=${version}`,
     `/web/js/scene-card-vue-island.js?v=${version}`,
     `/web/js/self-card-vue-island.js?v=${version}`,

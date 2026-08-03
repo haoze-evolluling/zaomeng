@@ -28,6 +28,7 @@ import top.wkbin.zaomeng.feature.storyrecap.StoryRecapViewModel
 import top.wkbin.zaomeng.feature.settings.SettingsViewModel
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
 import top.wkbin.zaomeng.feature.settings.ModelProfilesViewModel
+import top.wkbin.zaomeng.feature.settings.PluginsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -60,6 +61,7 @@ val appModule = module {
     viewModel { BookshelfViewModel(get(), androidContext()) }
     viewModel { SettingsViewModel(get(), androidContext()) }
     viewModel { ModelProfilesViewModel(get()) }
+    viewModel { PluginsViewModel(get()) }
     viewModel { parameters -> ModelProfileEditorViewModel(get(), parameters.get()) }
     viewModel { ImportBookViewModel(get(), androidContext()) }
     viewModel { OnlineLibraryViewModel(get(), get()) }

@@ -47,6 +47,8 @@ import top.wkbin.zaomeng.feature.settings.ModelSettingsScreen
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorScreen
 import top.wkbin.zaomeng.feature.settings.ModelProfileEditorViewModel
 import top.wkbin.zaomeng.feature.settings.ModelProfilesViewModel
+import top.wkbin.zaomeng.feature.settings.PluginsScreen
+import top.wkbin.zaomeng.feature.settings.PluginsViewModel
 import top.wkbin.zaomeng.feature.settings.SettingsViewModel
 import top.wkbin.zaomeng.feature.settings.AppearanceSettingsScreen
 import top.wkbin.zaomeng.feature.settings.ChatDisplaySettingsScreen
@@ -175,6 +177,7 @@ fun ZaomengApp(
                 onBack = navController::navigateUp,
                 onOpenModelSettings = { navController.navigate(ModelConfigurationDestination) },
                 onOpenChatDisplay = { navController.navigate(ChatDisplaySettingsDestination) },
+                onOpenPlugins = { navController.navigate(PluginsDestination) },
                 onOpenAppearance = { navController.navigate(AppearanceSettingsDestination) },
                 onOpenStartupRecovery = { navController.navigate(StartupRecoverySettingsDestination) },
                 onOpenAppSupport = { navController.navigate(AppSupportSettingsDestination) },
@@ -202,6 +205,11 @@ fun ZaomengApp(
 
         composable<ChatDisplaySettingsDestination> {
             ChatDisplaySettingsScreen(onBack = navController::navigateUp)
+        }
+
+        composable<PluginsDestination> {
+            val viewModel: PluginsViewModel = koinViewModel()
+            PluginsScreen(viewModel = viewModel, onBack = navController::navigateUp)
         }
 
         composable<AppearanceSettingsDestination> {

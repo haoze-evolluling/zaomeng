@@ -98,6 +98,12 @@
         }
       }
 
+      function openPlugins() {
+        if (typeof window.openPluginManagerModal === "function") {
+          window.openPluginManagerModal();
+        }
+      }
+
       async function submit() {
         state.saving = true;
         state.status = "正在把故事声源接进来...";
@@ -127,6 +133,7 @@
         maxTokensHint,
         maxTokensPlaceholder,
         providers: PROVIDERS,
+        openPlugins,
         state,
         submit,
       };
@@ -177,6 +184,7 @@
         </section>
 
         <div class="card-actions">
+          <button type="button" class="soft-button" :disabled="state.saving" @click="openPlugins">管理插件</button>
           <button type="button" class="soft-button" :disabled="state.saving" @click="close">稍后再说</button>
           <button type="submit" class="primary-button" :disabled="state.saving">{{ state.saving ? '保存中...' : '保存' }}</button>
         </div>

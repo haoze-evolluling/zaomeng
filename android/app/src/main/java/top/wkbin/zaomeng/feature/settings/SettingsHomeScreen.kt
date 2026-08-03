@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Chat
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SupportAgent
@@ -46,6 +47,7 @@ fun SettingsHomeScreen(
     onBack: () -> Unit,
     onOpenModelSettings: () -> Unit,
     onOpenChatDisplay: () -> Unit,
+    onOpenPlugins: () -> Unit,
     onOpenAppearance: () -> Unit,
     onOpenStartupRecovery: () -> Unit,
     onOpenAppSupport: () -> Unit,
@@ -86,6 +88,13 @@ fun SettingsHomeScreen(
                         subtitle = "调整消息字号和对话显示密度。",
                         icon = Icons.Outlined.Chat,
                         onClick = onOpenChatDisplay,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsHomeRow(
+                        title = "插件",
+                        subtitle = "管理聊天扩展、权限与运行状态。",
+                        icon = Icons.Outlined.Extension,
+                        onClick = onOpenPlugins,
                     )
                 }
             }

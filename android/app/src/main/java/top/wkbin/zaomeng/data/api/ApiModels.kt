@@ -64,6 +64,40 @@ data class ModelConnectionTestDto(
 )
 
 @Serializable
+data class PluginsResponse(
+    val items: List<PluginDto> = emptyList(),
+)
+
+@Serializable
+data class PluginDto(
+    val id: String = "",
+    val name: String = "",
+    val version: String = "",
+    @SerialName("apiVersion") val apiVersion: String = "",
+    val description: String = "",
+    val permissions: List<String> = emptyList(),
+    val contributes: PluginContributionsDto = PluginContributionsDto(),
+    @SerialName("defaultEnabled") val defaultEnabled: Boolean = false,
+    val enabled: Boolean = false,
+    val status: String = "disabled",
+    val error: String = "",
+    val source: String = "third-party",
+)
+
+@Serializable
+data class PluginContributionsDto(
+    @SerialName("chatActions") val chatActions: List<PluginChatActionDto> = emptyList(),
+)
+
+@Serializable
+data class PluginChatActionDto(
+    val id: String = "",
+    val title: String = "",
+    val placement: String = "composer",
+    val icon: String = "",
+)
+
+@Serializable
 data class RunsResponse(val items: List<RunManifestDto> = emptyList())
 
 @Serializable

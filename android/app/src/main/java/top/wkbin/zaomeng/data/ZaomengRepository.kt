@@ -39,6 +39,7 @@ import top.wkbin.zaomeng.data.api.SamplingPlanDto
 import top.wkbin.zaomeng.data.api.PersonaQualityReportDto
 import top.wkbin.zaomeng.data.api.PersonaAvatarDto
 import top.wkbin.zaomeng.data.api.PersonaReviewDto
+import top.wkbin.zaomeng.data.api.PluginDto
 import top.wkbin.zaomeng.data.api.RelationDetailsDto
 import top.wkbin.zaomeng.data.api.RelationItemDto
 import top.wkbin.zaomeng.data.api.ReusableCardDto
@@ -122,6 +123,22 @@ class ZaomengRepository(
         backend.requireApi().deleteModelProfile(profileId).also {
             modelApiKeyStore.deleteForProfile(profileId)
         }
+    }
+
+    suspend fun listPlugins(): List<PluginDto> = request {
+        backend.requireApi().listPlugins().items
+    }
+
+    suspend fun refreshPlugins(): List<PluginDto> = request {
+        backend.requireApi().refreshPlugins().items
+    }
+
+    suspend fun enablePlugin(pluginId: String): PluginDto = request {
+        backend.requireApi().enablePlugin(pluginId)
+    }
+
+    suspend fun disablePlugin(pluginId: String): PluginDto = request {
+        backend.requireApi().disablePlugin(pluginId)
     }
 
     suspend fun exportDiagnostics(destination: OutputStream): Long = request {

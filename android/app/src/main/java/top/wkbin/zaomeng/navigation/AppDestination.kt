@@ -27,6 +27,9 @@ data class ModelProfileEditorDestination(val profileId: String = "")
 data object ChatDisplaySettingsDestination
 
 @Serializable
+data object PluginsDestination
+
+@Serializable
 data object AppearanceSettingsDestination
 
 @Serializable
