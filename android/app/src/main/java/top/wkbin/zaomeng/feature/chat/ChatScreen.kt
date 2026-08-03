@@ -68,6 +68,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SearchBar
+import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -475,16 +477,25 @@ private fun ChatTopBar(
     TopAppBar(
         title = {
             if (searchOpen) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(searchFocusRequester),
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    placeholder = { Text("搜索台词、动作或人物") },
-                    singleLine = true,
-                )
+                SearchBar(
+                    inputField = {
+                        SearchBarDefaults.InputField(
+                            query = searchQuery,
+                            onQueryChange = onSearchQueryChange,
+                            onSearch = {},
+                            expanded = false,
+                            onExpandedChange = {},
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(searchFocusRequester),
+                            placeholder = { Text("搜索台词、动作或人物") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        )
+                    },
+                    expanded = false,
+                    onExpandedChange = {},
+                    modifier = Modifier.fillMaxWidth(),
+                ) {}
             } else Column {
                 Text(
                     text = session?.participants?.joinToString("、")?.ifBlank { "人物会话" } ?: "人物会话",
@@ -1706,25 +1717,18 @@ private fun ChatComposer(
                                 val busyKey = "enhancer:${enhancer.stateKey}"
                                 DropdownMenuItem(
                                     text = {
-                                        Column {
-                                            Text(
-                                                if (state.toolBusy == busyKey) {
-                                                    "${enhancer.title} · 保存中…"
-                                                } else {
-                                                    enhancer.title
-                                                },
-                                            )
-                                            Text(
-                                                "${enhancer.pluginName} · 当前聊天${if (active) "已开启" else "已关闭"}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
+                                        Text(
+                                            if (state.toolBusy == busyKey) {
+                                                "${enhancer.title} · 保存中…"
+                                            } else {
+                                                enhancer.title
+                                            },
+                                        )
                                     },
                                     leadingIcon = {
                                         Icon(
                                             if (active) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = null,
+                                            contentDescription = if (active) "已开启" else "已关闭",
                                         )
                                     },
                                     enabled = state.canUseTools,
@@ -1738,16 +1742,9 @@ private fun ChatComposer(
                                 val busyKey = "plugin:${action.pluginId}:${action.actionId}"
                                 DropdownMenuItem(
                                     text = {
-                                        Column {
-                                            Text(
-                                                if (state.toolBusy == busyKey) "${action.title} · 运行中…" else action.title,
-                                            )
-                                            Text(
-                                                action.pluginName,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
+                                        Text(
+                                            if (state.toolBusy == busyKey) "${action.title} · 运行中…" else action.title,
+                                        )
                                     },
                                     leadingIcon = {
                                         Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
