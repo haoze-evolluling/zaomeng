@@ -1,6 +1,6 @@
 # 造梦插件开发指南
 
-本指南面向插件 API v1。可以直接参考首个官方插件 [`plugins/ai-association`](../plugins/ai-association)。
+本指南面向插件 API v1。可以直接参考首个官方插件 [`src/builtin_plugins/ai_association`](../src/builtin_plugins/ai_association)。
 
 ## 创建插件
 

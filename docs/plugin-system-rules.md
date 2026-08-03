@@ -15,7 +15,7 @@
 
 宿主按顺序扫描两个位置：
 
-- 官方插件：项目根目录 `plugins/<plugin-directory>/plugin.json`
+- 官方插件：应用包内 `src/builtin_plugins/<plugin-directory>/plugin.json`
 - 用户插件：运行数据目录 `plugins/<plugin-directory>/plugin.json`
 
 每个插件占用一个独立目录。一个插件必须包含 `plugin.json` 和清单所指向的 Python 入口文件。插件 ID 在所有发现目录中必须唯一；重复 ID 不参与加载。

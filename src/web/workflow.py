@@ -247,7 +247,10 @@ class WebRunService(
         from src.web.plugin_host import ZaomengPluginHost
 
         self.plugins = PluginRegistry(
-            [self.project_root / "plugins", self.storage_root / "plugins"],
+            [
+                Path(__file__).resolve().parents[1] / "builtin_plugins",
+                self.storage_root / "plugins",
+            ],
             host_factory=lambda plugin_id, permissions: ZaomengPluginHost(
                 self, plugin_id, permissions
             ),

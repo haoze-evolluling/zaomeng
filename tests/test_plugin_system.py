@@ -62,9 +62,27 @@ def create_plugin():
 
 
 class PluginSystemTests(unittest.TestCase):
-    def test_android_bundle_includes_official_plugins(self):
+    def test_android_bundle_extracts_builtin_plugins_with_src_package(self):
         build_script = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
-        self.assertIn('include("plugins/**")', build_script)
+        self.assertIn('include("src/**")', build_script)
+        self.assertIn('extractPackages("src")', build_script)
+        self.assertTrue(
+            Path("src/builtin_plugins/ai_association/plugin.json").is_file()
+        )
+
+    def test_web_service_discovers_packaged_builtin_plugin(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = WebRunService(tmp).plugins.list_plugins()
+
+        builtin = next(
+            plugin
+            for plugin in plugins
+            if plugin["id"] == "com.zaomeng.ai-association"
+        )
+        self.assertEqual(builtin["source"], "official")
+        self.assertTrue(builtin["enabled"])
 
     def test_app_surfaces_plugin_management_entries(self):
         settings_home = Path(

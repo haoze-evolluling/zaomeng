@@ -19,7 +19,6 @@ val signingProperties = Properties().apply {
 val syncSharedPythonSources by tasks.registering(Sync::class) {
     from(repositoryRoot) {
         include("src/**")
-        include("plugins/**")
         include("rules/**")
         include("zaomeng-skill/**")
         exclude("**/__pycache__/**")
