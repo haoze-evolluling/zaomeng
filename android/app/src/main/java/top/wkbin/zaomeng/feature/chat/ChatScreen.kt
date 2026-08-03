@@ -75,6 +75,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -549,7 +550,10 @@ private fun ChatSearchTopBar(
         },
         expanded = false,
         onExpandedChange = {},
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .fillMaxWidth(),
+        windowInsets = TopAppBarDefaults.windowInsets,
     ) {}
 }
 
