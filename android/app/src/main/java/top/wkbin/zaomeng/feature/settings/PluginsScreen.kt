@@ -189,6 +189,18 @@ private fun PluginCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (plugin.contributes.generationEnhancers.isNotEmpty()) {
+                Text(
+                    "聊天生成增强：${plugin.contributes.generationEnhancers.joinToString("、") { it.title }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "具体开关在各聊天的“插件”菜单中设置。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (plugin.permissions.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("权限", style = MaterialTheme.typography.labelMedium)
@@ -228,6 +240,7 @@ private fun StatusCard(message: String, error: Boolean) {
 private fun String.permissionLabel(): String = when (this) {
     "chat.context.read" -> "读取聊天上下文"
     "chat.draft.write" -> "写入聊天草稿"
+    "generation.enhance" -> "增强回复生成"
     "model.invoke" -> "调用模型"
     "storage.read" -> "读取插件存储"
     "storage.write" -> "写入插件存储"

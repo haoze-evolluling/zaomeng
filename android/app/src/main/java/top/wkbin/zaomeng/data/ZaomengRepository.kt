@@ -40,6 +40,8 @@ import top.wkbin.zaomeng.data.api.PersonaQualityReportDto
 import top.wkbin.zaomeng.data.api.PersonaAvatarDto
 import top.wkbin.zaomeng.data.api.PersonaReviewDto
 import top.wkbin.zaomeng.data.api.PluginDto
+import top.wkbin.zaomeng.data.api.PluginChatActionRequest
+import top.wkbin.zaomeng.data.api.PluginChatActionResponse
 import top.wkbin.zaomeng.data.api.RelationDetailsDto
 import top.wkbin.zaomeng.data.api.RelationItemDto
 import top.wkbin.zaomeng.data.api.ReusableCardDto
@@ -49,6 +51,7 @@ import top.wkbin.zaomeng.data.api.RedistillSuggestionsDto
 import top.wkbin.zaomeng.data.api.ReorderChapterRequest
 import top.wkbin.zaomeng.data.api.RunManifestDto
 import top.wkbin.zaomeng.data.api.SaveModelSettingsRequest
+import top.wkbin.zaomeng.data.api.SetGenerationEnhancerStateRequest
 import top.wkbin.zaomeng.data.api.TestModelSettingsRequest
 import top.wkbin.zaomeng.data.api.SaveChapterRequest
 import top.wkbin.zaomeng.data.api.SearchResultDto
@@ -139,6 +142,43 @@ class ZaomengRepository(
 
     suspend fun disablePlugin(pluginId: String): PluginDto = request {
         backend.requireApi().disablePlugin(pluginId)
+    }
+
+    suspend fun invokePluginChatAction(
+        runId: String,
+        sessionId: String,
+        pluginId: String,
+        actionId: String,
+        seedText: String = "",
+        direction: String = "",
+    ): PluginChatActionResponse = request {
+        val result = backend.requireApi().invokePluginChatAction(
+            runId,
+            sessionId,
+            pluginId,
+            actionId,
+            PluginChatActionRequest(seedText = seedText, direction = direction),
+        )
+        if (result.suggestion.isBlank() && result.suggestions.none { it.suggestion.isNotBlank() }) {
+            throw ApiRequestException("插件没有返回可写入输入框的内容。")
+        }
+        result
+    }
+
+    suspend fun setGenerationEnhancerState(
+        runId: String,
+        sessionId: String,
+        pluginId: String,
+        enhancerId: String,
+        enabled: Boolean,
+    ): DialogueSessionDto = request {
+        backend.requireApi().setGenerationEnhancerState(
+            runId,
+            sessionId,
+            pluginId,
+            enhancerId,
+            SetGenerationEnhancerStateRequest(enabled),
+        )
     }
 
     suspend fun exportDiagnostics(destination: OutputStream): Long = request {

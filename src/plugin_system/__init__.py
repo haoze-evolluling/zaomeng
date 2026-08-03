@@ -1,6 +1,7 @@
 """Public API for the Zaomeng plugin system."""
 
 from .runtime import (
+    GenerationEnhancer,
     PLUGIN_API_VERSION,
     PluginError,
     PluginHost,
@@ -10,6 +11,7 @@ from .runtime import (
 )
 
 __all__ = [
+    "GenerationEnhancer",
     "PLUGIN_API_VERSION",
     "PluginError",
     "PluginHost",

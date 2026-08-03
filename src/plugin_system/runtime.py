@@ -16,6 +16,7 @@ _ACTION_ID = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 _KNOWN_PERMISSIONS = {
     "chat.context.read",
     "chat.draft.write",
+    "generation.enhance",
     "model.invoke",
     "storage.read",
     "storage.write",
@@ -81,6 +82,42 @@ class ChatAction:
 
 
 @dataclass(frozen=True)
+class GenerationEnhancer:
+    id: str
+    title: str
+    description: str = ""
+    icon: str = ""
+    default_active: bool = False
+
+    @classmethod
+    def parse(cls, payload: Any) -> "GenerationEnhancer":
+        if not isinstance(payload, dict):
+            raise PluginError("generationEnhancers entries must be JSON objects.")
+        enhancer_id = str(payload.get("id", "")).strip()
+        title = str(payload.get("title", "")).strip()
+        if not _ACTION_ID.fullmatch(enhancer_id):
+            raise PluginError(f"Invalid generation enhancer id: {enhancer_id!r}.")
+        if not title or len(title) > 80:
+            raise PluginError("A generation enhancer title must contain 1-80 characters.")
+        return cls(
+            id=enhancer_id,
+            title=title,
+            description=str(payload.get("description", "")).strip()[:240],
+            icon=str(payload.get("icon", "")).strip()[:40],
+            default_active=bool(payload.get("defaultActive", False)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "icon": self.icon,
+            "defaultActive": self.default_active,
+        }
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     id: str
     name: str
@@ -90,6 +127,7 @@ class PluginManifest:
     description: str
     permissions: tuple[str, ...]
     chat_actions: tuple[ChatAction, ...]
+    generation_enhancers: tuple[GenerationEnhancer, ...]
     default_enabled: bool
 
     @classmethod
@@ -143,6 +181,17 @@ class PluginManifest:
             raise PluginError(
                 "Plugins contributing chatActions must declare chat.context.read and chat.draft.write."
             )
+        raw_enhancers = contributes.get("generationEnhancers", []) or []
+        if not isinstance(raw_enhancers, list):
+            raise PluginError("contributes.generationEnhancers must be a JSON array.")
+        enhancers = tuple(GenerationEnhancer.parse(item) for item in raw_enhancers)
+        enhancer_ids = [item.id for item in enhancers]
+        if len(enhancer_ids) != len(set(enhancer_ids)):
+            raise PluginError("Generation enhancer ids must be unique within a plugin.")
+        if enhancers and "generation.enhance" not in permissions:
+            raise PluginError(
+                "Plugins contributing generationEnhancers must declare generation.enhance."
+            )
         return cls(
             id=plugin_id,
             name=name,
@@ -152,6 +201,7 @@ class PluginManifest:
             description=str(raw.get("description", "")).strip()[:500],
             permissions=permissions,
             chat_actions=actions,
+            generation_enhancers=enhancers,
             default_enabled=bool(raw.get("defaultEnabled", False)),
         )
 
@@ -164,7 +214,10 @@ class PluginManifest:
             "description": self.description,
             "permissions": list(self.permissions),
             "contributes": {
-                "chatActions": [item.to_dict() for item in self.chat_actions]
+                "chatActions": [item.to_dict() for item in self.chat_actions],
+                "generationEnhancers": [
+                    item.to_dict() for item in self.generation_enhancers
+                ],
             },
             "defaultEnabled": self.default_enabled,
         }
@@ -369,6 +422,50 @@ class PluginRegistry:
                 self._condition.notify_all()
         if not isinstance(result, dict):
             raise PluginError("Chat action result must be a JSON object.")
+        return result
+
+    def require_generation_enhancer(
+        self, plugin_id: str, enhancer_id: str
+    ) -> dict[str, Any]:
+        with self._lock:
+            record = self._require_record(plugin_id)
+            if not record.enabled or record.instance is None:
+                raise PluginError(f"Plugin is disabled: {plugin_id!r}.")
+            enhancer = next(
+                (
+                    item
+                    for item in record.manifest.generation_enhancers
+                    if item.id == enhancer_id
+                ),
+                None,
+            )
+            if enhancer is None:
+                raise PluginError(
+                    f"Generation enhancer not found: {plugin_id}/{enhancer_id}."
+                )
+            return enhancer.to_dict()
+
+    def invoke_generation_enhancer(
+        self, plugin_id: str, enhancer_id: str, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.require_generation_enhancer(plugin_id, enhancer_id)
+        with self._lock:
+            record = self._require_record(plugin_id)
+            instance = record.instance
+            record.active_calls += 1
+        try:
+            method = getattr(instance, "enhance_generation", None)
+            if not callable(method):
+                raise PluginError(
+                    f"Plugin does not implement enhance_generation: {plugin_id!r}."
+                )
+            result = method(enhancer_id, dict(request))
+        finally:
+            with self._lock:
+                record.active_calls -= 1
+                self._condition.notify_all()
+        if not isinstance(result, dict):
+            raise PluginError("Generation enhancer result must be a JSON object.")
         return result
 
     def list_plugins(self) -> list[dict[str, Any]]:

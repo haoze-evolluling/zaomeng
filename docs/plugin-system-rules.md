@@ -55,6 +55,7 @@
 - `entry` 必须是插件目录内的相对 `.py` 路径，禁止绝对路径和 `..`。
 - `chatActions[].id` 在插件内唯一；完整动作名是 `<plugin-id>/<action-id>`。
 - `placement` 可取 `composer`、`message` 或 `tools`。
+- `composer` 表示动作出现在聊天页的独立“插件”分类中；插件不得直接占用输入框或发送按钮区域。
 - 提供聊天动作时必须声明 `chat.context.read` 和 `chat.draft.write`。
 
 ## 4. API v1 权限
@@ -63,7 +64,8 @@
 |---|---|---|
 | `chat.context.read` | 读取宿主裁剪后的当前聊天上下文 | 已实现 |
 | `chat.draft.write` | 返回可写入输入框的动作结果 | 已实现并作为聊天动作必需声明 |
-| `model.invoke` | 通过宿主代理调用允许的模型能力 | 已实现；当前仅开放 `dialogue_suggestion` |
+| `generation.enhance` | 在回复生成前返回受限的生成选项 | 已实现；用于有状态生成增强贡献点 |
+| `model.invoke` | 通过宿主代理调用允许的模型能力 | 已实现；当前开放 `dialogue_suggestion`、`dialogue_reply_variants` |
 | `storage.read` | 读取插件名字空间存储 | 已保留，尚未开放宿主方法 |
 | `storage.write` | 写入插件名字空间存储 | 已保留，尚未开放宿主方法 |
 | `network.access` | 访问清单声明的外部域名 | 已保留；v1 不提供网络代理 |
@@ -81,6 +83,8 @@
 5. 再次 `refresh`：已启用插件会以新模块实例重新加载，因而可以应用代码更新而无需重启 Web 服务。
 
 启用状态保存在运行数据目录的 `plugin-state.json`。首次发现时使用 `defaultEnabled`；用户显式启停后，以保存状态为准。
+
+`generationEnhancers` 另有聊天级状态。插件管理中的启用/停用只决定贡献点是否可用；聊天中的开关按 `run_id + session_id + plugin_id + enhancer_id` 保存。停用插件会立即让所有聊天中的增强失效，但不会删除各聊天原有选择，重新启用后可以恢复。
 
 ## 6. 聊天动作契约
 
@@ -104,7 +108,34 @@ def execute_chat_action(self, action_id: str, request: dict) -> dict:
 {"suggestion": "一段可以直接发送的文本"}
 ```
 
+需要用户选择的动作可以返回候选列表：
+
+```json
+{"suggestions": [{"label": "克制回应", "suggestion": "一段可以直接发送的文本"}]}
+```
+
 插件不得在生成草稿的过程中直接修改会话。若将来需要写入会话，必须使用单独的宿主命令和对应写权限。
+
+## 6.1 生成增强契约
+
+清单可以声明有状态生成增强：
+
+```json
+{
+  "permissions": ["generation.enhance"],
+  "contributes": {
+    "generationEnhancers": [
+      {
+        "id": "inner-thoughts",
+        "title": "角色读心",
+        "defaultActive": false
+      }
+    ]
+  }
+}
+```
+
+插件实例必须实现 `enhance_generation(enhancer_id, request)` 并返回 JSON 对象。宿主负责保存聊天级开关、合并允许的生成选项，并在插件失败时退回普通生成。
 
 ## 7. 错误、并发与兼容性
 

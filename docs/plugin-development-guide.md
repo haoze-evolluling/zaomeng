@@ -84,6 +84,8 @@ return {"suggestion": suggestion}
 
 ## 运行时管理
 
+聊天页会把已启用插件声明的 `chatActions` 统一显示在独立“插件”菜单中。`placement: "composer"` 不代表插件可以向输入框或发送按钮区域注入任意控件。
+
 Web API：
 
 ```text
@@ -91,6 +93,8 @@ GET  /api/web/plugins
 POST /api/web/plugins/refresh
 POST /api/web/plugins/{plugin_id}/enable
 POST /api/web/plugins/{plugin_id}/disable
+POST /api/web/runs/{run_id}/dialogue/sessions/{session_id}/plugins/{plugin_id}/actions/{action_id}
+PUT  /api/web/runs/{run_id}/dialogue/sessions/{session_id}/plugins/{plugin_id}/enhancers/{enhancer_id}/state
 ```
 
 典型开发循环：

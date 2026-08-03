@@ -87,6 +87,8 @@ data class PluginDto(
 @Serializable
 data class PluginContributionsDto(
     @SerialName("chatActions") val chatActions: List<PluginChatActionDto> = emptyList(),
+    @SerialName("generationEnhancers")
+    val generationEnhancers: List<PluginGenerationEnhancerDto> = emptyList(),
 )
 
 @Serializable
@@ -96,6 +98,18 @@ data class PluginChatActionDto(
     val placement: String = "composer",
     val icon: String = "",
 )
+
+@Serializable
+data class PluginGenerationEnhancerDto(
+    val id: String = "",
+    val title: String = "",
+    val description: String = "",
+    val icon: String = "",
+    @SerialName("defaultActive") val defaultActive: Boolean = false,
+)
+
+@Serializable
+data class SetGenerationEnhancerStateRequest(val enabled: Boolean)
 
 @Serializable
 data class RunsResponse(val items: List<RunManifestDto> = emptyList())
@@ -532,6 +546,8 @@ data class DialogueSessionDto(
     @SerialName("event_signals") val eventSignals: JsonObject = JsonObject(emptyMap()),
     @SerialName("generation_cache_stats") val generationCacheStats: JsonObject = JsonObject(emptyMap()),
     @SerialName("latest_context_usage") val latestContextUsage: JsonObject = JsonObject(emptyMap()),
+    @SerialName("plugin_enhancer_states")
+    val pluginEnhancerStates: Map<String, Boolean> = emptyMap(),
     @SerialName("story_recap") val storyRecap: StoryRecapDto? = null,
 )
 
@@ -666,6 +682,24 @@ data class DialogueReplyRequest(
 data class DialogueSuggestionRequest(
     @SerialName("seed_text") val seedText: String = "",
     val direction: String = "",
+)
+
+@Serializable
+data class PluginChatActionRequest(
+    @SerialName("seed_text") val seedText: String = "",
+    val direction: String = "",
+)
+
+@Serializable
+data class PluginSuggestionOptionDto(
+    val label: String = "",
+    val suggestion: String = "",
+)
+
+@Serializable
+data class PluginChatActionResponse(
+    val suggestion: String = "",
+    val suggestions: List<PluginSuggestionOptionDto> = emptyList(),
 )
 
 @Serializable

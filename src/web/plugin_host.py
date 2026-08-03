@@ -38,11 +38,22 @@ class ZaomengPluginHost:
 
     def invoke_model(self, capability: str, payload: dict[str, Any]) -> Any:
         self._require("model.invoke")
-        if capability != "dialogue_suggestion":
-            raise PluginPermissionError(
-                f"Plugin model capability is not exposed by API v1: {capability!r}."
-            )
         run_id = str(payload.get("run_id", "")).strip()
         if not run_id:
-            raise ValueError("Dialogue suggestion payload has no run_id.")
-        return self._service._generate_dialogue_suggestion(run_id, payload)
+            raise ValueError("Plugin model payload has no run_id.")
+        if capability == "dialogue_suggestion":
+            return self._service._generate_dialogue_suggestion(run_id, payload)
+        if capability == "dialogue_reply_variants":
+            self._require("chat.context.read")
+            session_id = str(payload.get("session_id", "")).strip()
+            if not session_id:
+                raise ValueError("Reply variants payload has no session_id.")
+            option_count = max(2, min(4, int(payload.get("option_count", 3) or 3)))
+            return self._service.associate_dialogue_turn(
+                run_id,
+                session_id=session_id,
+                option_count=option_count,
+            )
+        raise PluginPermissionError(
+            f"Plugin model capability is not exposed by API v1: {capability!r}."
+        )

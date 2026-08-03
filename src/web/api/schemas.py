@@ -291,6 +291,15 @@ class SuggestDialogueTurnRequest(BaseModel):
     direction: str = Field(default="", max_length=240)
 
 
+class InvokePluginChatActionRequest(BaseModel):
+    seed_text: str = Field(default="")
+    direction: str = Field(default="", max_length=240)
+
+
+class SetGenerationEnhancerStateRequest(BaseModel):
+    enabled: bool
+
+
 class DialogueAssociationsRequest(BaseModel):
     option_count: int = Field(default=3, ge=2, le=4)
 

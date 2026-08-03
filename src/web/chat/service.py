@@ -558,6 +558,25 @@ class DialogueService:
         payload = self._read_json(self._session_file(run_id, session_id))
         return self._serialize_session(run_id, payload)
 
+    @with_session_lock
+    def set_plugin_enhancer_state(
+        self,
+        run_id: str,
+        session_id: str,
+        enhancer_key: str,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        normalized_key = str(enhancer_key or "").strip()
+        if not normalized_key or len(normalized_key) > 200:
+            raise ValueError("Invalid generation enhancer state key.")
+        session = self._read_json(self._session_file(run_id, session_id))
+        states = dict(session.get("plugin_enhancer_states", {}) or {})
+        states[normalized_key] = bool(enabled)
+        session["plugin_enhancer_states"] = states
+        session["updated_at"] = _utc_now()
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
     def search_session_transcript(
         self,
         run_id: str,

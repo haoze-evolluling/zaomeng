@@ -49,6 +49,24 @@ interface ZaomengApi {
     @POST("api/web/plugins/{pluginId}/disable")
     suspend fun disablePlugin(@Path("pluginId") pluginId: String): PluginDto
 
+    @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/plugins/{pluginId}/actions/{actionId}")
+    suspend fun invokePluginChatAction(
+        @Path("runId") runId: String,
+        @Path("sessionId") sessionId: String,
+        @Path("pluginId") pluginId: String,
+        @Path("actionId") actionId: String,
+        @Body request: PluginChatActionRequest,
+    ): PluginChatActionResponse
+
+    @PUT("api/web/runs/{runId}/dialogue/sessions/{sessionId}/plugins/{pluginId}/enhancers/{enhancerId}/state")
+    suspend fun setGenerationEnhancerState(
+        @Path("runId") runId: String,
+        @Path("sessionId") sessionId: String,
+        @Path("pluginId") pluginId: String,
+        @Path("enhancerId") enhancerId: String,
+        @Body request: SetGenerationEnhancerStateRequest,
+    ): DialogueSessionDto
+
     @Streaming
     @GET("api/web/diagnostics/export")
     suspend fun exportDiagnostics(): Response<ResponseBody>

@@ -6,6 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from src.plugin_system import PluginError
 from src.web.api.deps import get_run_service
+from src.web.api.schemas import (
+    InvokePluginChatActionRequest,
+    SetGenerationEnhancerStateRequest,
+)
 from src.web.workflow import WebRunService
 
 
@@ -45,4 +49,57 @@ def disable_plugin(
     try:
         return run_service.disable_plugin(plugin_id)
     except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}"
+    "/plugins/{plugin_id}/actions/{action_id}"
+)
+def invoke_plugin_chat_action(
+    run_id: str,
+    session_id: str,
+    plugin_id: str,
+    action_id: str,
+    payload: InvokePluginChatActionRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.invoke_plugin_chat_action(
+            plugin_id,
+            action_id,
+            run_id=run_id,
+            session_id=session_id,
+            seed_text=payload.seed_text,
+            direction=payload.direction,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except (PluginError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}"
+    "/plugins/{plugin_id}/enhancers/{enhancer_id}/state"
+)
+def set_generation_enhancer_state(
+    run_id: str,
+    session_id: str,
+    plugin_id: str,
+    enhancer_id: str,
+    payload: SetGenerationEnhancerStateRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.set_generation_enhancer_state(
+            plugin_id,
+            enhancer_id,
+            run_id=run_id,
+            session_id=session_id,
+            enabled=payload.enabled,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except (PluginError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

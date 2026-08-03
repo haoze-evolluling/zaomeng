@@ -375,6 +375,11 @@ class DialogueServiceMixin:
         suppress_transcript_message: bool = False,
         include_inner_thoughts: bool = False,
     ) -> dict[str, Any]:
+        include_inner_thoughts = bool(
+            self.resolve_generation_enhancer_options(run_id, session_id).get(
+                "include_inner_thoughts", False
+            )
+        )
         manifest = self._require_manifest(run_id)
         return self.dialogue.prepare_turn(
             manifest,
@@ -414,6 +419,11 @@ class DialogueServiceMixin:
                     raise ValueError(str(payload.get("message", "Reply generation failed.")))
             raise ValueError("Reply operation ended without a result.")
 
+        include_inner_thoughts = bool(
+            self.resolve_generation_enhancer_options(run_id, session_id).get(
+                "include_inner_thoughts", False
+            )
+        )
         manifest = self._require_manifest(run_id)
 
         def evolve_relations(
@@ -465,6 +475,11 @@ class DialogueServiceMixin:
         operation_id: str,
         emit_deltas: bool = True,
     ):
+        include_inner_thoughts = bool(
+            self.resolve_generation_enhancer_options(run_id, session_id).get(
+                "include_inner_thoughts", False
+            )
+        )
         manifest = self._require_manifest(run_id)
         normalized_kind = str(message_kind or "dialogue").strip().lower() or "dialogue"
         is_plot_push = normalized_kind in {"plot", "plot_push", "advance"}

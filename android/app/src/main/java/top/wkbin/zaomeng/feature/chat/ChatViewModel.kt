@@ -37,6 +37,37 @@ data class ChatToolOption(
     val suggestionDirection: String = "",
 )
 
+data class ChatPluginAction(
+    val pluginId: String,
+    val pluginName: String,
+    val actionId: String,
+    val title: String,
+    val icon: String = "",
+)
+
+data class ChatGenerationEnhancer(
+    val pluginId: String,
+    val pluginName: String,
+    val enhancerId: String,
+    val title: String,
+    val description: String = "",
+    val icon: String = "",
+    val defaultActive: Boolean = false,
+) {
+    val stateKey: String get() = "$pluginId/$enhancerId"
+
+    fun isActive(session: DialogueSessionDto?): Boolean =
+        session?.pluginEnhancerStates?.get(stateKey) ?: defaultActive
+}
+
+private data class LoadedChatPlugins(
+    val actions: List<ChatPluginAction> = emptyList(),
+    val enhancers: List<ChatGenerationEnhancer> = emptyList(),
+)
+
+private const val INNER_THOUGHTS_ENHANCER_KEY =
+    "com.zaomeng.inner-thoughts/inner-thoughts"
+
 data class StreamingReplyPart(
     val index: Int,
     val speaker: String = "",
@@ -81,6 +112,8 @@ data class ChatUiState(
     val session: DialogueSessionDto? = null,
     val avatarBytes: Map<String, ByteArray> = emptyMap(),
     val sceneCards: List<ReusableCardDto> = emptyList(),
+    val pluginActions: List<ChatPluginAction> = emptyList(),
+    val generationEnhancers: List<ChatGenerationEnhancer> = emptyList(),
     val toolOptions: List<ChatToolOption> = emptyList(),
     val toolOptionsTitle: String = "",
     val recommendedSceneCardId: String = "",
@@ -151,6 +184,7 @@ class ChatViewModel(
     val state: StateFlow<ChatUiState> = mutableState.asStateFlow()
 
     private var loadJob: Job? = null
+    private var pluginActionsJob: Job? = null
     private var loadRequestId = 0L
     private var toolJob: Job? = null
     private var nextToolRequestId = 0L
@@ -239,12 +273,19 @@ class ChatViewModel(
             try {
                 val session = repository.getSession(normalizedRunId, normalizedSessionId)
                 val avatars = loadAvatars(normalizedRunId, session)
+                val plugins = loadChatPlugins()
                 updateLoadState(requestId, normalizedRunId, normalizedSessionId) {
                     it.copy(
                         loading = false,
                         refreshing = false,
                         session = session,
                         avatarBytes = avatars,
+                        pluginActions = plugins.actions,
+                        generationEnhancers = plugins.enhancers,
+                        includeInnerThoughts = plugins.enhancers.any { enhancer ->
+                            enhancer.stateKey == INNER_THOUGHTS_ENHANCER_KEY &&
+                                enhancer.isActive(session)
+                        },
                         error = "",
                     )
                 }
@@ -267,6 +308,75 @@ class ChatViewModel(
             runCatching { repository.getPersonaAvatar(runId, character, version) }
                 .getOrNull()?.let { character to it }
         }.toMap()
+    }
+
+    private suspend fun loadChatPlugins(): LoadedChatPlugins {
+        return try {
+            val plugins = repository.listPlugins()
+                .filter { plugin -> plugin.enabled && plugin.status == "enabled" }
+            val actions = plugins.asSequence()
+                .flatMap { plugin ->
+                    plugin.contributes.chatActions.asSequence()
+                        .filter { action -> action.placement == "composer" }
+                        .map { action ->
+                            ChatPluginAction(
+                                pluginId = plugin.id,
+                                pluginName = plugin.name,
+                                actionId = action.id,
+                                title = action.title,
+                                icon = action.icon,
+                            )
+                        }
+                }
+                .filter { action -> action.pluginId.isNotBlank() && action.actionId.isNotBlank() }
+                .toList()
+            val enhancers = plugins.asSequence()
+                .flatMap { plugin ->
+                    plugin.contributes.generationEnhancers.asSequence().map { enhancer ->
+                        ChatGenerationEnhancer(
+                            pluginId = plugin.id,
+                            pluginName = plugin.name,
+                            enhancerId = enhancer.id,
+                            title = enhancer.title,
+                            description = enhancer.description,
+                            icon = enhancer.icon,
+                            defaultActive = enhancer.defaultActive,
+                        )
+                    }
+                }
+                .filter { enhancer ->
+                    enhancer.pluginId.isNotBlank() && enhancer.enhancerId.isNotBlank()
+                }
+                .toList()
+            LoadedChatPlugins(actions = actions, enhancers = enhancers)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            LoadedChatPlugins()
+        }
+    }
+
+    fun refreshPluginActions() {
+        pluginActionsJob?.cancel()
+        pluginActionsJob = viewModelScope.launch {
+            try {
+                val plugins = loadChatPlugins()
+                mutableState.update { current ->
+                    current.copy(
+                        pluginActions = plugins.actions,
+                        generationEnhancers = plugins.enhancers,
+                        includeInnerThoughts = plugins.enhancers.any { enhancer ->
+                            enhancer.stateKey == INNER_THOUGHTS_ENHANCER_KEY &&
+                                enhancer.isActive(current.session)
+                        },
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Plugin availability should not prevent an existing chat from opening.
+            }
+        }
     }
 
     fun refresh() {
@@ -348,15 +458,27 @@ class ChatViewModel(
         mutableState.update { it.copy(messageKind = kind, error = "") }
     }
 
-    fun toggleInnerThoughts() {
+    fun toggleGenerationEnhancer(enhancer: ChatGenerationEnhancer) {
         val current = state.value
-        if (current.sending || current.recovering || current.toolBusy.isNotBlank()) return
-        mutableState.update {
-            it.copy(
-                includeInnerThoughts = !it.includeInnerThoughts,
-                error = "",
-                notice = if (!it.includeInnerThoughts) "读心模式已开启。" else "读心模式已关闭。",
+        if (!current.canUseTools) return
+        val enabled = !enhancer.isActive(current.session)
+        runTool("enhancer:${enhancer.stateKey}") {
+            val session = repository.setGenerationEnhancerState(
+                runId = runId,
+                sessionId = sessionId,
+                pluginId = enhancer.pluginId,
+                enhancerId = enhancer.enhancerId,
+                enabled = enabled,
             )
+            updateState {
+                it.copy(
+                    session = session,
+                    includeInnerThoughts = if (
+                        enhancer.stateKey == INNER_THOUGHTS_ENHANCER_KEY
+                    ) enabled else it.includeInnerThoughts,
+                    notice = "「${enhancer.title}」已${if (enabled) "开启" else "关闭"}，仅对当前聊天生效。",
+                )
+            }
         }
     }
 
@@ -878,6 +1000,42 @@ class ChatViewModel(
     fun suggestReply(direction: String = "") {
         val current = state.value
         requestSuggestedReply(direction, current.messageKind, current.draft)
+    }
+
+    fun invokePluginAction(action: ChatPluginAction) {
+        val current = state.value
+        runTool("plugin:${action.pluginId}:${action.actionId}") {
+            val result = repository.invokePluginChatAction(
+                runId = runId,
+                sessionId = sessionId,
+                pluginId = action.pluginId,
+                actionId = action.actionId,
+                seedText = current.draft,
+            )
+            updateState {
+                val options = result.suggestions
+                    .filter { option -> option.suggestion.isNotBlank() }
+                    .map { option ->
+                        ChatToolOption(
+                            label = option.label.ifBlank { "候选回复" },
+                            value = option.suggestion,
+                            description = option.suggestion,
+                            messageKind = current.messageKind,
+                        )
+                    }
+                if (options.isNotEmpty()) {
+                    it.copy(
+                        toolOptionsTitle = action.title,
+                        toolOptions = options,
+                    )
+                } else {
+                    it.copy(
+                        draft = result.suggestion,
+                        notice = "「${action.title}」已将结果放入输入框。",
+                    )
+                }
+            }
+        }
     }
 
     private fun requestSuggestedReply(

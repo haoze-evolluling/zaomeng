@@ -12,6 +12,7 @@
     return {
       "chat.context.read": "读取聊天上下文",
       "chat.draft.write": "写入聊天草稿",
+      "generation.enhance": "增强回复生成",
       "model.invoke": "调用模型",
       "storage.read": "读取插件存储",
       "storage.write": "写入插件存储",
@@ -71,6 +72,10 @@
       const actions = plugin.contributes?.chatActions || [];
       if (actions.length) {
         card.appendChild(makeText("p", `聊天动作：${actions.map((item) => item.title).filter(Boolean).join("、")}`, "plugin-manager-meta"));
+      }
+      const enhancers = plugin.contributes?.generationEnhancers || [];
+      if (enhancers.length) {
+        card.appendChild(makeText("p", `聊天生成增强：${enhancers.map((item) => item.title).filter(Boolean).join("、")}（在各聊天中开关）`, "plugin-manager-meta"));
       }
       if (Array.isArray(plugin.permissions) && plugin.permissions.length) {
         card.appendChild(makeText("p", `权限：${plugin.permissions.map(permissionLabel).join(" · ")}`, "plugin-manager-meta"));

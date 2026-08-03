@@ -174,7 +174,11 @@ fun ChatScreen(
     }
     DisposableEffect(lifecycleOwner, runId, sessionId) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) viewModel.pauseContinuousObserve()
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.refreshPluginActions()
+                Lifecycle.Event.ON_STOP -> viewModel.pauseContinuousObserve()
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
@@ -280,12 +284,12 @@ fun ChatScreen(
                     avatarBytes = state.avatarBytes,
                     onDraftChange = viewModel::updateDraft,
                     onMessageKindChange = viewModel::selectMessageKind,
-                    onSuggest = viewModel::suggestReply,
+                    onInvokePluginAction = viewModel::invokePluginAction,
                     onAssociations = viewModel::requestAssociations,
                     onOpenDirector = { directorOpen = true },
                     onSend = viewModel::send,
                     onToggleContinuousObserve = viewModel::toggleContinuousObserve,
-                    onToggleInnerThoughts = viewModel::toggleInnerThoughts,
+                    onToggleGenerationEnhancer = viewModel::toggleGenerationEnhancer,
                     onRecover = viewModel::recoverPending,
                     onReconcile = viewModel::reconcileUnknownSend,
                     onRetry = viewModel::retryLastSend,
@@ -1565,12 +1569,12 @@ private fun ChatComposer(
     avatarBytes: Map<String, ByteArray>,
     onDraftChange: (String) -> Unit,
     onMessageKindChange: (String) -> Unit,
-    onSuggest: () -> Unit,
+    onInvokePluginAction: (ChatPluginAction) -> Unit,
     onAssociations: () -> Unit,
     onOpenDirector: () -> Unit,
     onSend: () -> Unit,
     onToggleContinuousObserve: () -> Unit,
-    onToggleInnerThoughts: () -> Unit,
+    onToggleGenerationEnhancer: (ChatGenerationEnhancer) -> Unit,
     onRecover: () -> Unit,
     onReconcile: () -> Unit,
     onRetry: () -> Unit,
@@ -1578,6 +1582,7 @@ private fun ChatComposer(
 ) {
     var mentionsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
     var messageKindMenuOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
+    var pluginsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
     var toolsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
     var draftValue by rememberSaveable(state.sessionId, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.draft))
@@ -1599,7 +1604,8 @@ private fun ChatComposer(
     }
     val inputEnabled = !state.sending && !state.recovering &&
         !state.sendOutcomeUnknown && state.failedOperationId.isBlank()
-    val draftInputEnabled = inputEnabled && state.toolBusy != "suggest"
+    val pluginActionBusy = state.toolBusy.startsWith("plugin:")
+    val draftInputEnabled = inputEnabled && state.toolBusy != "suggest" && !pluginActionBusy
     val mentionColor = MaterialTheme.colorScheme.primary
     val mentionTransformation = remember(participants, mentionColor) {
         MentionVisualTransformation(participants, mentionColor)
@@ -1678,6 +1684,87 @@ private fun ChatComposer(
                 item {
                     Box {
                         OutlinedButton(
+                            onClick = { pluginsOpen = true },
+                            enabled = inputEnabled && (
+                                state.pluginActions.isNotEmpty() ||
+                                    state.generationEnhancers.isNotEmpty()
+                                ),
+                            modifier = Modifier.height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                        ) {
+                            Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (pluginActionBusy) "插件运行中…" else "插件")
+                        }
+                        DropdownMenu(
+                            expanded = pluginsOpen,
+                            onDismissRequest = { pluginsOpen = false },
+                        ) {
+                            state.generationEnhancers.forEach { enhancer ->
+                                val active = enhancer.isActive(state.session)
+                                val busyKey = "enhancer:${enhancer.stateKey}"
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                if (state.toolBusy == busyKey) {
+                                                    "${enhancer.title} · 保存中…"
+                                                } else {
+                                                    enhancer.title
+                                                },
+                                            )
+                                            Text(
+                                                "${enhancer.pluginName} · 当前聊天${if (active) "已开启" else "已关闭"}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (active) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    enabled = state.canUseTools,
+                                    onClick = {
+                                        pluginsOpen = false
+                                        onToggleGenerationEnhancer(enhancer)
+                                    },
+                                )
+                            }
+                            state.pluginActions.forEach { action ->
+                                val busyKey = "plugin:${action.pluginId}:${action.actionId}"
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                if (state.toolBusy == busyKey) "${action.title} · 运行中…" else action.title,
+                                            )
+                                            Text(
+                                                action.pluginName,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                                    },
+                                    enabled = state.canUseTools,
+                                    onClick = {
+                                        pluginsOpen = false
+                                        onInvokePluginAction(action)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                item {
+                    Box {
+                        OutlinedButton(
                             onClick = { messageKindMenuOpen = true },
                             enabled = inputEnabled,
                             modifier = Modifier.height(36.dp),
@@ -1722,7 +1809,7 @@ private fun ChatComposer(
                         ) {
                             Icon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(2.dp))
-                            Text(if (state.includeInnerThoughts) "读心" else "工具")
+                            Text("工具")
                         }
                         DropdownMenu(
                             expanded = toolsOpen,
@@ -1744,20 +1831,6 @@ private fun ChatComposer(
                                 onClick = {
                                     toolsOpen = false
                                     onOpenDirector()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(if (state.includeInnerThoughts) "关闭读心" else "开启读心") },
-                                leadingIcon = {
-                                    Icon(
-                                        if (state.includeInnerThoughts) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = null,
-                                    )
-                                },
-                                enabled = inputEnabled,
-                                onClick = {
-                                    toolsOpen = false
-                                    onToggleInnerThoughts()
                                 },
                             )
                             if (state.session?.mode == "observe") {
@@ -1817,21 +1890,6 @@ private fun ChatComposer(
                     minLines = 1,
                     maxLines = 4,
                     shape = RoundedCornerShape(24.dp),
-                    trailingIcon = {
-                        IconButton(
-                            onClick = onSuggest,
-                            enabled = state.canUseTools && state.toolBusy != "suggest",
-                        ) {
-                            if (state.toolBusy == "suggest") {
-                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(
-                                    Icons.Outlined.AutoAwesome,
-                                    contentDescription = "一键生成续写建议",
-                                )
-                            }
-                        }
-                    },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { if (state.canSend) onSend() }),
                 )
