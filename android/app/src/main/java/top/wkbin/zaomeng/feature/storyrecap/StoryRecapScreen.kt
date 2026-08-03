@@ -209,6 +209,8 @@ private fun RecapHeader(recap: StoryRecapDto) {
                 text = recap.summary,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis,
             )
             val meta = listOfNotNull(
                 recap.timeHint.takeIf(String::isNotBlank),
@@ -249,7 +251,13 @@ private fun EventTimelineCard(events: List<StoryEventDto>) {
         events.forEachIndexed { index, event ->
             if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(event.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    event.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 listOf(event.timeHint, event.location)
                     .filter(String::isNotBlank)
                     .takeIf { it.isNotEmpty() }
@@ -260,7 +268,7 @@ private fun EventTimelineCard(events: List<StoryEventDto>) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                event.responses.take(2).forEach { response ->
+                event.responses.forEach { response ->
                     Text(
                         "${response.speaker}：${response.message}",
                         style = MaterialTheme.typography.bodySmall,
@@ -280,7 +288,13 @@ private fun RelationChangesCard(relations: List<StoryRelationChangeDto>) {
         relations.forEachIndexed { index, relation ->
             if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(relation.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    relation.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 val changes = relation.changes.joinToString(" · ") { change ->
                     "${change.label}${if (change.delta > 0) "+" else ""}${change.delta}"
                 }
@@ -291,6 +305,8 @@ private fun RelationChangesCard(relations: List<StoryRelationChangeDto>) {
                     relation.reason,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -303,8 +319,19 @@ private fun CharacterArcsCard(arcs: List<StoryCharacterArcDto>) {
         arcs.forEachIndexed { index, arc ->
             if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(arc.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(arc.growthSummary, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    arc.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    arc.growthSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 arc.current.values
                     .filter(String::isNotBlank)
                     .takeIf { it.isNotEmpty() }
@@ -334,11 +361,15 @@ private fun QuoteCard(quotes: List<StoryQuoteDto>) {
                     text = quote.speaker,
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = quote.message,
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -411,6 +442,8 @@ private fun NextHintCard(nextHint: String) {
                 text = nextHint,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -419,6 +420,12 @@ private fun DirectorDialog(
                     placeholder = { Text("例如：让两人因为旧事发生正面冲突") },
                     minLines = 3,
                     maxLines = 6,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (enabled && goal.isNotBlank()) onGenerate(goal, action)
+                        },
+                    ),
                 )
             }
         },
@@ -503,7 +510,7 @@ private fun ChatToolOptionsDialog(
         title = { Text(title.ifBlank { "选择一个方案" }) },
         text = {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(options, key = { "${it.label}-${it.value}" }) { option ->
@@ -1341,6 +1348,7 @@ private fun TranscriptBubble(
         if (!isUser) {
             ChatPersonaAvatar(
                 bytes = avatarBytes[item.speaker],
+                name = item.speaker,
                 modifier = Modifier.size(40.dp),
             )
             Spacer(Modifier.width(8.dp))
@@ -1605,7 +1613,15 @@ private fun ChatComposer(
     }
     LaunchedEffect(state.draft) {
         if (state.draft != draftValue.text) {
-            draftValue = TextFieldValue(state.draft, TextRange(state.draft.length))
+            val previousSelection = draftValue.selection
+            val lastIndex = state.draft.length
+            draftValue = TextFieldValue(
+                text = state.draft,
+                selection = TextRange(
+                    previousSelection.start.coerceIn(0, lastIndex),
+                    previousSelection.end.coerceIn(0, lastIndex),
+                ),
+            )
         }
     }
     Column(
@@ -1637,6 +1653,7 @@ private fun ChatComposer(
                         ) {
                             ChatPersonaAvatar(
                                 bytes = avatarBytes[participant],
+                                name = participant,
                                 modifier = Modifier.size(48.dp),
                             )
                             Text(
@@ -1935,7 +1952,11 @@ private fun ChatComposer(
 }
 
 @Composable
-private fun ChatPersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
+private fun ChatPersonaAvatar(
+    bytes: ByteArray?,
+    name: String,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         modifier = modifier.clip(androidx.compose.foundation.shape.CircleShape),
         shape = androidx.compose.foundation.shape.CircleShape,
@@ -1944,7 +1965,16 @@ private fun ChatPersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) 
         val bitmap = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
         if (bitmap == null) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+                val initial = name.trim().take(1)
+                if (initial.isBlank()) {
+                    Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+                } else {
+                    Text(
+                        text = initial,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         } else {
             androidx.compose.foundation.Image(

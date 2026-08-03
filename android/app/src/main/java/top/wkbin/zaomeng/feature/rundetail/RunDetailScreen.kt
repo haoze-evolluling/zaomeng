@@ -55,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,6 +74,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import top.wkbin.zaomeng.ui.theme.AppDimens
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
@@ -235,6 +237,7 @@ fun RunDetailScreen(
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     PersonaAvatar(
                         bytes = state.avatarBytes[persona.name],
+                        name = persona.name,
                         modifier = Modifier.size(144.dp),
                     )
                 }
@@ -297,6 +300,9 @@ fun RunDetailScreen(
                         Icon(Icons.Default.Download, contentDescription = "导出书卷")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
             )
         },
     ) { innerPadding ->
@@ -352,8 +358,8 @@ private fun RunDetailContent(
     var showAllSources by rememberSaveable(run.runId) { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(AppDimens.screenPadding),
+        verticalArrangement = Arrangement.spacedBy(AppDimens.itemSpacing),
     ) {
         item { RunHero(run) }
 
@@ -580,8 +586,16 @@ private fun BookReviewCard(
 @Composable
 private fun ReviewActionRow(text: String, label: String, onClick: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        TextButton(onClick = onClick) { Text(label) }
+        Text(
+            text,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        TextButton(onClick = onClick) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -621,7 +635,9 @@ private fun OnlinePackageSourceCard(source: OnlineLibrarySourceDto) {
             )
             if (source.downloadUrl.isNotBlank()) {
                 TextButton(onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.downloadUrl)))
+                    Intent(Intent.ACTION_VIEW, Uri.parse(source.downloadUrl))
+                        .takeIf { it.resolveActivity(context.packageManager) != null }
+                        ?.let(context::startActivity)
                 }) { Text("打开书卷包来源") }
             }
         }
@@ -944,7 +960,7 @@ private fun PersonaCard(
     ) {
         Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onAvatarClick, modifier = Modifier.size(44.dp)) {
-                PersonaAvatar(bytes = avatarBytes, modifier = Modifier.fillMaxSize())
+                PersonaAvatar(bytes = avatarBytes, name = persona.name, modifier = Modifier.fillMaxSize())
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -962,12 +978,25 @@ private fun PersonaCard(
 }
 
 @Composable
-private fun PersonaAvatar(bytes: ByteArray?, modifier: Modifier = Modifier) {
+private fun PersonaAvatar(
+    bytes: ByteArray?,
+    name: String,
+    modifier: Modifier = Modifier,
+) {
     Surface(modifier = modifier.clip(CircleShape), shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
         val bitmap = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
         if (bitmap == null) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+                val initial = name.trim().take(1)
+                if (initial.isBlank()) {
+                    Icon(Icons.Outlined.Person, contentDescription = "人物头像")
+                } else {
+                    Text(
+                        text = initial,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         } else {
             androidx.compose.foundation.Image(

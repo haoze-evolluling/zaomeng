@@ -281,7 +281,7 @@ private fun RelationEditor(
                     if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Outlined.Save, contentDescription = null)
                     Spacer(Modifier.size(6.dp))
-                    Text(if (saving) "保存中" else "保存")
+                    Text("保存")
                 }
             }
 

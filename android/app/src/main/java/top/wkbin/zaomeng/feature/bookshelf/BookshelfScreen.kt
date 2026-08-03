@@ -20,14 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.CollectionsBookmark
@@ -38,13 +34,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,8 +47,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +61,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.BackendState
 import top.wkbin.zaomeng.data.api.RunManifestDto
+import top.wkbin.zaomeng.ui.theme.AppDimens
 import top.wkbin.zaomeng.ui.format.toLocalDateTimeDisplay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,18 +93,11 @@ fun BookshelfScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "造梦",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "本地故事工坊",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        text = "造梦",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 },
                 actions = {
                     IconButton(onClick = onOpenCards) {
@@ -153,10 +139,6 @@ fun BookshelfScreen(
                     onDismissRecovered = viewModel::dismissRecoveredRun,
                     onDismissError = viewModel::dismissError,
                     onOpenSettings = onOpenSettings,
-                    onSearchQueryChange = viewModel::updateSearchQuery,
-                    onSelectFilter = viewModel::selectFilter,
-                    onToggleSort = viewModel::toggleSort,
-                    onClearFilters = viewModel::clearFilters,
                     onImport = onImport,
                     onOpenCrossover = onOpenCrossover,
                     onOpenRun = onOpenRun,
@@ -196,59 +178,22 @@ private fun ReadyBookshelf(
     onDismissRecovered: (String) -> Unit,
     onDismissError: () -> Unit,
     onOpenSettings: () -> Unit,
-    onSearchQueryChange: (String) -> Unit,
-    onSelectFilter: (BookshelfFilter) -> Unit,
-    onToggleSort: () -> Unit,
-    onClearFilters: () -> Unit,
     onImport: () -> Unit,
     onOpenCrossover: () -> Unit,
     onOpenRun: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val visibleRuns = filterBookshelfRuns(state)
-    var searchExpanded by rememberSaveable { mutableStateOf(state.searchQuery.isNotBlank()) }
+    val visibleRuns = state.runs
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 104.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(
+            start = AppDimens.screenPadding,
+            top = AppDimens.screenPadding,
+            end = AppDimens.screenPadding,
+            bottom = 104.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(AppDimens.itemSpacing),
     ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "书卷",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = if (visibleRuns.size == state.runs.size) {
-                            "${state.runs.size} 本 · 仅保存在这台手机"
-                        } else {
-                            "显示 ${visibleRuns.size} / ${state.runs.size} 本"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (!searchExpanded && state.searchQuery.isBlank()) {
-                    IconButton(onClick = { searchExpanded = true }) {
-                        Icon(Icons.Default.Search, contentDescription = "搜索书卷")
-                    }
-                }
-                IconButton(onClick = onRefresh, enabled = !state.refreshing && !state.loadingRuns) {
-                    if (state.refreshing) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新书架")
-                    }
-                }
-            }
-        }
-
         val activeRuns = state.runs.filter { it.status == "running" }
         if (state.modelConfigured == false) {
             item { ModelRequiredCard(onOpenSettings) }
@@ -305,47 +250,6 @@ private fun ReadyBookshelf(
             }
         }
 
-        if (state.runs.isNotEmpty() && (searchExpanded || state.searchQuery.isNotBlank())) {
-            item {
-                OutlinedTextField(
-                    value = state.searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("搜索书卷、人物或来源") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            onSearchQueryChange("")
-                            searchExpanded = false
-                        }) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭搜索")
-                        }
-                    },
-                    singleLine = true,
-                )
-            }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("状态筛选", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onToggleSort) { Text(state.sort.label) }
-                }
-            }
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(BookshelfFilter.values().toList(), key = { filter -> filter.name }) { filter ->
-                        FilterChip(
-                            selected = state.filter == filter,
-                            onClick = { onSelectFilter(filter) },
-                            label = { Text(filter.label) },
-                        )
-                    }
-                }
-            }
-        }
-
         if (state.loadingRuns) {
             item {
                 Box(
@@ -361,8 +265,6 @@ private fun ReadyBookshelf(
             }
         } else if (state.runs.isEmpty()) {
             item { EmptyBookshelf(onImport) }
-        } else if (visibleRuns.isEmpty()) {
-            item { EmptyFilterResults(onClearFilters) }
         } else {
             items(visibleRuns, key = RunManifestDto::runId) { run ->
                 RunCard(run = run, onClick = { onOpenRun(run.runId) })

@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.koinInject
 import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
 import top.wkbin.zaomeng.data.preferences.ThemeMode
+import top.wkbin.zaomeng.ui.theme.AppDimens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,7 +71,7 @@ fun SettingsHomeScreen(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             contentPadding = PaddingValues(bottom = 28.dp),
         ) {
-            item { SectionTitle("模型与对话", 16.dp) }
+            item { SectionTitle("模型与对话", AppDimens.screenPadding) }
             item {
                 SettingsHomeGroup {
                     SettingsHomeRow(
@@ -130,19 +131,24 @@ fun SettingsHomeScreen(
 }
 
 @Composable
-private fun SectionTitle(text: String, topPadding: androidx.compose.ui.unit.Dp = 24.dp) {
+private fun SectionTitle(text: String, topPadding: androidx.compose.ui.unit.Dp = AppDimens.sectionSpacing) {
     Text(
         text = text,
-        style = MaterialTheme.typography.titleSmall,
+        style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 32.dp, top = topPadding, bottom = 8.dp, end = 32.dp),
+        modifier = Modifier.padding(
+            start = AppDimens.screenPadding,
+            top = topPadding,
+            end = AppDimens.screenPadding,
+            bottom = AppDimens.iconTextGap,
+        ),
     )
 }
 
 @Composable
 private fun SettingsHomeGroup(content: @Composable () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppDimens.screenPadding),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) { Column(content = { content() }) }
@@ -161,9 +167,9 @@ private fun SettingsHomeRow(
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = AppDimens.cardPadding, vertical = AppDimens.itemSpacing),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(AppDimens.itemSpacing),
     ) {
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

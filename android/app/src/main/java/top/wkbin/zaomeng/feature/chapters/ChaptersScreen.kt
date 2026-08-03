@@ -27,6 +27,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,15 +35,20 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.NovelConversionForegroundController
 import top.wkbin.zaomeng.data.api.ChapterDto
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +74,8 @@ fun ChaptersScreen(
     var showArchive by remember { mutableStateOf(false) }
     var pendingNovelConversion by remember { mutableStateOf<Pair<String, String>?>(null) }
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -74,6 +83,11 @@ fun ChaptersScreen(
             if (granted) {
                 viewModel.convertSession(sessionId, title)
                 showArchive = false
+            } else {
+                showArchive = false
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar("未授予通知权限，无法在后台生成完成后提醒你。")
+                }
             }
             pendingNovelConversion = null
         }
@@ -99,6 +113,7 @@ fun ChaptersScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("章节工作台") },
@@ -114,6 +129,9 @@ fun ChaptersScreen(
                         Icon(Icons.Default.Add, "新建章节")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
             )
         },
     ) { padding ->
@@ -214,8 +232,24 @@ fun ChaptersScreen(
                     }
                 }
             }
-            if (state.error.isNotBlank()) item { Text(state.error, color = MaterialTheme.colorScheme.error) }
-            if (state.message.isNotBlank()) item { Text(state.message, color = MaterialTheme.colorScheme.primary) }
+            if (state.error.isNotBlank()) item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Text(
+                        state.error,
+                        modifier = Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+            if (state.message.isNotBlank()) item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    Text(
+                        state.message,
+                        modifier = Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
             if (state.searchResults.isNotEmpty()) {
                 item {
                     val kinds = state.searchResults.groupingBy { it.kind }.eachCount()
@@ -369,6 +403,7 @@ private fun ChapterEditorDialog(chapter: ChapterDto? = null, onDismiss: () -> Un
 
 @Composable
 private fun ArchiveSessionDialog(sessions: List<top.wkbin.zaomeng.data.api.DialogueSessionDto>, onDismiss: () -> Unit, onArchive: (String, String) -> Unit) {
+    var title by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("转为小说章节") },
@@ -377,6 +412,15 @@ private fun ArchiveSessionDialog(sessions: List<top.wkbin.zaomeng.data.api.Dialo
                 modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+            item {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("章节标题（可选）") },
+                    singleLine = true,
+                )
+            }
             item {
                 Text(
                     "至少需要 6 轮有效对话。",
@@ -388,7 +432,7 @@ private fun ArchiveSessionDialog(sessions: List<top.wkbin.zaomeng.data.api.Dialo
                 item { Text("还没有可归档的会话。") }
             }
             items(sessions, key = { it.sessionId }) { session ->
-                OutlinedButton(onClick = { onArchive(session.sessionId, "") }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onArchive(session.sessionId, title) }, modifier = Modifier.fillMaxWidth()) {
                     Text("转为小说 · " + session.lastEntryPreview.ifBlank { "会话 ${session.sessionId.takeLast(6)}" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

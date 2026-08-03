@@ -280,7 +280,7 @@ private fun SourceCard(state: PersonaUiState) {
 
 @Composable
 private fun QualityCard(report: PersonaQualityReportDto?, error: String) {
-    var showAllIssues by rememberSaveable(report?.score, report?.issues?.size) { mutableStateOf(false) }
+    var showAllIssues by rememberSaveable { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -540,6 +540,8 @@ private fun PersonaFieldEditor(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
+            val helper = feedback?.message?.takeIf(String::isNotBlank)
+                ?: qualityIssue?.suggestion?.takeIf(String::isNotBlank)
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -549,22 +551,20 @@ private fun PersonaFieldEditor(
                 maxLines = 8,
                 placeholder = { Text("填写可直接约束人物表现的具体描述") },
                 isError = feedback?.kind == PersonaFeedbackKind.Error || qualityIssue?.severity == "high",
+                supportingText = {
+                    helper?.let {
+                        Text(
+                            it,
+                            color = when (feedback?.kind) {
+                                PersonaFeedbackKind.Success -> MaterialTheme.colorScheme.primary
+                                PersonaFeedbackKind.Error -> MaterialTheme.colorScheme.error
+                                PersonaFeedbackKind.Loading -> MaterialTheme.colorScheme.primary
+                                null -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                },
             )
-            val helper = feedback?.message?.takeIf(String::isNotBlank)
-                ?: qualityIssue?.suggestion?.takeIf(String::isNotBlank)
-            if (helper != null) {
-                Text(
-                    text = helper,
-                    modifier = Modifier.padding(top = 7.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when (feedback?.kind) {
-                        PersonaFeedbackKind.Success -> MaterialTheme.colorScheme.primary
-                        PersonaFeedbackKind.Error -> MaterialTheme.colorScheme.error
-                        PersonaFeedbackKind.Loading -> MaterialTheme.colorScheme.primary
-                        null -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
         }
     }
 }
@@ -611,8 +611,8 @@ private fun SaveBar(
     onSave: () -> Unit,
 ) {
     Button(
-        onClick = onSave,
-        enabled = enabled && !isSaving,
+        onClick = { if (!isSaving) onSave() },
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp),

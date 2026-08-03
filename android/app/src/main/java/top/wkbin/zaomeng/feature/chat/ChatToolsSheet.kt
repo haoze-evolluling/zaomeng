@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FactCheck
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BookmarkAdd
@@ -54,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import top.wkbin.zaomeng.data.api.DialogueMemoryDto
 import top.wkbin.zaomeng.data.api.ReusableCardDto
@@ -116,14 +119,14 @@ fun ChatToolsSheet(
     }
     val toolsEnabled = state.canUseTools
     val session = state.session
-    val branchNodes = session?.branchGraph?.branchNodeInsights().orEmpty()
-    val consistency = session?.consistencyMonitor?.consistencyInsight()
-    val characterArcs = session?.characterArcs.orEmpty().characterArcInsights()
-    val speakerState = session?.let { speakerInsights(it.speakerActivity, it.speakerBalance) }
-    val relationTimelines = session?.relationTimeline.orEmpty().relationTimelineInsights()
-    val eventSignals = session?.eventSignals?.eventSignalInsights().orEmpty()
-    val generationStats = session?.generationCacheStats?.generationInsight()
-    val contextUsage = session?.latestContextUsage?.contextUsageInsight()
+    val branchNodes = remember(session) { session?.branchGraph?.branchNodeInsights().orEmpty() }
+    val consistency = remember(session) { session?.consistencyMonitor?.consistencyInsight() }
+    val characterArcs = remember(session) { session?.characterArcs.orEmpty().characterArcInsights() }
+    val speakerState = remember(session) { session?.let { speakerInsights(it.speakerActivity, it.speakerBalance) } }
+    val relationTimelines = remember(session) { session?.relationTimeline.orEmpty().relationTimelineInsights() }
+    val eventSignals = remember(session) { session?.eventSignals?.eventSignalInsights().orEmpty() }
+    val generationStats = remember(session) { session?.generationCacheStats?.generationInsight() }
+    val contextUsage = remember(session) { session?.latestContextUsage?.contextUsageInsight() }
 
     LaunchedEffect(state.memorySaveRevision) {
         val baseline = memorySaveBaseline
@@ -162,6 +165,15 @@ fun ChatToolsSheet(
                         placeholder = { Text("例如：让两人因为旧事发生正面冲突") },
                         minLines = 3,
                         maxLines = 6,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (directorGoal.isNotBlank() && toolsEnabled) {
+                                    directorDialog = false
+                                    onDirector(directorGoal, directorAction)
+                                }
+                            },
+                        ),
                     )
                 }
             },
@@ -474,7 +486,7 @@ fun ChatToolsSheet(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    IconButton(
+                                    TextButton(
                                         onClick = { pendingRelationLockChange = pairKey to !locked },
                                         enabled = toolsEnabled,
                                     ) {
@@ -482,6 +494,8 @@ fun ChatToolsSheet(
                                             if (locked) Icons.Outlined.Lock else Icons.Outlined.LockOpen,
                                             contentDescription = if (locked) "解除锁定" else "锁定关系",
                                         )
+                                        Spacer(Modifier.size(4.dp))
+                                        Text(if (locked) "已锁定" else "锁定")
                                     }
                                 }
                             }
@@ -847,19 +861,23 @@ private fun SceneRow(
                 )
             }
             if (recommended) {
-                FilterChip(selected = true, onClick = {}, label = { Text("推荐") })
+                Text(
+                    "推荐",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { onSwitch(card.cardId, transition, false) },
                 modifier = Modifier.weight(1f),
-                enabled = enabled,
+                enabled = enabled && transition.isNotBlank(),
             ) { Text("切换") }
             Button(
                 onClick = { onSwitch(card.cardId, transition, true) },
                 modifier = Modifier.weight(1f),
-                enabled = enabled,
+                enabled = enabled && transition.isNotBlank(),
             ) { Text("切换并续写") }
         }
     }
@@ -885,7 +903,7 @@ private fun MemoryRow(
             TextButton(onClick = onEdit, enabled = enabled) { Text("编辑") }
             IconButton(onClick = onDelete, enabled = enabled) {
                 Icon(
-                    Icons.Default.Delete,
+                    Icons.Outlined.Delete,
                     contentDescription = "删除记忆",
                     tint = MaterialTheme.colorScheme.error,
                 )
