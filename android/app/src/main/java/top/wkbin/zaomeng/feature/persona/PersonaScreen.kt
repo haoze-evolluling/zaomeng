@@ -558,7 +558,7 @@ private fun PersonaFieldEditor(
                     modifier = Modifier.padding(top = 7.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = when (feedback?.kind) {
-                        PersonaFeedbackKind.Success -> Color(0xFF247A45)
+                        PersonaFeedbackKind.Success -> MaterialTheme.colorScheme.primary
                         PersonaFeedbackKind.Error -> MaterialTheme.colorScheme.error
                         PersonaFeedbackKind.Loading -> MaterialTheme.colorScheme.primary
                         null -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -705,14 +705,14 @@ private fun severityLabel(severity: String): String = when (severity) {
 
 @Composable
 private fun qualityColor(score: Int): Color = when {
-    score >= 80 -> Color(0xFF247A45)
-    score >= 60 -> Color(0xFF7A5E00)
+    score >= 80 -> MaterialTheme.colorScheme.primary
+    score >= 60 -> MaterialTheme.colorScheme.tertiary
     else -> MaterialTheme.colorScheme.error
 }
 
 @Composable
 private fun severityColor(severity: String): Color = when (severity) {
     "high" -> MaterialTheme.colorScheme.error
-    "medium" -> Color(0xFF9A6700)
+    "medium" -> MaterialTheme.colorScheme.tertiary
     else -> MaterialTheme.colorScheme.primary
 }

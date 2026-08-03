@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
@@ -118,6 +119,11 @@ fun SessionsScreen(
     }
     LaunchedEffect(state.selectedSessionKeys.size) {
         if (state.selectedSessionKeys.isEmpty()) pendingBatchDeletion = false
+    }
+    LaunchedEffect(state.sessions, state.deletingSessionKeys) {
+        pendingDeletion?.let { pending ->
+            if (state.sessions.none { it.key == pending.key }) pendingDeletion = null
+        }
     }
 
     Scaffold(
@@ -246,22 +252,23 @@ fun SessionsScreen(
     }
 
     pendingDeletion?.let { session ->
+        val deleting = session.key in state.deletingSessionKeys
         AlertDialog(
-            onDismissRequest = { pendingDeletion = null },
+            onDismissRequest = { if (!deleting) pendingDeletion = null },
             title = { Text("删除这段会话？") },
             text = { Text("聊天记录会从这台手机上永久删除，人物资料和书卷不会受影响。") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        pendingDeletion = null
                         viewModel.deleteSession(session)
                     },
+                    enabled = !deleting,
                 ) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDeletion = null }) { Text("取消") }
+                TextButton(onClick = { pendingDeletion = null }, enabled = !deleting) { Text("取消") }
             },
         )
     }
@@ -489,10 +496,13 @@ private fun SessionCard(
     onDelete: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
+    var actionsMenuOpen by remember(session.key) { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = selectionMode && !deleting, onClick = onToggleSelection),
+            .clickable(enabled = !deleting) {
+                if (selectionMode) onToggleSelection() else onOpen()
+            },
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
                 MaterialTheme.colorScheme.secondaryContainer
@@ -567,14 +577,31 @@ private fun SessionCard(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
-                    IconButton(onClick = onDelete, enabled = !deleting) {
-                        if (deleting) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "删除会话",
-                                tint = MaterialTheme.colorScheme.error,
+                    Box {
+                        IconButton(onClick = { actionsMenuOpen = true }, enabled = !deleting) {
+                            if (deleting) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.MoreVert, contentDescription = "会话操作")
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = actionsMenuOpen,
+                            onDismissRequest = { actionsMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("删除会话", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                },
+                                onClick = {
+                                    actionsMenuOpen = false
+                                    onDelete()
+                                },
                             )
                         }
                     }
@@ -634,7 +661,7 @@ private fun NewSessionDialog(
     onCreate: () -> Unit,
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!state.creating) onDismiss() },
         title = { Text("开始一段新会话") },
         text = {
             LazyColumn(

@@ -48,7 +48,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.zaomeng.backend.NovelConversionForegroundController
+import top.wkbin.zaomeng.data.api.StoryCharacterArcDto
+import top.wkbin.zaomeng.data.api.StoryEventDto
 import top.wkbin.zaomeng.data.api.StoryQuoteDto
+import top.wkbin.zaomeng.data.api.StoryRelationChangeDto
 import top.wkbin.zaomeng.data.api.StoryRecapDto
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -156,11 +159,14 @@ fun StoryRecapScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item(key = "header") { RecapHeader(recap) }
-                item(key = "convert") {
-                    NovelConversionCard(
-                        started = novelConversionStarted,
-                        onClick = ::startNovelConversion,
-                    )
+                if (recap.events.isNotEmpty()) {
+                    item(key = "events") { EventTimelineCard(recap.events) }
+                }
+                if (recap.relations.isNotEmpty()) {
+                    item(key = "relations") { RelationChangesCard(recap.relations) }
+                }
+                if (recap.characterArcs.isNotEmpty()) {
+                    item(key = "arcs") { CharacterArcsCard(recap.characterArcs) }
                 }
                 if (recap.quotes.isNotEmpty()) {
                     item(key = "quotes") { QuoteCard(recap.quotes) }
@@ -170,6 +176,12 @@ fun StoryRecapScreen(
                 }
                 if (recap.nextHint.isNotBlank()) {
                     item(key = "next") { NextHintCard(recap.nextHint) }
+                }
+                item(key = "convert") {
+                    NovelConversionCard(
+                        started = novelConversionStarted,
+                        onClick = ::startNovelConversion,
+                    )
                 }
                 item(key = "footer-space") { Spacer(Modifier.height(8.dp)) }
             }
@@ -232,9 +244,87 @@ private fun RecapHeader(recap: StoryRecapDto) {
 }
 
 @Composable
+private fun EventTimelineCard(events: List<StoryEventDto>) {
+    RecapSectionCard(title = "近期事件") {
+        events.forEachIndexed { index, event ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(event.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                listOf(event.timeHint, event.location)
+                    .filter(String::isNotBlank)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { meta ->
+                        Text(
+                            meta.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                event.responses.take(2).forEach { response ->
+                    Text(
+                        "${response.speaker}：${response.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RelationChangesCard(relations: List<StoryRelationChangeDto>) {
+    RecapSectionCard(title = "关系变化") {
+        relations.forEachIndexed { index, relation ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(relation.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                val changes = relation.changes.joinToString(" · ") { change ->
+                    "${change.label}${if (change.delta > 0) "+" else ""}${change.delta}"
+                }
+                if (changes.isNotBlank()) {
+                    Text(changes, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                Text(
+                    relation.reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CharacterArcsCard(arcs: List<StoryCharacterArcDto>) {
+    RecapSectionCard(title = "人物状态") {
+        arcs.forEachIndexed { index, arc ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(arc.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(arc.growthSummary, style = MaterialTheme.typography.bodySmall)
+                arc.current.values
+                    .filter(String::isNotBlank)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { current ->
+                        Text(
+                            current.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+            }
+        }
+    }
+}
+
+@Composable
 private fun QuoteCard(quotes: List<StoryQuoteDto>) {
     RecapSectionCard(title = "片段") {
-        quotes.forEach { quote ->
+        quotes.forEachIndexed { index, quote ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -393,5 +483,7 @@ private fun shareRecap(context: Context, recap: StoryRecapDto?) {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, text)
     }
-    context.startActivity(Intent.createChooser(sendIntent, "分享剧情复盘"))
+    if (sendIntent.resolveActivity(context.packageManager) != null) {
+        context.startActivity(Intent.createChooser(sendIntent, "分享剧情复盘"))
+    }
 }

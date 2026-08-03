@@ -67,11 +67,6 @@ fun StartupRecoverySettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                scope.launch {
-                                    preferencesRepository.setRestoreLastLocation(!preferences.restoreLastLocation)
-                                }
-                            }
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),

@@ -203,7 +203,7 @@ private fun RelationGraph(items: List<RelationItemDto>) {
                 val color = when {
                     relation.hostility >= 6 -> colors.error
                     relation.affection >= 7 -> colors.tertiary
-                    relation.trust >= 7 -> Color(0xFF23825D)
+                    relation.trust >= 7 -> colors.primary
                     else -> colors.outline
                 }
                 drawLine(

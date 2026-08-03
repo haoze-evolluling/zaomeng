@@ -31,7 +31,10 @@ import org.koin.core.component.inject
 class NovelConversionForegroundService : Service(), KoinComponent {
     private val backend: EmbeddedBackendController by inject()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var conversionJob: Job? = null
+    private val queueLock = Any()
+    private val pendingConversions = ArrayDeque<ConversionRequest>()
+    private var processorJob: Job? = null
+    private var latestStartId = 0
     @Volatile private var pendingRunId = ""
 
     override fun onCreate() {
@@ -40,7 +43,6 @@ class NovelConversionForegroundService : Service(), KoinComponent {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (conversionJob?.isActive == true) return START_NOT_STICKY
         val runId = intent?.getStringExtra(EXTRA_RUN_ID).orEmpty().trim()
         val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID).orEmpty().trim()
         val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty().trim()
@@ -48,13 +50,23 @@ class NovelConversionForegroundService : Service(), KoinComponent {
             stopSelf()
             return START_NOT_STICKY
         }
-        pendingRunId = runId
-        if (!startAsForeground(buildStartingNotification())) {
-            stopSelf()
-            return START_NOT_STICKY
+        val shouldStartProcessor = synchronized(queueLock) {
+            pendingConversions.addLast(ConversionRequest(runId, sessionId, title))
+            latestStartId = maxOf(latestStartId, startId)
+            processorJob?.isActive != true
         }
-        conversionJob = serviceScope.launch {
-            runConversion(runId, sessionId, title)
+        if (shouldStartProcessor) {
+            pendingRunId = runId
+            if (!startAsForeground(buildStartingNotification())) {
+                synchronized(queueLock) {
+                    pendingConversions.clear()
+                }
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            processorJob = serviceScope.launch {
+                processConversions()
+            }
         }
         return START_STICKY
     }
@@ -62,14 +74,36 @@ class NovelConversionForegroundService : Service(), KoinComponent {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        conversionJob?.cancel()
-        conversionJob = null
+        processorJob?.cancel()
+        processorJob = null
+        synchronized(queueLock) {
+            pendingConversions.clear()
+        }
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
-    private suspend fun runConversion(runId: String, sessionId: String, title: String) {
+    private suspend fun processConversions() {
+        var finalStartId = 0
+        while (serviceScope.isActive) {
+            val request = synchronized(queueLock) {
+                pendingConversions.removeFirstOrNull().also { next ->
+                    if (next == null) {
+                        processorJob = null
+                        finalStartId = latestStartId
+                    }
+                }
+            } ?: break
+            pendingRunId = request.runId
+            runConversion(request)
+        }
+        if (stopSelfResult(finalStartId)) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        }
+    }
+
+    private suspend fun runConversion(request: ConversionRequest) {
         try {
             when (backend.state.value) {
                 is BackendState.Failed -> backend.retry()
@@ -77,10 +111,11 @@ class NovelConversionForegroundService : Service(), KoinComponent {
             }
             updateNotification(buildProgressNotification())
             backend.requireApi().convertSessionAsNovel(
-                runId,
-                ArchiveDialogueChapterRequest(sessionId, title),
+                request.runId,
+                ArchiveDialogueChapterRequest(request.sessionId, request.title),
             )
             publishResultNotification(
+                request = request,
                 title = getString(R.string.novel_conversion_notification_complete_title),
                 text = getString(R.string.novel_conversion_notification_complete_text),
             )
@@ -88,14 +123,12 @@ class NovelConversionForegroundService : Service(), KoinComponent {
             throw cancelled
         } catch (error: Throwable) {
             publishResultNotification(
+                request = request,
                 title = getString(R.string.novel_conversion_notification_failed_title),
                 text = error.message
                     ?.takeIf(String::isNotBlank)
                     ?: getString(R.string.novel_conversion_notification_failed_text),
             )
-        } finally {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
         }
     }
 
@@ -114,16 +147,21 @@ class NovelConversionForegroundService : Service(), KoinComponent {
             .setProgress(0, 0, true)
             .build()
 
-    private fun publishResultNotification(title: String, text: String) {
+    private fun publishResultNotification(
+        request: ConversionRequest,
+        title: String,
+        text: String,
+    ) {
         try {
             NotificationManagerCompat.from(this).notify(
+                request.notificationTag,
                 RESULT_NOTIFICATION_ID,
                 NotificationCompat.Builder(this, RESULT_CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_distillation_notification)
                     .setContentTitle(title)
                     .setContentText(text)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                    .setContentIntent(openAppPendingIntent())
+                    .setContentIntent(openAppPendingIntent(request.runId, request.requestCode))
                     .setAutoCancel(true)
                     .setCategory(NotificationCompat.CATEGORY_STATUS)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -144,12 +182,15 @@ class NovelConversionForegroundService : Service(), KoinComponent {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
-    private fun openAppPendingIntent(): PendingIntent = PendingIntent.getActivity(
+    private fun openAppPendingIntent(
+        runId: String = pendingRunId,
+        requestCode: Int = 0,
+    ): PendingIntent = PendingIntent.getActivity(
         this,
-        0,
+        requestCode,
         Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_OPEN_RUN_ID, pendingRunId)
+            putExtra(EXTRA_OPEN_RUN_ID, runId)
         },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
@@ -215,6 +256,17 @@ class NovelConversionForegroundService : Service(), KoinComponent {
         private const val RESULT_CHANNEL_ID = "novel_conversion_result"
         private const val NOTIFICATION_ID = 4201
         private const val RESULT_NOTIFICATION_ID = 4202
+    }
+
+    private data class ConversionRequest(
+        val runId: String,
+        val sessionId: String,
+        val title: String,
+    ) {
+        val notificationTag: String
+            get() = "novel-conversion-$runId-$sessionId"
+        val requestCode: Int
+            get() = notificationTag.hashCode()
     }
 }
 

@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
             val themeMode = preferencesRepository.themeMode.collectAsStateWithLifecycle(
                 initialValue = top.wkbin.zaomeng.data.preferences.ThemeMode.SYSTEM,
             ).value
-            MyApplicationTheme(themeMode = themeMode, dynamicColor = false) {
+            MyApplicationTheme(themeMode = themeMode, dynamicColor = true) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -224,7 +224,7 @@ private fun ContentDisclaimerDialog(
     onDecline: () -> Unit,
 ) {
     AlertDialog(
-        onDismissRequest = onDecline,
+        onDismissRequest = {},
         title = { Text(stringResource(R.string.content_disclaimer_title)) },
         text = {
             Text(stringResource(R.string.content_disclaimer_message))

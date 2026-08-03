@@ -31,7 +31,7 @@ fun AppUpdateDialog(
     val status = downloadState.status.takeIf { downloadState.version == update.version }
         ?: AppUpdateDownloadStatus.Idle
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (status != AppUpdateDownloadStatus.Downloading) onDismiss() },
         title = { Text("发现新版本 ${update.version}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -58,7 +58,12 @@ fun AppUpdateDialog(
                 )
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = status != AppUpdateDownloadStatus.Downloading,
+            ) { Text("稍后") }
+        },
     )
 }
 

@@ -1542,16 +1542,18 @@ private fun ParentheticalMessageText(
     textAlign: androidx.compose.ui.text.style.TextAlign = androidx.compose.ui.text.style.TextAlign.Start,
 ) {
     val asideColor = MaterialTheme.colorScheme.secondary
-    val annotated = buildAnnotatedString {
-        var cursor = 0
-        parentheticalPattern.findAll(text).forEach { match ->
-            append(text.substring(cursor, match.range.first))
-            pushStyle(SpanStyle(color = asideColor, fontStyle = FontStyle.Italic))
-            append(match.value)
-            pop()
-            cursor = match.range.last + 1
+    val annotated = remember(text, asideColor) {
+        buildAnnotatedString {
+            var cursor = 0
+            parentheticalPattern.findAll(text).forEach { match ->
+                append(text.substring(cursor, match.range.first))
+                pushStyle(SpanStyle(color = asideColor, fontStyle = FontStyle.Italic))
+                append(match.value)
+                pop()
+                cursor = match.range.last + 1
+            }
+            append(text.substring(cursor))
         }
-        append(text.substring(cursor))
     }
     Text(text = annotated, modifier = modifier, style = style, color = baseColor, textAlign = textAlign)
 }
@@ -1575,6 +1577,7 @@ private fun ChatComposer(
 ) {
     var mentionsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
     var messageKindMenuOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
+    var toolsOpen by rememberSaveable(state.sessionId) { mutableStateOf(false) }
     var draftValue by rememberSaveable(state.sessionId, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.draft))
     }
@@ -1663,40 +1666,6 @@ private fun ChatComposer(
                     }
                 }
                 item {
-                    OutlinedButton(
-                        onClick = onAssociations,
-                        enabled = state.canUseTools && state.toolBusy != "associations",
-                        modifier = Modifier.size(36.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        if (state.toolBusy == "associations") {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(
-                                Icons.Outlined.Psychology,
-                                contentDescription = "AI 联想",
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    }
-                }
-                item {
-                    OutlinedButton(
-                        onClick = onOpenDirector,
-                        enabled = state.canUseTools,
-                        modifier = Modifier.size(36.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        Icon(
-                            Icons.Outlined.Movie,
-                            contentDescription = "剧情导演",
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-                item {
                     Box {
                         OutlinedButton(
                             onClick = { messageKindMenuOpen = true },
@@ -1733,44 +1702,71 @@ private fun ChatComposer(
                     }
                 }
                 item {
-                    FilterChip(
-                        selected = state.includeInnerThoughts,
-                        onClick = onToggleInnerThoughts,
-                        enabled = inputEnabled,
-                        modifier = Modifier.height(36.dp),
-                        leadingIcon = {
-                            Icon(
-                                if (state.includeInnerThoughts) {
-                                    Icons.Default.Visibility
-                                } else {
-                                    Icons.Default.VisibilityOff
+                    Box {
+                        OutlinedButton(
+                            onClick = { toolsOpen = true },
+                            enabled = inputEnabled,
+                            modifier = Modifier.height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                        ) {
+                            Icon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text(if (state.includeInnerThoughts) "读心" else "工具")
+                        }
+                        DropdownMenu(
+                            expanded = toolsOpen,
+                            onDismissRequest = { toolsOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(if (state.toolBusy == "associations") "AI 联想中…" else "AI 联想") },
+                                leadingIcon = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
+                                enabled = state.canUseTools && state.toolBusy != "associations",
+                                onClick = {
+                                    toolsOpen = false
+                                    onAssociations()
                                 },
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
                             )
-                        },
-                        label = { Text("读心") },
-                    )
-                }
-                if (state.session?.mode == "observe") {
-                    item {
-                        FilterChip(
-                            selected = state.continuousObserveEnabled,
-                            onClick = onToggleContinuousObserve,
-                            enabled = state.canToggleContinuousObserve,
-                            leadingIcon = {
-                                Icon(
-                                    if (state.continuousObserveEnabled) {
-                                        Icons.Default.Pause
-                                    } else {
-                                        Icons.Default.PlayArrow
+                            DropdownMenuItem(
+                                text = { Text("剧情导演") },
+                                leadingIcon = { Icon(Icons.Outlined.Movie, contentDescription = null) },
+                                enabled = state.canUseTools,
+                                onClick = {
+                                    toolsOpen = false
+                                    onOpenDirector()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (state.includeInnerThoughts) "关闭读心" else "开启读心") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (state.includeInnerThoughts) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                    )
+                                },
+                                enabled = inputEnabled,
+                                onClick = {
+                                    toolsOpen = false
+                                    onToggleInnerThoughts()
+                                },
+                            )
+                            if (state.session?.mode == "observe") {
+                                DropdownMenuItem(
+                                    text = { Text(if (state.continuousObserveEnabled) "暂停旁观" else "开启旁观") },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (state.continuousObserveEnabled) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                        )
                                     },
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
+                                    enabled = state.canToggleContinuousObserve,
+                                    onClick = {
+                                        toolsOpen = false
+                                        onToggleContinuousObserve()
+                                    },
                                 )
-                            },
-                            label = { Text("旁观") },
-                        )
+                            }
+                        }
                     }
                 }
             }

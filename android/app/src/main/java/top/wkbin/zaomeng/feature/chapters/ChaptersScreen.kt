@@ -2,12 +2,16 @@ package top.wkbin.zaomeng.feature.chapters
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -221,7 +225,6 @@ fun ChaptersScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                item { Text("搜索结果", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                 items(state.searchResults, key = { "${it.kind}:${it.chapterId}:${it.sessionId}:${it.character}" }) { result ->
                     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(searchResultKindLabel(result.kind), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -323,7 +326,10 @@ private fun ChapterCard(
         if (chapter.goal.isNotBlank()) Text("目标：${chapter.goal}", style = MaterialTheme.typography.bodySmall)
         if (chapter.participants.isNotEmpty()) Text(chapter.participants.joinToString("、"), style = MaterialTheme.typography.labelSmall)
         Text(chapter.content.ifBlank { "空白草稿" }, maxLines = 5, overflow = TextOverflow.Ellipsis)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             Button(onClick = onContinue, enabled = !opening) { Text(if (opening) "正在入场…" else "继续写作") }
             if (chapter.lastSessionId.isNotBlank()) {
                 OutlinedButton(onClick = onSync, enabled = !syncing) { Text(if (syncing) "正在收录…" else "收录会话") }
@@ -345,12 +351,17 @@ private fun ChapterEditorDialog(chapter: ChapterDto? = null, onDismiss: () -> Un
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (chapter == null) "新建章节" else "编辑章节") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
             OutlinedTextField(title, { title = it }, label = { Text("章节标题") }, singleLine = true)
             OutlinedTextField(goal, { goal = it }, label = { Text("本章目标") })
             OutlinedTextField(participants, { participants = it }, label = { Text("出场人物（用顿号或逗号分隔）") })
             OutlinedTextField(content, { content = it }, label = { Text("草稿内容") }, minLines = 6)
-        } },
+            }
+        },
         confirmButton = { Button(onClick = { onSave(title, goal, participants, content) }, enabled = title.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -361,15 +372,28 @@ private fun ArchiveSessionDialog(sessions: List<top.wkbin.zaomeng.data.api.Dialo
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("转为小说章节") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("至少需要 6 轮有效对话。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (sessions.isEmpty()) Text("还没有可归档的会话。")
-            sessions.forEach { session ->
+        text = {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+            item {
+                Text(
+                    "至少需要 6 轮有效对话。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (sessions.isEmpty()) {
+                item { Text("还没有可归档的会话。") }
+            }
+            items(sessions, key = { it.sessionId }) { session ->
                 OutlinedButton(onClick = { onArchive(session.sessionId, "") }, modifier = Modifier.fillMaxWidth()) {
                     Text("转为小说 · " + session.lastEntryPreview.ifBlank { "会话 ${session.sessionId.takeLast(6)}" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-        } },
+            }
+        },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )

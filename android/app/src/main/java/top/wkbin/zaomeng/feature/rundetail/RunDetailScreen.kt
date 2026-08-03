@@ -807,6 +807,12 @@ private fun ActionCard(
                 Text("章节工作台与全书导出")
             }
 
+            HorizontalDivider()
+            Text(
+                "故事资料",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             OutlinedButton(onClick = onOpenRelations, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.People, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -817,7 +823,13 @@ private fun ActionCard(
                 Text("查看故事时间线与剧情事实")
             }
 
-            OutlinedButton(
+            HorizontalDivider()
+            Text(
+                "书卷管理",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
                 onClick = onExport,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !exporting,
@@ -828,7 +840,15 @@ private fun ActionCard(
                 Text(if (exporting) "正在打包…" else "导出书卷包")
             }
 
-            OutlinedButton(
+            val showAdvancedManagement = rememberSaveable(run.runId) { mutableStateOf(false) }
+            TextButton(
+                onClick = { showAdvancedManagement.value = !showAdvancedManagement.value },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (showAdvancedManagement.value) "收起高级操作" else "更多书卷操作")
+            }
+            if (showAdvancedManagement.value) {
+            TextButton(
                 onClick = onOpenRedistill,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !redistilling && run.status != "running" &&
@@ -842,7 +862,7 @@ private fun ActionCard(
 
             val unfinishedCount = run.lockedCharacters.count { it !in run.progress.completedCharacters }
             if (unfinishedCount > 0 && run.status != "running") {
-                OutlinedButton(
+                TextButton(
                     onClick = onResume,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !redistilling,
@@ -900,6 +920,7 @@ private fun ActionCard(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+            }
             }
         }
     }

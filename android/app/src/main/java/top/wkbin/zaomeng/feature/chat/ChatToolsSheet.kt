@@ -3,12 +3,15 @@ package top.wkbin.zaomeng.feature.chat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -101,6 +104,8 @@ fun ChatToolsSheet(
     var directorAction by remember { mutableStateOf("advance") }
     var memoryDraft by remember { mutableStateOf<DialogueMemoryDto?>(null) }
     var memorySaveBaseline by remember { mutableStateOf<Long?>(null) }
+    var pendingMemoryDeletion by remember { mutableStateOf<DialogueMemoryDto?>(null) }
+    var pendingRelationLockChange by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var relationLockHelpDialog by remember { mutableStateOf(false) }
     var branchMetaDialog by remember { mutableStateOf(false) }
     var branchLabel by remember(state.session?.sessionId) {
@@ -207,6 +212,48 @@ fun ChatToolsSheet(
         )
     }
 
+    pendingMemoryDeletion?.let { memory ->
+        AlertDialog(
+            onDismissRequest = { pendingMemoryDeletion = null },
+            title = { Text("删除这条记忆？") },
+            text = { Text(memory.text) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingMemoryDeletion = null
+                        onDeleteMemory(memory.memoryId)
+                    },
+                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingMemoryDeletion = null }) { Text("取消") } },
+        )
+    }
+
+    pendingRelationLockChange?.let { (pairKey, shouldLock) ->
+        AlertDialog(
+            onDismissRequest = { pendingRelationLockChange = null },
+            title = { Text(if (shouldLock) "锁定人物关系？" else "解除人物关系锁定？") },
+            text = {
+                Text(
+                    if (shouldLock) {
+                        "锁定后，后续剧情不会自动改写这组关系：$pairKey"
+                    } else {
+                        "解除锁定后，后续剧情可以再次更新这组关系：$pairKey"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingRelationLockChange = null
+                        onRelationLock(pairKey, shouldLock)
+                    },
+                ) { Text(if (shouldLock) "锁定" else "解除锁定") }
+            },
+            dismissButton = { TextButton(onClick = { pendingRelationLockChange = null }) { Text("取消") } },
+        )
+    }
+
     if (branchMetaDialog) {
         AlertDialog(
             onDismissRequest = { branchMetaDialog = false },
@@ -239,6 +286,7 @@ fun ChatToolsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        contentWindowInsets = { WindowInsets.navigationBars },
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
@@ -388,7 +436,7 @@ fun ChatToolsSheet(
                             memory = memory,
                             enabled = toolsEnabled,
                             onEdit = { memoryDraft = memory },
-                            onDelete = { onDeleteMemory(memory.memoryId) },
+                            onDelete = { pendingMemoryDeletion = memory },
                         )
                     }
                 }
@@ -427,7 +475,7 @@ fun ChatToolsSheet(
                                         )
                                     }
                                     IconButton(
-                                        onClick = { onRelationLock(pairKey, !locked) },
+                                        onClick = { pendingRelationLockChange = pairKey to !locked },
                                         enabled = toolsEnabled,
                                     ) {
                                         Icon(
@@ -870,7 +918,10 @@ private fun MemoryEditor(
                     minLines = 3,
                     maxLines = 6,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     listOf("story", "relationship", "short_term", "long_term").forEach { category ->
                         FilterChip(
                             selected = memory.category == category,

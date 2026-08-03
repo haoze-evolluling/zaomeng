@@ -121,7 +121,7 @@ fun CardLibraryScreen(
                         }
                     },
                 )
-                PrimaryTabRow(selectedTabIndex = cardKinds.indexOf(state.kind)) {
+                PrimaryTabRow(selectedTabIndex = cardKinds.indexOf(state.kind).coerceAtLeast(0)) {
                     cardKinds.forEach { kind ->
                         Tab(
                             selected = state.kind == kind,
