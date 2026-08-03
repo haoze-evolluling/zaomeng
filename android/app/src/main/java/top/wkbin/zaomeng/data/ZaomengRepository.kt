@@ -21,7 +21,6 @@ import top.wkbin.zaomeng.data.api.DeleteRunResponse
 import top.wkbin.zaomeng.data.api.DeleteStatusDto
 import top.wkbin.zaomeng.data.api.DeleteSessionsRequest
 import top.wkbin.zaomeng.data.api.DeleteSessionsResponse
-import top.wkbin.zaomeng.data.api.DialogueAssociationsRequest
 import top.wkbin.zaomeng.data.api.DialogueDirectorRequest
 import top.wkbin.zaomeng.data.api.DialogueMemoryDto
 import top.wkbin.zaomeng.data.api.DialogueReplyRequest
@@ -901,10 +900,6 @@ class ZaomengRepository(
 
     suspend fun deepReviewLatestReply(runId: String, sessionId: String): DialogueSessionDto = request {
         backend.requireApi().deepReviewLatestDialogue(runId, sessionId)
-    }
-
-    suspend fun dialogueAssociations(runId: String, sessionId: String): JsonObject = request {
-        backend.requireApi().associateDialogue(runId, sessionId, DialogueAssociationsRequest())
     }
 
     suspend fun dialogueDirectorOptions(

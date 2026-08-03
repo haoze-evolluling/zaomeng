@@ -783,11 +783,6 @@ data class PluginChatActionResponse(
 data class DialogueSuggestionResponse(val suggestion: String = "")
 
 @Serializable
-data class DialogueAssociationsRequest(
-    @SerialName("option_count") val optionCount: Int = 3,
-)
-
-@Serializable
 data class DialogueDirectorRequest(
     val goal: String,
     val action: String = "advance",

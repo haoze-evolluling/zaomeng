@@ -1060,20 +1060,6 @@ class ChatViewModel(
         }
     }
 
-    fun requestAssociations() {
-        runTool("associations") {
-            val options = repository.dialogueAssociations(runId, sessionId)
-                .extractAssociationOptions(snapshot.session?.mode.orEmpty())
-            updateState {
-                it.copy(
-                    toolOptionsTitle = "AI 联想",
-                    toolOptions = options,
-                    notice = if (options.isEmpty()) "这次没有生成可用联想。" else "",
-                )
-            }
-        }
-    }
-
     fun requestDirectorOptions(goal: String, action: String = "advance") {
         val normalizedGoal = goal.trim()
         if (normalizedGoal.isBlank()) {
@@ -1536,11 +1522,6 @@ class ChatViewModel(
     }
 }
 
-internal fun JsonObject.extractAssociationOptions(sessionMode: String): List<ChatToolOption> = this["options"]
-    ?.let { runCatching { it.jsonArray }.getOrNull() }
-    ?.mapNotNull { element -> element.toAssociationOption(sessionMode) }
-    .orEmpty()
-
 internal fun hasCommittedReply(
     baseline: List<TranscriptItemDto>,
     transcript: List<TranscriptItemDto>,
@@ -1549,33 +1530,6 @@ internal fun hasCommittedReply(
     return transcript.drop(baseline.size).any { item ->
         item.role != "user" && item.message.isNotBlank()
     }
-}
-
-private fun JsonElement.toAssociationOption(sessionMode: String): ChatToolOption? {
-    val messageKind = if (sessionMode == "observe") "narration" else "dialogue"
-    runCatching { jsonPrimitive.contentOrNull }.getOrNull()?.takeIf(String::isNotBlank)?.let {
-        return ChatToolOption(
-            label = it,
-            value = "",
-            messageKind = messageKind,
-            suggestionDirection = it,
-        )
-    }
-    val item = runCatching { jsonObject }.getOrNull() ?: return null
-    val direction = item.stringValue("direction")
-    val suggestion = item.stringValue("suggestion").ifBlank { item.stringValue("draft") }
-    val label = item.stringValue("label").ifBlank { direction }.ifBlank { suggestion }
-    if (label.isBlank() || (direction.isBlank() && suggestion.isBlank())) return null
-    val anchor = listOf(item.stringValue("anchor_speaker"), item.stringValue("anchor_quote"))
-        .filter(String::isNotBlank)
-        .joinToString("：")
-    return ChatToolOption(
-        label = label,
-        value = suggestion,
-        description = listOf(direction, anchor).filter(String::isNotBlank).joinToString(" · "),
-        messageKind = messageKind,
-        suggestionDirection = direction.takeIf { suggestion.isBlank() }.orEmpty(),
-    )
 }
 
 internal fun JsonObject.extractDirectorOptions(): List<ChatToolOption> = this["options"]

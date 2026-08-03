@@ -10,34 +10,6 @@ class ChatToolOptionsTest {
     private val json = Json { ignoreUnknownKeys = true }
 
     @Test
-    fun associationsPreferReadySuggestionAndPreserveFallbackDirection() {
-        val payload = json.parseToJsonElement(
-            """
-            {
-              "options": [
-                {
-                  "label": "追问旧事",
-                  "direction": "让甲追问乙隐瞒的过去",
-                  "suggestion": "你一直没有告诉我，那天究竟发生了什么？"
-                },
-                {
-                  "label": "观察反应",
-                  "direction": "让甲先观察乙的神情"
-                }
-              ]
-            }
-            """.trimIndent(),
-        ).jsonObject
-
-        val options = payload.extractAssociationOptions(sessionMode = "observe")
-
-        assertEquals("narration", options[0].messageKind)
-        assertEquals("你一直没有告诉我，那天究竟发生了什么？", options[0].value)
-        assertEquals("", options[0].suggestionDirection)
-        assertEquals("让甲先观察乙的神情", options[1].suggestionDirection)
-    }
-
-    @Test
     fun directorOptionsKeepBeatDirectionEffectAndRisk() {
         val payload = json.parseToJsonElement(
             """

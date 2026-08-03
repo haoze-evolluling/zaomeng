@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -291,7 +290,6 @@ fun ChatScreen(
                     onDraftChange = viewModel::updateDraft,
                     onMessageKindChange = viewModel::selectMessageKind,
                     onInvokePluginAction = viewModel::invokePluginAction,
-                    onAssociations = viewModel::requestAssociations,
                     onOpenDirector = { directorOpen = true },
                     onSend = viewModel::send,
                     onToggleContinuousObserve = viewModel::toggleContinuousObserve,
@@ -1595,7 +1593,6 @@ private fun ChatComposer(
     onDraftChange: (String) -> Unit,
     onMessageKindChange: (String) -> Unit,
     onInvokePluginAction: (ChatPluginAction) -> Unit,
-    onAssociations: () -> Unit,
     onOpenDirector: () -> Unit,
     onSend: () -> Unit,
     onToggleContinuousObserve: () -> Unit,
@@ -1826,15 +1823,6 @@ private fun ChatComposer(
                             expanded = toolsOpen,
                             onDismissRequest = { toolsOpen = false },
                         ) {
-                            DropdownMenuItem(
-                                text = { Text(if (state.toolBusy == "associations") "AI 联想中…" else "AI 联想") },
-                                leadingIcon = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
-                                enabled = state.canUseTools && state.toolBusy != "associations",
-                                onClick = {
-                                    toolsOpen = false
-                                    onAssociations()
-                                },
-                            )
                             DropdownMenuItem(
                                 text = { Text("剧情导演") },
                                 leadingIcon = { Icon(Icons.Outlined.Movie, contentDescription = null) },

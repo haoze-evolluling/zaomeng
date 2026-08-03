@@ -422,13 +422,6 @@ interface ZaomengApi {
         @Path("sessionId") sessionId: String,
     ): DialogueSessionDto
 
-    @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/associations")
-    suspend fun associateDialogue(
-        @Path("runId") runId: String,
-        @Path("sessionId") sessionId: String,
-        @Body request: DialogueAssociationsRequest,
-    ): JsonObject
-
     @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/director-options")
     suspend fun directDialogue(
         @Path("runId") runId: String,
