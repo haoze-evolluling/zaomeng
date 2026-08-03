@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 from src.core.runtime_factory import build_runtime_parts
+from src.plugin_system import PluginRegistry
 from src.web.chat import DialogueService
 from src.web.chat.world_memory import WorldMemoryStore
 from src.web.chat.reply_operations import ReplyOperationStore
@@ -24,6 +25,7 @@ from src.web.service_facades import (
     OpeningPresetServiceMixin,
     PackageServiceMixin,
     PipelineHelpersMixin,
+    PluginServiceMixin,
     ReviewHelpersMixin,
     RunPreparationMixin,
     RuntimeSupportMixin,
@@ -76,6 +78,7 @@ class WebRunService(
     DiagnosticsServiceMixin,
     ReviewHelpersMixin,
     PipelineHelpersMixin,
+    PluginServiceMixin,
 ):
     DISTILL_CHUNK_TRIGGER_CHARS = 18_000
     DISTILL_CHUNK_TRIGGER_SENTENCES = 180
@@ -241,6 +244,15 @@ class WebRunService(
         )
         self.world_memory = WorldMemoryStore(self.runs_root)
         self.reply_operations = ReplyOperationStore(self.runs_root)
+        from src.web.plugin_host import ZaomengPluginHost
+
+        self.plugins = PluginRegistry(
+            [self.project_root / "plugins", self.storage_root / "plugins"],
+            host_factory=lambda plugin_id, permissions: ZaomengPluginHost(
+                self, plugin_id, permissions
+            ),
+            state_path=self.storage_root / "plugin-state.json",
+        )
         self._active_run_threads: dict[str, threading.Thread] = {}
         self._run_manifest_locks_guard = threading.Lock()
         self._run_manifest_locks: dict[str, threading.RLock] = {}

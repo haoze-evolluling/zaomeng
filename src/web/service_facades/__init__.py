@@ -7,6 +7,7 @@ from .chapters import ChapterServiceMixin
 from .opening_presets import OpeningPresetServiceMixin
 from .packages import PackageServiceMixin
 from .pipeline_helpers import PipelineHelpersMixin
+from .plugins import PluginServiceMixin
 from .review_helpers import ReviewHelpersMixin
 from .run_preparation import RunPreparationMixin
 from .runtime_support import RuntimeSupportMixin
@@ -25,6 +26,7 @@ __all__ = [
     "OpeningPresetServiceMixin",
     "PackageServiceMixin",
     "PipelineHelpersMixin",
+    "PluginServiceMixin",
     "ReviewHelpersMixin",
     "RunPreparationMixin",
     "RuntimeSupportMixin",

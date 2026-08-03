@@ -39,7 +39,6 @@ from src.web.chat import (
     parse_dialogue_suggestion,
     reply_dialogue_turn_payload,
     should_retry_suggestion_with_compact_payload,
-    suggest_dialogue_turn_payload,
 )
 from src.web.service_facades.scene_cards import SceneCardServiceMixin
 
@@ -909,17 +908,24 @@ class DialogueServiceMixin:
         seed_text: str = "",
         direction: str = "",
     ) -> dict[str, str]:
-        manifest = self._require_manifest(run_id)
-        return suggest_dialogue_turn_payload(
-            run_id=run_id,
-            session_id=session_id,
-            seed_text=seed_text,
-            direction=direction,
-            manifest=manifest,
-            dialogue=self.dialogue,
-            generate_dialogue_suggestion=self._generate_dialogue_suggestion,
-            friendly_dialogue_llm_error=friendly_dialogue_llm_error,
-        )
+        self._require_manifest(run_id)
+        try:
+            result = self.plugins.invoke_chat_action(
+                "com.zaomeng.ai-association",
+                "suggest-turn",
+                {
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "seed_text": seed_text,
+                    "direction": direction,
+                },
+            )
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        suggestion = str(result.get("suggestion", "")).strip()
+        if not suggestion:
+            raise ValueError("AI 联想插件没有返回可用的草稿。")
+        return {"suggestion": suggestion}
 
     def associate_dialogue_turn(
         self,
