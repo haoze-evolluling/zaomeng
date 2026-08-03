@@ -255,6 +255,8 @@ class WebRunService(
                 self, plugin_id, permissions
             ),
             state_path=self.storage_root / "plugin-state.json",
+            log_path=self.storage_root / "plugin-logs.jsonl",
+            config_path=self.storage_root / "plugin-config.json",
         )
         self._active_run_threads: dict[str, threading.Thread] = {}
         self._run_manifest_locks_guard = threading.Lock()

@@ -4,6 +4,8 @@ import json
 import re
 import sys
 import threading
+import traceback
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -13,6 +15,7 @@ from typing import Any, Callable, Protocol
 PLUGIN_API_VERSION = "1"
 _PLUGIN_ID = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)+$")
 _ACTION_ID = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+_SETTING_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 _KNOWN_PERMISSIONS = {
     "chat.context.read",
     "chat.draft.write",
@@ -118,6 +121,90 @@ class GenerationEnhancer:
 
 
 @dataclass(frozen=True)
+class PluginSetting:
+    key: str
+    title: str
+    kind: str
+    default: Any
+    minimum: int | None = None
+    maximum: int | None = None
+    options: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def parse(cls, payload: Any) -> "PluginSetting":
+        if not isinstance(payload, dict):
+            raise PluginError("settings entries must be JSON objects.")
+        key = str(payload.get("key", "")).strip()
+        title = str(payload.get("title", "")).strip()
+        kind = str(payload.get("type", "")).strip()
+        if not _SETTING_KEY.fullmatch(key):
+            raise PluginError(f"Invalid plugin setting key: {key!r}.")
+        if not title or len(title) > 80:
+            raise PluginError("A plugin setting title must contain 1-80 characters.")
+        if kind == "boolean":
+            default: Any = bool(payload.get("default", False))
+            return cls(key, title, kind, default)
+        if kind == "integer":
+            minimum = int(payload.get("min", 0))
+            maximum = int(payload.get("max", 100))
+            if minimum > maximum:
+                raise PluginError(f"Invalid range for plugin setting {key!r}.")
+            default = int(payload.get("default", minimum))
+            if not minimum <= default <= maximum:
+                raise PluginError(f"Default value is outside the range for {key!r}.")
+            return cls(key, title, kind, default, minimum, maximum)
+        if kind == "enum":
+            raw_options = payload.get("options", [])
+            if not isinstance(raw_options, list) or not raw_options:
+                raise PluginError(f"Enum plugin setting {key!r} requires options.")
+            options: list[tuple[str, str]] = []
+            for item in raw_options:
+                if not isinstance(item, dict):
+                    raise PluginError(f"Enum options for {key!r} must be objects.")
+                value = str(item.get("value", "")).strip()
+                label = str(item.get("label", "")).strip()
+                if not value or not label:
+                    raise PluginError(f"Enum options for {key!r} require value and label.")
+                options.append((value, label))
+            default = str(payload.get("default", options[0][0])).strip()
+            if default not in {value for value, _label in options}:
+                raise PluginError(f"Invalid default enum value for {key!r}.")
+            return cls(key, title, kind, default, options=tuple(options))
+        raise PluginError(f"Unsupported plugin setting type: {kind!r}.")
+
+    def normalize(self, value: Any) -> Any:
+        if self.kind == "boolean":
+            if not isinstance(value, bool):
+                raise PluginError(f"Plugin setting {self.key!r} must be boolean.")
+            return value
+        if self.kind == "integer":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise PluginError(f"Plugin setting {self.key!r} must be an integer.")
+            if value < int(self.minimum) or value > int(self.maximum):
+                raise PluginError(f"Plugin setting {self.key!r} is outside its allowed range.")
+            return value
+        normalized = str(value).strip()
+        if normalized not in {option for option, _label in self.options}:
+            raise PluginError(f"Plugin setting {self.key!r} has an unsupported value.")
+        return normalized
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "key": self.key,
+            "title": self.title,
+            "type": self.kind,
+            "default": self.default,
+        }
+        if self.kind == "integer":
+            payload.update({"min": self.minimum, "max": self.maximum})
+        if self.kind == "enum":
+            payload["options"] = [
+                {"value": value, "label": label} for value, label in self.options
+            ]
+        return payload
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     id: str
     name: str
@@ -128,6 +215,7 @@ class PluginManifest:
     permissions: tuple[str, ...]
     chat_actions: tuple[ChatAction, ...]
     generation_enhancers: tuple[GenerationEnhancer, ...]
+    settings: tuple[PluginSetting, ...]
     default_enabled: bool
 
     @classmethod
@@ -192,6 +280,13 @@ class PluginManifest:
             raise PluginError(
                 "Plugins contributing generationEnhancers must declare generation.enhance."
             )
+        raw_settings = raw.get("settings", []) or []
+        if not isinstance(raw_settings, list):
+            raise PluginError("settings must be a JSON array.")
+        settings = tuple(PluginSetting.parse(item) for item in raw_settings)
+        setting_keys = [item.key for item in settings]
+        if len(setting_keys) != len(set(setting_keys)):
+            raise PluginError("Plugin setting keys must be unique within a plugin.")
         return cls(
             id=plugin_id,
             name=name,
@@ -202,6 +297,7 @@ class PluginManifest:
             permissions=permissions,
             chat_actions=actions,
             generation_enhancers=enhancers,
+            settings=settings,
             default_enabled=bool(raw.get("defaultEnabled", False)),
         )
 
@@ -219,6 +315,7 @@ class PluginManifest:
                     item.to_dict() for item in self.generation_enhancers
                 ],
             },
+            "settings": [item.to_dict() for item in self.settings],
             "defaultEnabled": self.default_enabled,
         }
 
@@ -245,14 +342,45 @@ class PluginRegistry:
         *,
         host_factory: Callable[[str, frozenset[str]], PluginHost],
         state_path: Path | None = None,
+        log_path: Path | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self._roots = tuple(Path(item) for item in roots)
         self._host_factory = host_factory
         self._state_path = state_path
+        self._log_path = log_path
+        self._config_path = config_path
+        self._config_store = self._load_config_store()
         self._records: dict[str, _PluginRecord] = {}
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self.refresh()
+
+    def _load_config_store(self) -> dict[str, dict[str, Any]]:
+        if self._config_path is None or not self._config_path.is_file():
+            return {}
+        try:
+            payload = json.loads(self._config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            str(plugin_id): dict(values)
+            for plugin_id, values in payload.items()
+            if isinstance(values, dict)
+        }
+
+    def _save_config_store(self) -> None:
+        if self._config_path is None:
+            return
+        self._config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._config_path.with_suffix(self._config_path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(self._config_store, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(self._config_path)
 
     def _load_enabled_state(self) -> set[str] | None:
         if self._state_path is None or not self._state_path.is_file():
@@ -300,7 +428,14 @@ class PluginRegistry:
                                 else "third-party"
                             ),
                         )
-                    except PluginError:
+                    except PluginError as exc:
+                        self.record_event(
+                            "",
+                            "error",
+                            "discovery_failed",
+                            str(exc),
+                            details={"manifest": str(manifest_path)},
+                        )
                         continue
 
             for record in self._records.values():
@@ -351,7 +486,15 @@ class PluginRegistry:
             record.instance = instance
             record.enabled = True
             record.error = ""
+            self.record_event(record.manifest.id, "info", "enabled", "插件已启用。")
         except Exception as exc:
+            self.record_event(
+                record.manifest.id,
+                "error",
+                "activation_failed",
+                str(exc),
+                details={"traceback": traceback.format_exc()},
+            )
             for loaded_name in tuple(sys.modules):
                 if loaded_name == module_prefix or loaded_name.startswith(module_prefix + "."):
                     sys.modules.pop(loaded_name, None)
@@ -367,8 +510,14 @@ class PluginRegistry:
             if callable(deactivate):
                 try:
                     deactivate()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.record_event(
+                        record.manifest.id,
+                        "warning",
+                        "deactivation_failed",
+                        str(exc),
+                        details={"traceback": traceback.format_exc()},
+                    )
         if record.module_prefix:
             for loaded_name in tuple(sys.modules):
                 if loaded_name == record.module_prefix or loaded_name.startswith(
@@ -379,6 +528,7 @@ class PluginRegistry:
         record.module = None
         record.module_prefix = ""
         record.enabled = False
+        self.record_event(record.manifest.id, "info", "disabled", "插件已停用。")
 
     def enable(self, plugin_id: str) -> dict[str, Any]:
         with self._lock:
@@ -415,13 +565,38 @@ class PluginRegistry:
             instance = record.instance
             record.active_calls += 1
         try:
-            result = instance.execute_chat_action(action_id, dict(request))
+            payload = dict(request)
+            payload["config"] = self.get_config(plugin_id)
+            result = instance.execute_chat_action(action_id, payload)
+        except Exception as exc:
+            self.record_event(
+                plugin_id,
+                "error",
+                "chat_action_failed",
+                str(exc),
+                details={"actionId": action_id, "traceback": traceback.format_exc()},
+            )
+            raise
         finally:
             with self._lock:
                 record.active_calls -= 1
                 self._condition.notify_all()
         if not isinstance(result, dict):
+            self.record_event(
+                plugin_id,
+                "error",
+                "invalid_chat_action_result",
+                "聊天动作必须返回 JSON 对象。",
+                details={"actionId": action_id, "resultType": type(result).__name__},
+            )
             raise PluginError("Chat action result must be a JSON object.")
+        self.record_event(
+            plugin_id,
+            "info",
+            "chat_action_completed",
+            "聊天动作执行完成。",
+            details={"actionId": action_id},
+        )
         return result
 
     def require_generation_enhancer(
@@ -459,7 +634,18 @@ class PluginRegistry:
                 raise PluginError(
                     f"Plugin does not implement enhance_generation: {plugin_id!r}."
                 )
-            result = method(enhancer_id, dict(request))
+            payload = dict(request)
+            payload["config"] = self.get_config(plugin_id)
+            result = method(enhancer_id, payload)
+        except Exception as exc:
+            self.record_event(
+                plugin_id,
+                "error",
+                "generation_enhancer_failed",
+                str(exc),
+                details={"enhancerId": enhancer_id, "traceback": traceback.format_exc()},
+            )
+            raise
         finally:
             with self._lock:
                 record.active_calls -= 1
@@ -468,16 +654,109 @@ class PluginRegistry:
             raise PluginError("Generation enhancer result must be a JSON object.")
         return result
 
+    def record_event(
+        self,
+        plugin_id: str,
+        level: str,
+        event: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if self._log_path is None:
+            return
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "pluginId": str(plugin_id or ""),
+            "level": str(level or "info"),
+            "event": str(event or "event"),
+            "message": str(message or "")[:2000],
+            "details": dict(details or {}),
+        }
+        try:
+            with self._lock:
+                self._log_path.parent.mkdir(parents=True, exist_ok=True)
+                if self._log_path.exists() and self._log_path.stat().st_size > 2 * 1024 * 1024:
+                    rotated = self._log_path.with_suffix(self._log_path.suffix + ".1")
+                    rotated.unlink(missing_ok=True)
+                    self._log_path.replace(rotated)
+                with self._log_path.open("a", encoding="utf-8") as output:
+                    output.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+        except OSError:
+            pass
+
+    def list_logs(self, plugin_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        self._require_record(plugin_id)
+        if self._log_path is None or not self._log_path.is_file():
+            return []
+        safe_limit = max(1, min(int(limit), 500))
+        try:
+            lines = self._log_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        items: list[dict[str, Any]] = []
+        for line in reversed(lines):
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict) and item.get("pluginId") == plugin_id:
+                items.append(item)
+                if len(items) >= safe_limit:
+                    break
+        return items
+
     def list_plugins(self) -> list[dict[str, Any]]:
         with self._lock:
             return [self._view(item) for item in self._records.values()]
 
-    @staticmethod
-    def _view(record: _PluginRecord) -> dict[str, Any]:
+    def get_config(self, plugin_id: str) -> dict[str, Any]:
+        with self._lock:
+            record = self._require_record(plugin_id)
+            stored = dict(self._config_store.get(plugin_id, {}))
+            values: dict[str, Any] = {}
+            for setting in record.manifest.settings:
+                candidate = stored.get(setting.key, setting.default)
+                try:
+                    values[setting.key] = setting.normalize(candidate)
+                except PluginError:
+                    values[setting.key] = setting.default
+            return values
+
+    def update_config(self, plugin_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(values, dict):
+            raise PluginError("Plugin config must be a JSON object.")
+        with self._lock:
+            record = self._require_record(plugin_id)
+            settings = {item.key: item for item in record.manifest.settings}
+            unknown = sorted(set(values) - set(settings))
+            if unknown:
+                raise PluginError(f"Unknown plugin settings: {', '.join(unknown)}.")
+            current = self.get_config(plugin_id)
+            for key, value in values.items():
+                current[key] = settings[key].normalize(value)
+            self._config_store[plugin_id] = current
+            self._save_config_store()
+            self.record_event(
+                plugin_id,
+                "info",
+                "config_updated",
+                "插件配置已更新。",
+                details={"keys": sorted(values)},
+            )
+            return current
+
+    def plugin_location(self, plugin_id: str) -> tuple[Path, str]:
+        with self._lock:
+            record = self._require_record(plugin_id)
+            return record.root, record.source
+
+    def _view(self, record: _PluginRecord) -> dict[str, Any]:
         return {
             **record.manifest.to_dict(),
             "enabled": record.enabled,
             "status": "enabled" if record.enabled else ("error" if record.error else "disabled"),
             "error": record.error,
             "source": record.source,
+            "config": self.get_config(record.manifest.id),
         }

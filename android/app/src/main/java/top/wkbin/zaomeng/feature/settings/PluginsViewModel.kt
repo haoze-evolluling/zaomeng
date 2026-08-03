@@ -1,5 +1,6 @@
 package top.wkbin.zaomeng.feature.settings
 
+import android.util.Base64
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -10,12 +11,24 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import top.wkbin.zaomeng.data.ZaomengRepository
 import top.wkbin.zaomeng.data.api.PluginDto
+import top.wkbin.zaomeng.data.api.PluginPackageInspectionDto
+import top.wkbin.zaomeng.data.api.PluginLogDto
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 data class PluginsUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
     val plugins: List<PluginDto> = emptyList(),
     val busyPluginId: String = "",
+    val packageBusy: Boolean = false,
+    val packageInspection: PluginPackageInspectionDto? = null,
+    val detailPlugin: PluginDto? = null,
+    val detailLogs: List<PluginLogDto> = emptyList(),
+    val detailLoading: Boolean = false,
+    val configPlugin: PluginDto? = null,
+    val configDraft: JsonObject = JsonObject(emptyMap()),
+    val configSaving: Boolean = false,
     val message: String = "",
     val error: String = "",
 )
@@ -98,4 +111,196 @@ class PluginsViewModel(
             }
         }
     }
+
+    fun inspectPackage(filename: String, bytes: ByteArray) {
+        if (state.value.packageBusy || state.value.busyPluginId.isNotBlank()) return
+        viewModelScope.launch {
+            mutableState.update {
+                it.copy(packageBusy = true, packageInspection = null, message = "", error = "")
+            }
+            try {
+                val inspection = repository.inspectPluginPackage(
+                    filename = filename,
+                    contentBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                )
+                mutableState.update {
+                    it.copy(packageBusy = false, packageInspection = inspection)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        packageBusy = false,
+                        error = error.message ?: "检查插件包失败。",
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissPackageInspection() {
+        if (!state.value.packageBusy) {
+            mutableState.update { it.copy(packageInspection = null) }
+        }
+    }
+
+    fun reportPackageReadError(error: Throwable) {
+        mutableState.update {
+            it.copy(error = error.message ?: "读取插件包失败。", message = "")
+        }
+    }
+
+    fun installInspectedPackage() {
+        val inspection = state.value.packageInspection ?: return
+        if (state.value.packageBusy || inspection.operation == "blocked") return
+        viewModelScope.launch {
+            mutableState.update { it.copy(packageBusy = true, message = "", error = "") }
+            try {
+                val installed = repository.installPluginPackage(
+                    token = inspection.token,
+                    allowUpdate = inspection.operation == "update",
+                )
+                val plugins = repository.listPlugins()
+                mutableState.update {
+                    it.copy(
+                        packageBusy = false,
+                        packageInspection = null,
+                        plugins = plugins.sortedPlugins(),
+                        message = if (inspection.operation == "update") {
+                            "已更新「${installed.name}」到 v${installed.version}。"
+                        } else {
+                            "已安装「${installed.name}」。"
+                        },
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        packageBusy = false,
+                        packageInspection = null,
+                        error = error.message ?: "安装插件失败。",
+                    )
+                }
+            }
+        }
+    }
+
+    fun uninstall(plugin: PluginDto) {
+        if (plugin.source != "third-party" || state.value.busyPluginId.isNotBlank()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(busyPluginId = plugin.id, message = "", error = "") }
+            try {
+                repository.uninstallPlugin(plugin.id)
+                mutableState.update { current ->
+                    current.copy(
+                        busyPluginId = "",
+                        plugins = current.plugins.filterNot { it.id == plugin.id },
+                        message = "已卸载「${plugin.name}」。",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        busyPluginId = "",
+                        error = error.message ?: "卸载插件失败。",
+                    )
+                }
+            }
+        }
+    }
+
+    fun openDetails(plugin: PluginDto) {
+        if (state.value.detailLoading) return
+        viewModelScope.launch {
+            mutableState.update {
+                it.copy(
+                    detailPlugin = plugin,
+                    detailLogs = emptyList(),
+                    detailLoading = true,
+                    error = "",
+                )
+            }
+            try {
+                val logs = repository.listPluginLogs(plugin.id)
+                mutableState.update { it.copy(detailLogs = logs, detailLoading = false) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        detailLoading = false,
+                        error = error.message ?: "读取插件日志失败。",
+                    )
+                }
+            }
+        }
+    }
+
+    fun closeDetails() {
+        mutableState.update {
+            it.copy(detailPlugin = null, detailLogs = emptyList(), detailLoading = false)
+        }
+    }
+
+    fun openConfig(plugin: PluginDto) {
+        mutableState.update {
+            it.copy(configPlugin = plugin, configDraft = plugin.config, error = "")
+        }
+    }
+
+    fun updateConfigValue(key: String, value: JsonElement) {
+        mutableState.update {
+            it.copy(configDraft = JsonObject(it.configDraft + (key to value)))
+        }
+    }
+
+    fun closeConfig() {
+        if (!state.value.configSaving) {
+            mutableState.update {
+                it.copy(configPlugin = null, configDraft = JsonObject(emptyMap()))
+            }
+        }
+    }
+
+    fun saveConfig() {
+        val plugin = state.value.configPlugin ?: return
+        if (state.value.configSaving) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(configSaving = true, error = "", message = "") }
+            try {
+                val response = repository.updatePluginConfig(plugin.id, state.value.configDraft)
+                mutableState.update { current ->
+                    current.copy(
+                        configPlugin = null,
+                        configDraft = JsonObject(emptyMap()),
+                        configSaving = false,
+                        plugins = current.plugins.map { item ->
+                            if (item.id == plugin.id) item.copy(config = response.config) else item
+                        },
+                        message = "已保存「${plugin.name}」的配置。",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.update {
+                    it.copy(
+                        configSaving = false,
+                        error = error.message ?: "保存插件配置失败。",
+                    )
+                }
+            }
+        }
+    }
 }
+
+private fun List<PluginDto>.sortedPlugins(): List<PluginDto> =
+    sortedWith(
+        compareByDescending<PluginDto> { it.source == "official" }
+            .thenBy { it.name },
+    )

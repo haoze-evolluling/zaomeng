@@ -43,11 +43,44 @@ interface ZaomengApi {
     @POST("api/web/plugins/refresh")
     suspend fun refreshPlugins(): PluginsResponse
 
+    @POST("api/web/plugins/packages/inspect")
+    suspend fun inspectPluginPackage(
+        @Body request: InspectPluginPackageRequest,
+    ): PluginPackageInspectionDto
+
+    @POST("api/web/plugins/packages/{token}/install")
+    suspend fun installPluginPackage(
+        @Path("token") token: String,
+        @Body request: InstallPluginPackageRequest,
+    ): PluginDto
+
     @POST("api/web/plugins/{pluginId}/enable")
     suspend fun enablePlugin(@Path("pluginId") pluginId: String): PluginDto
 
     @POST("api/web/plugins/{pluginId}/disable")
     suspend fun disablePlugin(@Path("pluginId") pluginId: String): PluginDto
+
+    @DELETE("api/web/plugins/{pluginId}")
+    suspend fun uninstallPlugin(
+        @Path("pluginId") pluginId: String,
+    ): UninstallPluginResponse
+
+    @GET("api/web/plugins/{pluginId}/logs")
+    suspend fun listPluginLogs(
+        @Path("pluginId") pluginId: String,
+        @Query("limit") limit: Int = 100,
+    ): PluginLogsResponse
+
+    @GET("api/web/plugins/{pluginId}/config")
+    suspend fun getPluginConfig(
+        @Path("pluginId") pluginId: String,
+    ): PluginConfigResponse
+
+    @PUT("api/web/plugins/{pluginId}/config")
+    suspend fun updatePluginConfig(
+        @Path("pluginId") pluginId: String,
+        @Body request: UpdatePluginConfigRequest,
+    ): PluginConfigResponse
 
     @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/plugins/{pluginId}/actions/{actionId}")
     suspend fun invokePluginChatAction(

@@ -11,6 +11,16 @@
     "chat.draft.write",
     "model.invoke"
   ],
+  "settings": [
+    {
+      "key": "optionCount",
+      "title": "候选回复数量",
+      "type": "integer",
+      "default": 3,
+      "min": 2,
+      "max": 4
+    }
+  ],
   "contributes": {
     "chatActions": [
       {

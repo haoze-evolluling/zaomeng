@@ -42,6 +42,13 @@ import top.wkbin.zaomeng.data.api.PersonaReviewDto
 import top.wkbin.zaomeng.data.api.PluginDto
 import top.wkbin.zaomeng.data.api.PluginChatActionRequest
 import top.wkbin.zaomeng.data.api.PluginChatActionResponse
+import top.wkbin.zaomeng.data.api.InspectPluginPackageRequest
+import top.wkbin.zaomeng.data.api.InstallPluginPackageRequest
+import top.wkbin.zaomeng.data.api.PluginPackageInspectionDto
+import top.wkbin.zaomeng.data.api.PluginLogDto
+import top.wkbin.zaomeng.data.api.PluginConfigResponse
+import top.wkbin.zaomeng.data.api.UpdatePluginConfigRequest
+import top.wkbin.zaomeng.data.api.UninstallPluginResponse
 import top.wkbin.zaomeng.data.api.RelationDetailsDto
 import top.wkbin.zaomeng.data.api.RelationItemDto
 import top.wkbin.zaomeng.data.api.ReusableCardDto
@@ -136,12 +143,52 @@ class ZaomengRepository(
         backend.requireApi().refreshPlugins().items
     }
 
+    suspend fun inspectPluginPackage(
+        filename: String,
+        contentBase64: String,
+    ): PluginPackageInspectionDto = request {
+        backend.requireApi().inspectPluginPackage(
+            InspectPluginPackageRequest(filename, contentBase64),
+        )
+    }
+
+    suspend fun installPluginPackage(
+        token: String,
+        allowUpdate: Boolean,
+    ): PluginDto = request {
+        backend.requireApi().installPluginPackage(
+            token,
+            InstallPluginPackageRequest(
+                confirmPermissions = true,
+                allowUpdate = allowUpdate,
+            ),
+        )
+    }
+
     suspend fun enablePlugin(pluginId: String): PluginDto = request {
         backend.requireApi().enablePlugin(pluginId)
     }
 
     suspend fun disablePlugin(pluginId: String): PluginDto = request {
         backend.requireApi().disablePlugin(pluginId)
+    }
+
+    suspend fun uninstallPlugin(pluginId: String): UninstallPluginResponse = request {
+        backend.requireApi().uninstallPlugin(pluginId)
+    }
+
+    suspend fun listPluginLogs(pluginId: String): List<PluginLogDto> = request {
+        backend.requireApi().listPluginLogs(pluginId).items
+    }
+
+    suspend fun updatePluginConfig(
+        pluginId: String,
+        config: kotlinx.serialization.json.JsonObject,
+    ): PluginConfigResponse = request {
+        backend.requireApi().updatePluginConfig(
+            pluginId,
+            UpdatePluginConfigRequest(config),
+        )
     }
 
     suspend fun invokePluginChatAction(

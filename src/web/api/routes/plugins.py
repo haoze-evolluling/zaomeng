@@ -7,13 +7,46 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.plugin_system import PluginError
 from src.web.api.deps import get_run_service
 from src.web.api.schemas import (
+    InspectPluginPackageRequest,
+    InstallPluginPackageRequest,
     InvokePluginChatActionRequest,
     SetGenerationEnhancerStateRequest,
+    UpdatePluginConfigRequest,
 )
 from src.web.workflow import WebRunService
 
 
 router = APIRouter()
+
+
+@router.post("/api/web/plugins/packages/inspect")
+def inspect_plugin_package(
+    payload: InspectPluginPackageRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.inspect_plugin_package(
+            filename=payload.filename,
+            content_base64=payload.content_base64,
+        )
+    except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/web/plugins/packages/{token}/install")
+def install_plugin_package(
+    token: str,
+    payload: InstallPluginPackageRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.install_inspected_plugin_package(
+            token,
+            confirm_permissions=payload.confirm_permissions,
+            allow_update=payload.allow_update,
+        )
+    except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/web/plugins")
@@ -48,6 +81,52 @@ def disable_plugin(
 ) -> dict[str, Any]:
     try:
         return run_service.disable_plugin(plugin_id)
+    except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/api/web/plugins/{plugin_id}")
+def uninstall_plugin(
+    plugin_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.uninstall_plugin(plugin_id)
+    except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/web/plugins/{plugin_id}/logs")
+def list_plugin_logs(
+    plugin_id: str,
+    limit: int = 100,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.list_plugin_logs(plugin_id, limit=limit)
+    except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/web/plugins/{plugin_id}/config")
+def get_plugin_config(
+    plugin_id: str,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.get_plugin_config(plugin_id)
+    except PluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/api/web/plugins/{plugin_id}/config")
+def update_plugin_config(
+    plugin_id: str,
+    payload: UpdatePluginConfigRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.update_plugin_config(plugin_id, payload.config)
     except PluginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

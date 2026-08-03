@@ -9,6 +9,14 @@
   "permissions": [
     "generation.enhance"
   ],
+  "settings": [
+    {
+      "key": "defaultActive",
+      "title": "新聊天默认开启读心",
+      "type": "boolean",
+      "default": false
+    }
+  ],
   "contributes": {
     "generationEnhancers": [
       {

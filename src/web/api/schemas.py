@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 try:
@@ -298,6 +300,20 @@ class InvokePluginChatActionRequest(BaseModel):
 
 class SetGenerationEnhancerStateRequest(BaseModel):
     enabled: bool
+
+
+class InspectPluginPackageRequest(BaseModel):
+    filename: str = Field(default="plugin.zip", max_length=200)
+    content_base64: str = Field(..., min_length=1)
+
+
+class InstallPluginPackageRequest(BaseModel):
+    confirm_permissions: bool = Field(default=False)
+    allow_update: bool = Field(default=False)
+
+
+class UpdatePluginConfigRequest(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class DialogueAssociationsRequest(BaseModel):

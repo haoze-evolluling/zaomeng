@@ -20,12 +20,14 @@ class ReplyVariantsPlugin:
             raise ValueError(f"Unsupported reply variants action: {action_id!r}.")
         if self._host is None:
             raise RuntimeError("Reply variants plugin is not active.")
+        config = dict(request.get("config", {}) or {})
+        option_count = max(2, min(int(config.get("optionCount", 3)), 4))
         result = self._host.invoke_model(
             "dialogue_reply_variants",
             {
                 "run_id": str(request.get("run_id", "")).strip(),
                 "session_id": str(request.get("session_id", "")).strip(),
-                "option_count": 3,
+                "option_count": option_count,
             },
         )
         suggestions = []

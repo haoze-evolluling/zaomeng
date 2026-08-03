@@ -1,6 +1,9 @@
+import base64
+import io
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from src.plugin_system import (
@@ -14,10 +17,16 @@ from src.web.service_facades.plugins import PluginServiceMixin
 
 
 class _Host:
+    def __init__(self) -> None:
+        self.last_capability = ""
+        self.last_payload = {}
+
     def read_dialogue_context(self, **kwargs):
         return {"run_id": kwargs["run_id"], "mode": "act"}
 
     def invoke_model(self, capability, payload):
+        self.last_capability = capability
+        self.last_payload = dict(payload)
         if capability == "dialogue_reply_variants":
             return {
                 "options": [
@@ -96,6 +105,43 @@ def create_plugin():
     return plugin_root
 
 
+def _plugin_package_bytes(
+    *, version: str = "1.0.0", api_version: str = "1", unsafe_path: str = ""
+) -> bytes:
+    manifest = {
+        "id": "com.example.installable",
+        "name": "Installable Demo",
+        "version": version,
+        "apiVersion": api_version,
+        "entry": "main.py",
+        "defaultEnabled": False,
+        "permissions": ["chat.context.read", "chat.draft.write"],
+        "contributes": {
+            "chatActions": [
+                {"id": "run", "title": "Run", "placement": "composer"}
+            ]
+        },
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "installable/plugin.json",
+            json.dumps(manifest, ensure_ascii=False),
+        )
+        archive.writestr(
+            "installable/main.py",
+            "class Demo:\n"
+            "    def activate(self, host): self.host = host\n"
+            "    def deactivate(self): pass\n"
+            "    def execute_chat_action(self, action_id, request):\n"
+            "        return {'suggestion': 'installed'}\n\n"
+            "def create_plugin(): return Demo()\n",
+        )
+        if unsafe_path:
+            archive.writestr(unsafe_path, "escape")
+    return output.getvalue()
+
+
 class PluginSystemTests(unittest.TestCase):
     def test_android_bundle_extracts_builtin_plugins_with_src_package(self):
         build_script = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
@@ -121,15 +167,20 @@ class PluginSystemTests(unittest.TestCase):
 
     def test_builtin_voice_polish_and_reply_variants_plugins(self):
         with tempfile.TemporaryDirectory() as tmp:
+            host = _Host()
             registry = PluginRegistry(
                 [Path("src/builtin_plugins")],
-                host_factory=lambda _plugin_id, _permissions: _Host(),
+                host_factory=lambda _plugin_id, _permissions: host,
                 state_path=Path(tmp) / "plugin-state.json",
+                config_path=Path(tmp) / "plugin-config.json",
             )
 
             plugin_ids = {plugin["id"] for plugin in registry.list_plugins()}
             self.assertIn("com.zaomeng.voice-polish", plugin_ids)
             self.assertIn("com.zaomeng.reply-variants", plugin_ids)
+            registry.update_config(
+                "com.zaomeng.reply-variants", {"optionCount": 4}
+            )
             polished = registry.invoke_chat_action(
                 "com.zaomeng.voice-polish",
                 "polish-draft",
@@ -144,6 +195,7 @@ class PluginSystemTests(unittest.TestCase):
                 "generate-variants",
                 {"run_id": "run-1", "session_id": "session-1"},
             )
+            self.assertEqual(host.last_payload["option_count"], 4)
 
         self.assertEqual(polished["suggestion"], "dialogue_suggestion:run-1")
         self.assertEqual(len(variants["suggestions"]), 2)
@@ -204,6 +256,11 @@ class PluginSystemTests(unittest.TestCase):
         self.assertIn("/api/web/plugins/refresh", paths)
         self.assertIn("/api/web/plugins/{plugin_id}/enable", paths)
         self.assertIn("/api/web/plugins/{plugin_id}/disable", paths)
+        self.assertIn("/api/web/plugins/packages/inspect", paths)
+        self.assertIn("/api/web/plugins/packages/{token}/install", paths)
+        self.assertIn("/api/web/plugins/{plugin_id}", paths)
+        self.assertIn("/api/web/plugins/{plugin_id}/logs", paths)
+        self.assertIn("/api/web/plugins/{plugin_id}/config", paths)
         self.assertIn(
             "/api/web/runs/{run_id}/dialogue/sessions/{session_id}"
             "/plugins/{plugin_id}/actions/{action_id}",
@@ -215,6 +272,94 @@ class PluginSystemTests(unittest.TestCase):
             paths,
         )
 
+    def test_plugin_package_requires_permission_confirmation_and_supports_update_uninstall(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            inspected = service.inspect_plugin_package(
+                filename="installable.zip",
+                content_base64=base64.b64encode(_plugin_package_bytes()).decode("ascii"),
+            )
+            self.assertEqual(inspected["operation"], "install")
+            self.assertEqual(
+                inspected["plugin"]["permissions"],
+                ["chat.context.read", "chat.draft.write"],
+            )
+            with self.assertRaisesRegex(PluginError, "确认插件权限"):
+                service.install_inspected_plugin_package(
+                    inspected["token"],
+                    confirm_permissions=False,
+                    allow_update=False,
+                )
+
+            inspected = service.inspect_plugin_package(
+                filename="installable.zip",
+                content_base64=base64.b64encode(_plugin_package_bytes()).decode("ascii"),
+            )
+            installed = service.install_inspected_plugin_package(
+                inspected["token"],
+                confirm_permissions=True,
+                allow_update=False,
+            )
+            self.assertEqual(installed["source"], "third-party")
+            service.enable_plugin("com.example.installable")
+            service.plugins.invoke_chat_action(
+                "com.example.installable", "run", {"run_id": "run-1"}
+            )
+            logs = service.list_plugin_logs("com.example.installable")["items"]
+            self.assertTrue(any(item["event"] == "chat_action_completed" for item in logs))
+
+            update = service.inspect_plugin_package(
+                filename="installable-v2.zip",
+                content_base64=base64.b64encode(
+                    _plugin_package_bytes(version="2.0.0")
+                ).decode("ascii"),
+            )
+            self.assertEqual(update["operation"], "update")
+            self.assertEqual(update["currentVersion"], "1.0.0")
+            updated = service.install_inspected_plugin_package(
+                update["token"],
+                confirm_permissions=True,
+                allow_update=True,
+            )
+            self.assertEqual(updated["version"], "2.0.0")
+
+            removed = service.uninstall_plugin("com.example.installable")
+            self.assertEqual(removed["status"], "uninstalled")
+            self.assertTrue(Path(removed["recoverablePath"]).is_dir())
+            self.assertNotIn(
+                "com.example.installable",
+                {item["id"] for item in service.list_plugins()},
+            )
+
+    def test_plugin_package_rejects_path_traversal(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            with self.assertRaisesRegex(PluginError, "不安全路径"):
+                service.inspect_plugin_package(
+                    filename="unsafe.zip",
+                    content_base64=base64.b64encode(
+                        _plugin_package_bytes(unsafe_path="../escape.txt")
+                    ).decode("ascii"),
+                )
+
+    def test_plugin_package_reports_incompatible_api_without_installing(self):
+        from src.web.workflow import WebRunService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = WebRunService(tmp)
+            inspected = service.inspect_plugin_package(
+                filename="future.zip",
+                content_base64=base64.b64encode(
+                    _plugin_package_bytes(api_version="2")
+                ).decode("ascii"),
+            )
+            self.assertFalse(inspected["compatible"])
+            self.assertEqual(inspected["operation"], "blocked")
+            self.assertIn("API 2", inspected["blockedReason"])
     def test_android_chat_surfaces_plugins_in_a_dedicated_menu(self):
         chat_screen = Path(
             "android/app/src/main/java/top/wkbin/zaomeng/feature/chat/ChatScreen.kt"

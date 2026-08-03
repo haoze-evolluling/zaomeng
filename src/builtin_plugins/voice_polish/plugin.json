@@ -11,6 +11,19 @@
     "chat.draft.write",
     "model.invoke"
   ],
+  "settings": [
+    {
+      "key": "strength",
+      "title": "润色强度",
+      "type": "enum",
+      "default": "balanced",
+      "options": [
+        {"value": "light", "label": "轻微"},
+        {"value": "balanced", "label": "均衡"},
+        {"value": "strong", "label": "强烈"}
+      ]
+    }
+  ],
   "contributes": {
     "chatActions": [
       {
