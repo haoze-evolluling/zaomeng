@@ -436,10 +436,10 @@ class PluginSystemTests(unittest.TestCase):
                 ).decode("ascii"),
             )
             with patch(
-                "src.web.service_facades.plugins.shutil.copytree",
+                "src.web.service_facades.plugins._move_plugin_directory",
                 side_effect=OSError("simulated copy failure"),
             ):
-                with self.assertRaisesRegex(OSError, "simulated copy failure"):
+                with self.assertRaisesRegex(PluginError, "simulated copy failure"):
                     service.install_inspected_plugin_package(
                         update["token"],
                         confirm_permissions=True,

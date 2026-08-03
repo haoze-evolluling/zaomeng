@@ -20,6 +20,11 @@ from src.web.chat import friendly_dialogue_llm_error
 from src.web.time_utils import utc_now
 
 
+def _move_plugin_directory(source: Path, target: Path) -> None:
+    """Atomically move a staged plugin into place on the same storage volume."""
+    source.replace(target)
+
+
 class PluginServiceMixin:
     def list_plugins(self) -> list[dict[str, Any]]:
         return self.plugins.list_plugins()
@@ -170,7 +175,7 @@ class PluginServiceMixin:
                 )
                 if target.exists():
                     target.replace(backup)
-                shutil.copytree(incoming, target)
+                _move_plugin_directory(incoming, target)
             self.plugins.refresh()
             installed = next(
                 (item for item in self.plugins.list_plugins() if item.get("id") == plugin_id),
@@ -187,13 +192,15 @@ class PluginServiceMixin:
             )
             shutil.rmtree(backup, ignore_errors=True)
             return installed
-        except Exception:
+        except Exception as exc:
             if target.exists():
                 shutil.rmtree(target, ignore_errors=True)
             if backup.exists():
                 backup.replace(target)
             self.plugins.refresh()
-            raise
+            if isinstance(exc, PluginError):
+                raise
+            raise PluginError(f"插件安装失败：{exc}") from exc
         finally:
             package_path.unlink(missing_ok=True)
             metadata_path.unlink(missing_ok=True)
