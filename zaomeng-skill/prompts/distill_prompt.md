@@ -20,7 +20,7 @@
 
 ## 覆盖要求
 
-输出时优先覆盖以下字段组；证据不足时允许留空或直接写 `证据不足`，禁止脑补：
+输出时优先覆盖以下字段组；证据不足时必须留空，禁止写 `证据不足`、`未知` 等占位词或省略号，也禁止脑补：
 
 1. 基础身份定位：`core_identity`、`faction_position`、`world_belong`、`story_role`、`stance_stability`、`identity_anchor`
 2. 世界观绑定：`world_rule_fit`、`rule_view`、`plot_restriction`
@@ -46,7 +46,7 @@
 4. 长期稳定性格高于一时冲动行为；核心底色高于阶段性反常；童年与成长烙印高于临时环境刺激。
 5. 若人物前后变化明显，必须配合 `timeline_stage`、`arc_*` 或 `contradiction_note` 区分，不得把后期状态强压到前期。
 6. `core_traits`、`typical_lines`、`decision_rules`、`strengths`、`weaknesses`、`fear_triggers` 等列表必须去重，避免同义反复。
-7. `gender`、`age_stage` 只能根据正文稳定证据来写，例如称谓、辈分、年龄序列、亲属关系、明确外貌年龄描写；拿不准就写 `证据不足`。
+7. `gender`、`age_stage` 只能根据正文稳定证据来写，例如称谓、辈分、年龄序列、亲属关系、明确外貌年龄描写；拿不准就留空。
 8. `appearance_feature` 只写原文稳定可见外在标识，不补影视化细节；`habit_action` 只写可重复观察到的小动作，不写一次性动作。
 9. `interest_claim`、`resource_dependence`、`trade_principle` 必须具体到该角色真正争夺、依赖、交换什么，禁止泛化成“想变强”“重利益”。
 10. `inner_conflict`、`self_cognition`、`private_self` 要分工明确：前者写冲突，中者写自评，后者写隐藏面。
@@ -66,7 +66,7 @@
 3. 用户纠错、`MEMORY` 中的长期修正、已确认的人设边界，默认优先级高于泛化描述。
 4. 不要把旧档案整段照抄回输出；要结合本次证据，产出一份新的完整 `PROFILE.generated.md`。
 5. 若旧字段与本次 excerpt 一致，可保持不变；若本次 excerpt 只补充局部信息，就只更新相关字段，不要无意义重写整份人格。
-6. 如果旧档案里某字段本来就是 `证据不足`，且本次 excerpt 仍无新证据，就继续保持 `证据不足`。
+6. 如果旧档案里某字段是占位词或省略号，且本次 excerpt 仍无新证据，就清空并保持为空。
 
 ## 多角色蒸馏差分要求
 
@@ -76,7 +76,7 @@
 2. `identity_anchor`、`soul_goal`、`background_imprint`、`social_mode`、`reward_logic`、`belief_anchor`、`temperament_type`、`stress_response`、`interest_claim`、`resource_dependence` 必须优先写角色独有差异。
 3. 共享场景优先用于提取 `key_bonds`、关系变化、互动节奏、冲突点，不得直接复制成多人共同的背景与人格字段。
 4. 如果多人同处同一事件，必须分别说明“此人做了什么、为什么这么做、暴露了什么特质”，而不是重复同一段剧情摘要。
-5. 若某字段与其他角色高度重合且缺少更强证据，宁可留空或写 `证据不足`，也不要输出模板化重复内容。
+5. 若某字段与其他角色高度重合且缺少更强证据，必须留空，不要输出占位词或模板化重复内容。
 
 ## 输出前自检
 

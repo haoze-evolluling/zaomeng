@@ -257,21 +257,47 @@ def parse_metric_map(value: Any) -> dict[str, Any]:
 
 def join_items(items: Iterable[Any]) -> str:
     if isinstance(items, str):
-        return items.strip()
-    cleaned = [str(item).strip() for item in items if str(item).strip()]
+        return _empty_placeholder(items)
+    cleaned = [_empty_placeholder(item) for item in items]
+    cleaned = [item for item in cleaned if item]
     return "；".join(cleaned)
 
 
 def join_metric_map(items: Dict[str, Any]) -> str:
     if not isinstance(items, dict):
         return ""
-    ordered = [f"{key}={value}" for key, value in items.items() if str(key).strip()]
+    ordered = [
+        f"{key}={cleaned}"
+        for key, value in items.items()
+        if str(key).strip() and (cleaned := _empty_placeholder(value))
+    ]
     return "；".join(ordered)
 
 
 def render_metric_map_or_insufficient(items: Dict[str, Any]) -> str:
-    rendered = join_metric_map(items)
-    return rendered or "证据不足"
+    return join_metric_map(items)
+
+
+def _empty_placeholder(value: Any) -> str:
+    text = re.sub(r"\s+", "", str(value or "").strip()).strip("`'\"“”‘’")
+    placeholders = {
+        "证据不足", "资料不足", "信息不足", "依据不足", "未知", "不详", "未详",
+        "暂缺", "待补充", "暂无资料", "暂无信息", "无法判断", "无法确定", "不能确定",
+    }
+    if text in placeholders or re.fullmatch(r"(?:\.{2,}|…+|⋯+|。{2,}|．{2,})", text):
+        return ""
+    return str(value or "").strip()
+
+
+def _sanitize_profile_placeholders(value: Any) -> Any:
+    if isinstance(value, str):
+        return _empty_placeholder(value)
+    if isinstance(value, list):
+        cleaned = [_sanitize_profile_placeholders(item) for item in value]
+        return [item for item in cleaned if item not in ("", None, [], {})]
+    if isinstance(value, dict):
+        return {key: _sanitize_profile_placeholders(item) for key, item in value.items()}
+    return value
 
 
 def _parse_markdown_kv(text: str) -> dict[str, str]:
@@ -476,7 +502,7 @@ def materialize_persona_bundle(
     sync_editable: bool = False,
 ) -> Path:
     target_dir = ensure_dir(persona_dir)
-    profile = normalize_profile(profile)
+    profile = _sanitize_profile_placeholders(normalize_profile(profile))
 
     profile_content = render_profile_md(profile)
     (target_dir / "PROFILE.generated.md").write_text(profile_content, encoding="utf-8")
@@ -721,6 +747,7 @@ def persona_file_is_active(
 
 
 def render_profile_md(profile: Dict[str, Any]) -> str:
+    profile = _sanitize_profile_placeholders(profile)
     speech_habits = profile.get("speech_habits", {}) if isinstance(profile.get("speech_habits", {}), dict) else {}
     emotion = profile.get("emotion_profile", {}) if isinstance(profile.get("emotion_profile", {}), dict) else {}
     arc = profile.get("arc", {}) if isinstance(profile.get("arc", {}), dict) else {}

@@ -17,7 +17,7 @@ def build_chunk_distill_guidance(
     lines = [
         "## CHUNK_MODE",
         f"- 当前是证据块 {chunk_index}/{chunk_total}：{chunk_label or '未命名证据块'}",
-        "- 这是分批蒸馏中的局部草稿，请尽量完整，但允许写“证据不足”。",
+        "- 这是分批蒸馏中的局部草稿，请尽量完整；没有证据的字段直接留空。",
         "- 不要因为当前块缺少信息，就虚构角色稳定特征。",
     ]
     if chunk_mode == "partial":
@@ -49,7 +49,7 @@ def build_distill_priority_guidance(character: str) -> str:
     lines = [
         "## PRIORITY_GUIDANCE",
         f"- 先判断 {character} 的核心身份、故事位置、立场锚点，再补深层人格。",
-        "- 性别与年龄阶段只允许根据正文中的稳定称谓、称呼、身份关系、年龄序列或明确描写来写；拿不准就写证据不足。",
+        "- 性别与年龄阶段只允许根据正文中的稳定称谓、称呼、身份关系、年龄序列或明确描写来写；拿不准就留空。",
         "- 外貌辨识与习惯动作优先写可重复观察到的外显特征，不要把一次性桥段动作误当成长期人设。",
         "- 再判断该角色长期稳定的价值观、信念支点、情绪失控阈值，不要被单一桥段带偏。",
         "- 最后收束到说话风格、典型反应、关系落点与 OOC 边界。",
@@ -69,10 +69,10 @@ def build_dialogue_style_guidance(evidence_lines: list[str]) -> str:
         "## DIALOGUE_STYLE",
         "- 语言风格不要只写抽象词，如“冷静克制”“温柔含蓄”。要尽量落到句子手感上。",
         "- 优先从对白里提取：口头禅、常见起句、连接词、句尾习惯、语气词、代表句。",
-        "- 如果没有稳定证据，可以写证据不足；不要硬编不属于这个角色的语气词。",
+        "- 如果没有稳定证据，对应字段留空；不要写占位词、省略号或硬编语气词。",
         "- typical_lines 应尽量保留角色自己的说话味道，不要改写成旁白总结句。",
         "### DIALOGUE_EVIDENCE",
-        *([f"- {item}" for item in evidence_lines] or ["- 证据不足"]),
+        *([f"- {item}" for item in evidence_lines] or ["- "]),
     ]
     return "\n".join(lines).strip()
 
@@ -86,9 +86,9 @@ def build_excerpt_stage_guidance(excerpt_stages: dict[str, Any]) -> str:
         "- 请把前段证据更多用于判断初始底色、出身烙印、早期立场。",
         "- 请把中段证据更多用于判断稳定互动模式、冲突升级、关系走向。",
         "- 请把后段证据更多用于判断弧线收束、信念变化、边界是否松动。",
-        f"### START\n{start or '证据不足'}",
-        f"### MID\n{mid or '证据不足'}",
-        f"### END\n{end or '证据不足'}",
+        f"### START\n{start}",
+        f"### MID\n{mid}",
+        f"### END\n{end}",
     ]
     return "\n".join(lines).strip()
 
@@ -114,7 +114,7 @@ def build_distill_llm_messages(
         f"同批角色：{'、'.join(peers) if peers else '无'}",
         "请严格根据以下 skill payload 输出该角色唯一一份完整的 PROFILE.generated.md Markdown。",
         "不要解释，不要输出代码块，不要补充额外前后缀。",
-        "如果证据不足，相关字段直接写“证据不足”。",
+        "如果证据不足，相关字段的冒号后留空；禁止填写“证据不足”“未知”等占位词或任何省略号。",
         priority_guidance,
         excerpt_stage_guidance,
         dialogue_style_guidance,
@@ -171,7 +171,7 @@ def build_distill_merge_messages(
         render_payload_section("LOGIC_CONSTRAINT", references.get("logic_constraint", "")),
         render_payload_section("VALIDATION_POLICY", references.get("validation_policy", "")),
         render_payload_section("REQUEST", focused_request),
-        render_payload_section("CHUNK_DRAFTS", drafts_text or "证据不足"),
+        render_payload_section("CHUNK_DRAFTS", drafts_text),
         render_payload_section("META", meta),
     ]
     return [

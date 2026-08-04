@@ -115,7 +115,7 @@ class DistillationInferenceMixin:
                 },
                 "end": {
                     "phase_summary": self._summarize_stage_window(stages.get("end", [])),
-                    "final_state": "未判定（证据不足）",
+                    "final_state": "",
                 },
             }
 
@@ -180,7 +180,7 @@ class DistillationInferenceMixin:
     @staticmethod
     def _summarize_stage_window(lines: List[str]) -> str:
         if not lines:
-            return "该阶段证据不足"
+            return ""
         first = str(lines[0]).strip()
         if len(first) > 40:
             first = f"{first[:40]}..."

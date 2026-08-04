@@ -20,7 +20,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from urllib import error, request
+
+import requests
 
 try:
     import tiktoken
@@ -1295,35 +1296,42 @@ class LLMClient:
             request_headers.update(headers)
 
         timeout = float(self.llm_config.get("timeout_seconds", 120) or 120)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = request.Request(
-            url=url, data=body, headers=request_headers, method="POST"
-        )
         attempts = self._retry_attempts()
         retry_status_codes = self._retry_status_codes()
         last_error: Optional[Exception] = None
 
         for attempt in range(1, attempts + 1):
             try:
-                with request.urlopen(req, timeout=timeout) as resp:
-                    charset = resp.headers.get_content_charset() or "utf-8"
-                    body_text = resp.read().decode(charset)
+                with requests.post(
+                    url,
+                    json=payload,
+                    headers=request_headers,
+                    timeout=timeout,
+                ) as resp:
+                    body_text = resp.text
+                    if resp.status_code >= 400:
+                        raise requests.HTTPError(
+                            f"{resp.status_code} {resp.reason}", response=resp
+                        )
                     return json.loads(body_text)
-            except error.HTTPError as exc:
-                body_text = exc.read().decode("utf-8", errors="replace")
+            except requests.HTTPError as exc:
+                response = exc.response
+                status_code = int(response.status_code) if response is not None else 0
+                reason = str(response.reason) if response is not None else str(exc)
+                body_text = response.text if response is not None else ""
                 last_error = exc
-                if attempt < attempts and exc.code in retry_status_codes:
-                    self._sleep_before_retry(attempt, f"HTTP {exc.code} {exc.reason}")
+                if attempt < attempts and status_code in retry_status_codes:
+                    self._sleep_before_retry(attempt, f"HTTP {status_code} {reason}")
                     continue
                 raise LLMRequestError(
-                    f"LLM 请求失败: {exc.code} {exc.reason} | {body_text}"
+                    f"LLM 请求失败: {status_code} {reason} | {body_text}"
                 ) from exc
-            except error.URLError as exc:
+            except requests.RequestException as exc:
                 last_error = exc
                 if attempt < attempts:
-                    self._sleep_before_retry(attempt, f"connection error: {exc.reason}")
+                    self._sleep_before_retry(attempt, f"connection error: {exc}")
                     continue
-                raise LLMRequestError(f"LLM 连接失败: {exc.reason}") from exc
+                raise LLMRequestError(f"LLM 连接失败: {exc}") from exc
             except OSError as exc:
                 last_error = exc
                 if attempt < attempts:
@@ -1358,7 +1366,6 @@ class LLMClient:
             request_headers.update(headers)
 
         timeout = float(self.llm_config.get("timeout_seconds", 120) or 120)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         attempts = self._retry_attempts()
         retry_status_codes = self._retry_status_codes()
         last_error: Optional[Exception] = None
@@ -1366,18 +1373,23 @@ class LLMClient:
 
         for attempt in range(1, attempts + 1):
             saw_event = False
-            req = request.Request(
-                url=url,
-                data=body,
-                headers=request_headers,
-                method="POST",
-            )
             try:
-                with request.urlopen(req, timeout=timeout) as resp:
-                    charset = resp.headers.get_content_charset() or "utf-8"
-                    for raw_line in resp:
+                with requests.post(
+                    url,
+                    json=payload,
+                    headers=request_headers,
+                    timeout=timeout,
+                    stream=True,
+                ) as resp:
+                    if resp.status_code >= 400:
+                        raise requests.HTTPError(
+                            f"{resp.status_code} {resp.reason}", response=resp
+                        )
+                    for raw_line in resp.iter_lines(decode_unicode=True):
                         if isinstance(raw_line, bytes):
-                            line = raw_line.decode(charset, errors="replace")
+                            line = raw_line.decode(
+                                resp.encoding or "utf-8", errors="replace"
+                            )
                         else:
                             line = str(raw_line)
                         line = line.rstrip("\r\n")
@@ -1411,29 +1423,32 @@ class LLMClient:
                             "LLM stream ended before its completion event."
                         )
                     return event_count
-            except error.HTTPError as exc:
-                body_text = exc.read().decode("utf-8", errors="replace")
+            except requests.HTTPError as exc:
+                response = exc.response
+                status_code = int(response.status_code) if response is not None else 0
+                reason = str(response.reason) if response is not None else str(exc)
+                body_text = response.text if response is not None else ""
                 last_error = exc
                 if (
                     not saw_event
                     and attempt < attempts
-                    and exc.code in retry_status_codes
+                    and status_code in retry_status_codes
                 ):
                     self._sleep_before_retry(
-                        attempt, f"HTTP {exc.code} {exc.reason}"
+                        attempt, f"HTTP {status_code} {reason}"
                     )
                     continue
                 raise LLMRequestError(
-                    f"LLM 请求失败: {exc.code} {exc.reason} | {body_text}"
+                    f"LLM 请求失败: {status_code} {reason} | {body_text}"
                 ) from exc
-            except error.URLError as exc:
+            except requests.RequestException as exc:
                 last_error = exc
                 if not saw_event and attempt < attempts:
                     self._sleep_before_retry(
-                        attempt, f"connection error: {exc.reason}"
+                        attempt, f"connection error: {exc}"
                     )
                     continue
-                raise LLMRequestError(f"LLM 连接失败: {exc.reason}") from exc
+                raise LLMRequestError(f"LLM 连接失败: {exc}") from exc
             except OSError as exc:
                 last_error = exc
                 if not saw_event and attempt < attempts:

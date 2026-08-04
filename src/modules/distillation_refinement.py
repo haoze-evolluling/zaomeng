@@ -60,7 +60,7 @@ class DistillationRefinementMixin:
                 f"{messages[0]['content']}\n\n"
                 "额外要求：\n"
                 "- 如果关键字段与同批角色重合，请优先改写成更能体现该角色差异的表述。\n"
-                "- 若证据无法支持明显区分，就直接写“证据不足”，不要保留通用空话。\n"
+                "- 若证据无法支持明显区分，对应字段必须留空，不要写占位词或省略号。\n"
                 "- 输出仍需严格遵守 `- key: value` 的 Markdown 结构。\n"
             )
             messages[1]["content"] = "\n\n".join(
@@ -463,7 +463,7 @@ class DistillationRefinementMixin:
             if not normalized or normalized in peer_values:
                 continue
             return str(candidate).strip()
-        return "证据不足"
+        return ""
 
     def _field_candidate_values(
         self,

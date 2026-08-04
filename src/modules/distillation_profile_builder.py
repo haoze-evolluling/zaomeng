@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 
 class DistillationProfileBuilderMixin:
-    _INSUFFICIENT_EVIDENCE = "证据不足"
+    _INSUFFICIENT_EVIDENCE = ""
 
     def _build_profile(
         self,

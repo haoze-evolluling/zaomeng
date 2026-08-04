@@ -5,6 +5,7 @@ import unicodedata
 from typing import Any
 
 from src.skill_support.novel_preparation import CHARACTER_VARIANT_MAP, MATCH_IGNORED_PATTERN
+from src.utils.persona_placeholders import empty_persona_marker, is_empty_persona_marker
 from src.web.review.profile_evidence import looks_like_dialogue_sentence, looks_like_thought_or_evaluation_sentence
 
 
@@ -49,7 +50,7 @@ def collect_profile_repair_targets(
         if not value:
             issues[field] = "为空"
             continue
-        if value == "证据不足":
+        if is_empty_persona_marker(value):
             continue
         if looks_like_unstable_profile_scalar(value):
             issues[field] = f"像剧情碎句或叙述片段 -> {value}"
@@ -99,21 +100,21 @@ def collect_profile_completion_groups(
 def profile_field_is_effectively_empty(profile: dict[str, Any], field: str) -> bool:
     if field == "cadence":
         value = str((profile.get("speech_habits", {}) or {}).get("cadence", "")).strip() or str(profile.get("cadence", "")).strip()
-        return (not value) or value == "证据不足"
+        return (not value) or is_empty_persona_marker(value)
     if field in _SPEECH_LIST_FIELDS:
         values = profile_list_value(profile, field)
-        return len(values) == 0 or values == ["证据不足"]
+        return len(values) == 0 or all(is_empty_persona_marker(item) for item in values)
     if field in _EMOTION_FIELDS:
         value = str((profile.get("emotion_profile", {}) or {}).get(field, "")).strip() or str(profile.get(field, "")).strip()
-        return (not value) or value == "证据不足"
+        return (not value) or is_empty_persona_marker(value)
     value = profile.get(field, "")
     if isinstance(value, list):
         items = [str(item).strip() for item in value if str(item).strip()]
-        return len(items) == 0 or items == ["证据不足"]
+        return len(items) == 0 or all(is_empty_persona_marker(item) for item in items)
     if isinstance(value, dict):
         return not bool(value)
     text = str(value or "").strip()
-    return (not text) or text == "证据不足"
+    return (not text) or is_empty_persona_marker(text)
 
 
 def merge_profile_patch(
@@ -129,7 +130,7 @@ def merge_profile_patch(
             continue
         field, raw_value = line[2:].split(":", 1)
         key = str(field or "").strip()
-        value_text = str(raw_value or "").strip()
+        value_text = empty_persona_marker(raw_value)
         if not key:
             continue
         if key in profile_map_fields:
@@ -139,7 +140,7 @@ def merge_profile_patch(
             continue
         if key in profile_list_fields:
             items = split_profile_list_value(value_text)
-            profile[key] = items or (["证据不足"] if value_text == "证据不足" else [])
+            profile[key] = [item for item in items if not is_empty_persona_marker(item)]
             if key in _SPEECH_LIST_FIELDS:
                 profile.setdefault("speech_habits", {})
                 profile["speech_habits"][key] = list(profile[key])
@@ -166,18 +167,18 @@ def apply_profile_missing_fallbacks(
         if field in profile_map_fields:
             continue
         if field in profile_list_fields:
-            profile[field] = ["证据不足"]
+            profile[field] = []
             if field in _SPEECH_LIST_FIELDS:
                 profile.setdefault("speech_habits", {})
-                profile["speech_habits"][field] = ["证据不足"]
+                profile["speech_habits"][field] = []
             continue
-        profile[field] = "证据不足"
+        profile[field] = ""
         if field == "cadence":
             profile.setdefault("speech_habits", {})
-            profile["speech_habits"]["cadence"] = "证据不足"
+            profile["speech_habits"]["cadence"] = ""
         elif field in _EMOTION_FIELDS:
             profile.setdefault("emotion_profile", {})
-            profile["emotion_profile"][field] = "证据不足"
+            profile["emotion_profile"][field] = ""
 
 
 def sanitize_profile_identity_fields(profile: dict[str, Any]) -> None:
@@ -186,11 +187,11 @@ def sanitize_profile_identity_fields(profile: dict[str, Any]) -> None:
     if gender:
         profile["gender"] = gender
     elif "gender" in profile and str(profile.get("gender", "")).strip():
-        profile["gender"] = "证据不足"
+        profile["gender"] = ""
     if age_stage:
         profile["age_stage"] = age_stage
     elif "age_stage" in profile and str(profile.get("age_stage", "")).strip():
-        profile["age_stage"] = "证据不足"
+        profile["age_stage"] = ""
 
 
 def sanitize_profile_surface_fields(profile: dict[str, Any]) -> None:
@@ -199,11 +200,11 @@ def sanitize_profile_surface_fields(profile: dict[str, Any]) -> None:
     if appearance_feature:
         profile["appearance_feature"] = appearance_feature
     elif "appearance_feature" in profile and str(profile.get("appearance_feature", "")).strip():
-        profile["appearance_feature"] = "证据不足"
+        profile["appearance_feature"] = ""
     if habit_action:
         profile["habit_action"] = habit_action
     elif "habit_action" in profile and str(profile.get("habit_action", "")).strip():
-        profile["habit_action"] = "证据不足"
+        profile["habit_action"] = ""
 
 
 def split_profile_list_value(value: str) -> list[str]:
@@ -354,8 +355,8 @@ def looks_like_unstable_profile_scalar(value: str) -> bool:
 
 def _sanitize_gender_value(value: Any) -> str:
     text = str(value or "").strip()
-    if not text or text == "证据不足":
-        return text
+    if not text or is_empty_persona_marker(text):
+        return ""
     if looks_like_unstable_profile_scalar(text) or len(text) > 8:
         return ""
     normalized = text.replace(" ", "")
@@ -369,8 +370,8 @@ def _sanitize_gender_value(value: Any) -> str:
 
 def _sanitize_age_stage_value(value: Any) -> str:
     text = str(value or "").strip()
-    if not text or text == "证据不足":
-        return text
+    if not text or is_empty_persona_marker(text):
+        return ""
     if looks_like_unstable_profile_scalar(text) or len(text) > 16:
         return ""
     normalized = text.replace(" ", "")
@@ -382,8 +383,8 @@ def _sanitize_age_stage_value(value: Any) -> str:
 
 def _sanitize_appearance_feature_value(value: Any) -> str:
     text = str(value or "").strip()
-    if not text or text == "证据不足":
-        return text
+    if not text or is_empty_persona_marker(text):
+        return ""
     normalized = text.replace(" ", "")
     if (
         looks_like_unstable_profile_scalar(text)
@@ -397,8 +398,8 @@ def _sanitize_appearance_feature_value(value: Any) -> str:
 
 def _sanitize_habit_action_value(value: Any) -> str:
     text = str(value or "").strip()
-    if not text or text == "证据不足":
-        return text
+    if not text or is_empty_persona_marker(text):
+        return ""
     if (
         looks_like_unstable_profile_scalar(text)
         or len(text) > 40

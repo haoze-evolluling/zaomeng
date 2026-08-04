@@ -251,7 +251,7 @@ def _field_issue(result: dict[str, Any]) -> dict[str, Any]:
     if status in {"missing", "insufficient"}:
         severity = "high" if high_priority else "medium"
         message = f"{label}尚未形成可用结论。"
-        suggestion = f"补充{label}，无法从正文确认时保留证据不足并增加对应原文。"
+        suggestion = f"补充{label}；无法从正文确认时保持为空，并增加对应原文。"
     else:
         severity = "medium" if high_priority else "low"
         message = f"{label}内容过薄，难以稳定约束人物表现。"

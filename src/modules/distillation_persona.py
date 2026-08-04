@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 
 from src.utils.file_utils import ensure_dir, safe_filename
+from src.utils.persona_placeholders import empty_persona_marker, sanitize_persona_value
 
 
 def export_persona_bundle(
@@ -16,6 +17,7 @@ def export_persona_bundle(
     default_nav_load_order: Iterable[str],
     persona_file_catalog: Dict[str, Dict[str, Any]],
 ) -> None:
+    profile = sanitize_persona_value(profile)
     char_dir = ensure_dir(out_dir / safe_filename(profile.get("name", "unnamed")))
     profile_content = render_profile_md(profile)
     (char_dir / "PROFILE.generated.md").write_text(profile_content, encoding="utf-8")
@@ -144,6 +146,7 @@ def persona_file_is_active(
 
 
 def render_profile_md(profile: Dict[str, Any]) -> str:
+    profile = sanitize_persona_value(profile)
     speech_habits = profile.get("speech_habits", {}) if isinstance(profile.get("speech_habits", {}), dict) else {}
     emotion = profile.get("emotion_profile", {}) if isinstance(profile.get("emotion_profile", {}), dict) else {}
     arc = profile.get("arc", {}) if isinstance(profile.get("arc", {}), dict) else {}
@@ -426,13 +429,18 @@ def should_create_trauma_md(profile: Dict[str, Any]) -> bool:
 
 def join_items(items: Iterable[Any]) -> str:
     if isinstance(items, str):
-        return items.strip()
-    cleaned = [str(item).strip() for item in items if str(item).strip()]
+        return empty_persona_marker(items)
+    cleaned = [empty_persona_marker(item) for item in items]
+    cleaned = [item for item in cleaned if item]
     return "；".join(cleaned)
 
 
 def join_metric_map(items: Dict[str, Any]) -> str:
     if not isinstance(items, dict):
         return ""
-    ordered = [f"{key}={value}" for key, value in items.items() if str(key).strip()]
+    ordered = [
+        f"{key}={cleaned}"
+        for key, value in items.items()
+        if str(key).strip() and (cleaned := empty_persona_marker(value))
+    ]
     return "；".join(ordered)

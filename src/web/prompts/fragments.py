@@ -61,9 +61,9 @@ def build_profile_group_task_block(
         else f"请只补齐这一组字段：{group_name}"
     )
     strictness_line = (
-        "如果这一组里还有空字段，也一并补齐；只有正文确实没有稳定证据时才写“证据不足”。"
+        "如果这一组里还有空字段，也一并补齐；正文确实没有稳定证据时保持为空。"
         if task_kind == "repair"
-        else "如果正文没有稳定证据，不要留空，直接写“证据不足”。"
+        else "如果正文没有稳定证据，对应字段保持为空。"
     )
     instruction_lines = [
         f"## {task_title}",
@@ -85,7 +85,7 @@ def build_profile_group_task_block(
                 "",
                 "### FIELD_EVIDENCE_NOTE",
                 "- gender / age_stage 只能依据正文中的稳定称谓、亲属称呼、年龄序列、身份辈分或明确描写来写。",
-                "- 不能因为角色气质、名字印象或影视常识去脑补；拿不准就直接写“证据不足”。",
+                "- 不能因为角色气质、名字印象或影视常识去脑补；拿不准就留空，禁止写占位词或省略号。",
             ]
         )
     if repair_targets:
@@ -100,7 +100,7 @@ def build_profile_group_task_block(
         [
             "",
             "### DIALOGUE_EVIDENCE",
-            *([f"- {item}" for item in list(dialogue_evidence or [])] or ["- 证据不足"]),
+            *([f"- {item}" for item in list(dialogue_evidence or [])] or ["- "]),
             "",
             render_payload_section("DISTILL_PROMPT_RULES", extract_markdown_section(distill_prompt, "规则")),
             render_payload_section("DISTILL_PROMPT_DIFF", extract_markdown_section(distill_prompt, "多角色蒸馏差分要求")),

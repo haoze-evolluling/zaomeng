@@ -455,7 +455,7 @@ def _build_distill_merge_payload_template(payload: dict[str, Any], chunk_entries
             "merge_guidance": (
                 "请把多个局部 PROFILE.generated.md 草稿合并成最终 PROFILE.generated.md。"
                 "优先保留跨块一致、长期稳定、与已有增量档案兼容的人格字段；"
-                "如果字段仅由单个局部桥段支撑，宁可写“证据不足”，不要把剧情碎句直接抄成稳定人格。"
+                "如果字段仅由单个局部桥段支撑，宁可留空；不要写占位词、省略号或把剧情碎句抄成稳定人格。"
             ),
         },
         "meta": {
@@ -500,7 +500,7 @@ def _build_distill_merge_prompt() -> str:
             "1. 只保留稳定、长期、可复用的人格信息。",
             "2. 冲突字段优先采用跨块重复出现或更符合全局弧线的一方。",
             "3. 不要把剧情原句、临时桥段、旁枝角色的台词误写进目标角色字段。",
-            "4. 如证据不够，允许写“证据不足”，不要虚构。",
+            "4. 如证据不够，对应字段必须留空；禁止写占位词或省略号，也不要虚构。",
             "5. 输出必须仍然是完整的 PROFILE.generated.md 结构化 Markdown。",
         ]
     ).strip()
@@ -563,7 +563,7 @@ def _build_chunk_distill_guidance(*, chunk_label: str = "", chunk_index: int = 0
     lines = [
         "## CHUNK_MODE",
         f"- 当前是证据块 {chunk_index}/{chunk_total}：{chunk_label or '未命名证据块'}",
-        "- 这是分批蒸馏中的局部草稿，请尽量完整，但允许写“证据不足”。",
+        "- 这是分批蒸馏中的局部草稿，请尽量完整；没有证据的字段直接留空。",
         "- 不要因为当前块缺少信息，就虚构角色稳定特征。",
         "- 输出仍然必须是 PROFILE.generated.md 格式，但这是局部草案，后续还会汇总。",
     ]

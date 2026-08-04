@@ -157,8 +157,8 @@ class PersonaSchemaTests(unittest.TestCase):
             "age_stage": "只见他转过来时仍带着少年人的意气",
         }
         sanitize_profile_identity_fields(unstable_profile)
-        self.assertEqual(unstable_profile["gender"], "证据不足")
-        self.assertEqual(unstable_profile["age_stage"], "证据不足")
+        self.assertEqual(unstable_profile["gender"], "")
+        self.assertEqual(unstable_profile["age_stage"], "")
 
     def test_sanitize_profile_surface_fields_keeps_stable_and_drops_transient_values(self):
         profile = {
@@ -174,8 +174,8 @@ class PersonaSchemaTests(unittest.TestCase):
             "habit_action": "他说完就立刻转身离开",
         }
         sanitize_profile_surface_fields(transient_profile)
-        self.assertEqual(transient_profile["appearance_feature"], "证据不足")
-        self.assertEqual(transient_profile["habit_action"], "证据不足")
+        self.assertEqual(transient_profile["appearance_feature"], "")
+        self.assertEqual(transient_profile["habit_action"], "")
 
     def test_persona_field_completion_messages_add_overlap_guidance_for_sensitive_fields(self):
         messages = build_persona_field_completion_messages(

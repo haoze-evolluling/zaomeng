@@ -5,6 +5,7 @@
 
 # Core
 PyYAML>=6.0
+requests>=2.31.0,<3.0.0
 
 # Text processing
 jieba>=0.42.1

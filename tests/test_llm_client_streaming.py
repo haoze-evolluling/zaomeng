@@ -13,20 +13,20 @@ from src.utils.file_utils import clear_markdown_data_cache
 from src.web.chat.runtime import generate_dialogue_responses_for_run
 
 
-class _Headers:
-    def get_content_charset(self):
-        return "utf-8"
-
-
 class _StreamResponse:
-    def __init__(self, lines):
+    def __init__(self, lines, *, status_code=200, reason="OK"):
         self._lines = [
             line if isinstance(line, bytes) else str(line).encode("utf-8")
             for line in lines
         ]
-        self.headers = _Headers()
+        self.status_code = status_code
+        self.reason = reason
+        self.encoding = "utf-8"
+        self.text = "".join(
+            line.decode("utf-8", errors="replace") for line in self._lines
+        )
 
-    def __iter__(self):
+    def iter_lines(self, decode_unicode=False):
         return iter(self._lines)
 
     def __enter__(self):
@@ -37,18 +37,16 @@ class _StreamResponse:
 
 
 class _FailingStreamResponse(_StreamResponse):
-    def __iter__(self):
+    def iter_lines(self, decode_unicode=False):
         yield from self._lines
         raise ConnectionResetError("connection closed after a partial response")
 
 
 class _JsonResponse:
     def __init__(self, payload):
-        self._payload = json.dumps(payload).encode("utf-8")
-        self.headers = _Headers()
-
-    def read(self):
-        return self._payload
+        self.text = json.dumps(payload)
+        self.status_code = 200
+        self.reason = "OK"
 
     def __enter__(self):
         return self
@@ -132,8 +130,8 @@ class LLMClientStreamingTests(unittest.TestCase):
         )
         deltas = []
         with patch(
-            "src.core.llm_client.request.urlopen", return_value=response
-        ) as urlopen:
+            "src.core.llm_client.requests.post", return_value=response
+        ) as post:
             result = client.chat_completion_stream(
                 [{"role": "user", "content": "继续"}],
                 on_delta=deltas.append,
@@ -149,7 +147,7 @@ class LLMClientStreamingTests(unittest.TestCase):
         self.assertEqual(result["completion_tokens"], 7)
         self.assertEqual(result["cache_usage"]["hit_tokens"], 5)
         self.assertEqual(client.request_count, 1)
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertTrue(request_payload["stream"])
         self.assertEqual(request_payload["stream_options"], {"include_usage": True})
 
@@ -195,8 +193,8 @@ class LLMClientStreamingTests(unittest.TestCase):
         )
         deltas = []
         with patch(
-            "src.core.llm_client.request.urlopen", return_value=response
-        ) as urlopen:
+            "src.core.llm_client.requests.post", return_value=response
+        ) as post:
             result = client.chat_completion_stream(
                 [
                     {"role": "system", "content": "固定资料", "cache_static": True},
@@ -212,7 +210,7 @@ class LLMClientStreamingTests(unittest.TestCase):
         self.assertEqual(result["prompt_tokens"], 100)
         self.assertEqual(result["completion_tokens"], 6)
         self.assertEqual(result["cache_usage"]["hit_tokens"], 70)
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertTrue(request_payload["stream"])
         self.assertEqual(
             request_payload["system"][0]["cache_control"], {"type": "ephemeral"}
@@ -250,8 +248,8 @@ class LLMClientStreamingTests(unittest.TestCase):
         )
         deltas = []
         with patch(
-            "src.core.llm_client.request.urlopen", return_value=response
-        ) as urlopen:
+            "src.core.llm_client.requests.post", return_value=response
+        ) as post:
             result = client.chat_completion_stream(
                 [{"role": "user", "content": "打招呼"}],
                 on_delta=deltas.append,
@@ -262,14 +260,14 @@ class LLMClientStreamingTests(unittest.TestCase):
         self.assertEqual(result["model"], "qwen-local")
         self.assertEqual(result["prompt_tokens"], 9)
         self.assertEqual(result["completion_tokens"], 2)
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertTrue(request_payload["stream"])
 
     def test_host_bridge_falls_back_to_one_complete_delta(self):
         client = self._make_client("host-bridge", host_bridge=True)
         deltas = []
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_JsonResponse(
                 {
                     "content": "桥接完整回复",
@@ -301,8 +299,8 @@ class LLMClientStreamingTests(unittest.TestCase):
         )
         deltas = []
         with patch(
-            "src.core.llm_client.request.urlopen", return_value=response
-        ) as urlopen:
+            "src.core.llm_client.requests.post", return_value=response
+        ) as post:
             with self.assertRaises(LLMRequestError):
                 client.chat_completion_stream(
                     [{"role": "user", "content": "继续"}],
@@ -310,7 +308,7 @@ class LLMClientStreamingTests(unittest.TestCase):
                 )
 
         self.assertEqual(deltas, ["partial"])
-        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(post.call_count, 1)
 
     def test_clean_eof_without_provider_completion_event_is_rejected(self):
         cases = (
@@ -348,9 +346,9 @@ class LLMClientStreamingTests(unittest.TestCase):
                 client = self._make_client(provider)
                 deltas = []
                 with patch(
-                    "src.core.llm_client.request.urlopen",
+                    "src.core.llm_client.requests.post",
                     return_value=_StreamResponse(lines),
-                ) as urlopen:
+                ) as post:
                     with self.assertRaisesRegex(
                         LLMRequestError,
                         "completion event",
@@ -361,7 +359,7 @@ class LLMClientStreamingTests(unittest.TestCase):
                         )
 
                 self.assertEqual(deltas, ["partial"])
-                self.assertEqual(urlopen.call_count, 1)
+                self.assertEqual(post.call_count, 1)
 
 
 class _RuntimeConfig:

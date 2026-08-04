@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
-import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from urllib import error
+
+import requests
 
 from src.core.config import Config, clear_config_cache
 from src.core.exceptions import LLMRequestError
@@ -14,18 +14,11 @@ from src.core.llm_client import LLMClient
 from src.utils.file_utils import clear_markdown_data_cache
 
 
-class _Headers:
-    def get_content_charset(self):
-        return "utf-8"
-
-
 class _Response:
-    def __init__(self, payload):
-        self._payload = json.dumps(payload).encode("utf-8")
-        self.headers = _Headers()
-
-    def read(self):
-        return self._payload
+    def __init__(self, payload, *, status_code=200, reason="OK"):
+        self.text = json.dumps(payload)
+        self.status_code = status_code
+        self.reason = reason
 
     def __enter__(self):
         return self
@@ -95,48 +88,44 @@ class LLMRetryTests(unittest.TestCase):
     def test_post_json_retries_url_errors_then_succeeds(self):
         client = self._make_client()
         with patch(
-            "src.core.llm_client.request.urlopen",
-            side_effect=[error.URLError("temporary"), _Response({"ok": True})],
-        ) as urlopen, patch("src.core.llm_client.time.sleep") as sleep:
+            "src.core.llm_client.requests.post",
+            side_effect=[requests.ConnectionError("temporary"), _Response({"ok": True})],
+        ) as post, patch("src.core.llm_client.time.sleep") as sleep:
             result = client._post_json(
                 url="https://example.test", payload={"ping": "pong"}
             )
 
         self.assertEqual(result, {"ok": True})
-        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(post.call_count, 2)
         sleep.assert_called_once_with(0.01)
 
     def test_post_json_wraps_connection_reset_as_llm_request_error(self):
         client = self._make_client()
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             side_effect=ConnectionResetError(
                 "[WinError 10054] remote host closed connection"
             ),
-        ) as urlopen, patch("src.core.llm_client.time.sleep") as sleep:
+        ) as post, patch("src.core.llm_client.time.sleep") as sleep:
             with self.assertRaises(LLMRequestError) as ctx:
                 client._post_json(url="https://example.test", payload={"ping": "pong"})
 
         self.assertIn("LLM 连接失败", str(ctx.exception))
-        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(post.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
 
     def test_post_json_does_not_retry_non_retryable_http_errors(self):
         client = self._make_client()
-        http_error = error.HTTPError(
-            url="https://example.test",
-            code=400,
-            msg="Bad Request",
-            hdrs=None,
-            fp=io.BytesIO(b'{"error":"bad request"}'),
-        )
         with patch(
-            "src.core.llm_client.request.urlopen", side_effect=http_error
-        ) as urlopen, patch("src.core.llm_client.time.sleep") as sleep:
+            "src.core.llm_client.requests.post",
+            return_value=_Response(
+                {"error": "bad request"}, status_code=400, reason="Bad Request"
+            ),
+        ) as post, patch("src.core.llm_client.time.sleep") as sleep:
             with self.assertRaises(LLMRequestError):
                 client._post_json(url="https://example.test", payload={"ping": "pong"})
 
-        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(post.call_count, 1)
         sleep.assert_not_called()
 
     def test_local_provider_auto_promotes_to_openai_when_env_key_exists(self):
@@ -178,7 +167,7 @@ class LLMRetryTests(unittest.TestCase):
             {"ZAOMENG_HOST_BRIDGE_URL": "http://127.0.0.1:8765"},
             clear=False,
         ), patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "content": "桥接回复",
@@ -192,7 +181,7 @@ class LLMRetryTests(unittest.TestCase):
                     },
                 }
             ),
-        ) as urlopen:
+        ) as post:
             result = client.chat_completion(
                 [
                     {
@@ -209,13 +198,13 @@ class LLMRetryTests(unittest.TestCase):
         self.assertEqual(result["model"], "host-llm")
         self.assertEqual(result["cache_usage"]["hit_tokens"], 8)
         self.assertAlmostEqual(result["cache_usage"]["hit_rate"], 8 / 11)
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertNotIn("cache_static", request_payload["messages"][0])
 
     def test_openai_like_extracts_text_from_content_parts(self):
         client = self._make_client()
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "choices": [
@@ -242,7 +231,7 @@ class LLMRetryTests(unittest.TestCase):
     def test_openai_cache_usage_is_normalized_and_internal_hint_is_stripped(self):
         client = self._make_client()
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "choices": [{"message": {"content": "回复"}}],
@@ -254,7 +243,7 @@ class LLMRetryTests(unittest.TestCase):
                     },
                 }
             ),
-        ) as urlopen:
+        ) as post:
             result = client.chat_completion(
                 [
                     {
@@ -277,13 +266,13 @@ class LLMRetryTests(unittest.TestCase):
                 "hit_rate": 0.64,
             },
         )
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertNotIn("cache_static", request_payload["messages"][0])
 
     def test_deepseek_cache_hit_and_miss_are_not_double_counted(self):
         client = self._make_client(provider="openai-compatible")
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "choices": [{"message": {"content": "回复"}}],
@@ -306,7 +295,7 @@ class LLMRetryTests(unittest.TestCase):
     def test_anthropic_cache_usage_and_static_system_block_are_normalized(self):
         client = self._make_client(provider="anthropic")
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "content": [{"type": "text", "text": "回复"}],
@@ -319,7 +308,7 @@ class LLMRetryTests(unittest.TestCase):
                     },
                 }
             ),
-        ) as urlopen:
+        ) as post:
             result = client.chat_completion(
                 [
                     {
@@ -343,7 +332,7 @@ class LLMRetryTests(unittest.TestCase):
                 "hit_rate": 0.7,
             },
         )
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertEqual(
             request_payload["system"][0]["cache_control"], {"type": "ephemeral"}
         )
@@ -353,14 +342,14 @@ class LLMRetryTests(unittest.TestCase):
     def test_anthropic_unmarked_system_messages_keep_string_payload(self):
         client = self._make_client(provider="anthropic")
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "content": [{"type": "text", "text": "回复"}],
                     "usage": {"input_tokens": 10, "output_tokens": 2},
                 }
             ),
-        ) as urlopen:
+        ) as post:
             result = client.chat_completion(
                 [
                     {"role": "system", "content": "角色资料"},
@@ -369,7 +358,7 @@ class LLMRetryTests(unittest.TestCase):
                 ]
             )
 
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertEqual(request_payload["system"], "角色资料\n\n场景资料")
         self.assertFalse(result["cache_usage"]["observable"])
         self.assertIsNone(result["cache_usage"]["hit_rate"])
@@ -377,7 +366,7 @@ class LLMRetryTests(unittest.TestCase):
     def test_ollama_strips_internal_cache_hint_and_marks_usage_unobservable(self):
         client = self._make_local_client()
         with patch(
-            "src.core.llm_client.request.urlopen",
+            "src.core.llm_client.requests.post",
             return_value=_Response(
                 {
                     "message": {"content": "回复"},
@@ -385,7 +374,7 @@ class LLMRetryTests(unittest.TestCase):
                     "eval_count": 3,
                 }
             ),
-        ) as urlopen:
+        ) as post:
             result = client._chat_ollama(
                 messages=[
                     {
@@ -399,7 +388,7 @@ class LLMRetryTests(unittest.TestCase):
                 max_tokens=None,
             )
 
-        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        request_payload = post.call_args.kwargs["json"]
         self.assertNotIn("cache_static", request_payload["messages"][0])
         self.assertFalse(result["cache_usage"]["observable"])
         self.assertIsNone(result["cache_usage"]["hit_rate"])

@@ -80,7 +80,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
-        buildConfig = true
         compose = true
         buildConfig = true
     }
@@ -100,6 +99,7 @@ chaquopy {
             install("pydantic==1.10.24")
             install("uvicorn==0.34.3")
             install("python-multipart==0.0.20")
+            install("requests>=2.31.0,<3.0.0")
         }
     }
     sourceSets {

@@ -120,10 +120,10 @@ class PersonaQualityWebServiceTests(unittest.TestCase):
             )
             second = service.get_persona_quality_report(run_id, "林黛玉")
 
-            self.assertEqual(saved["fields"]["speech_style"], "证据不足")
+            self.assertEqual(saved["fields"]["speech_style"], "")
             self.assertNotEqual(first["input_fingerprint"], second["input_fingerprint"])
             self.assertLess(second["score"], first["score"])
-            self.assertIn("field.speech_style.insufficient", {item["code"] for item in second["issues"]})
+            self.assertIn("field.speech_style.missing", {item["code"] for item in second["issues"]})
             self.assertIn("field.soul_goal.missing", {item["code"] for item in second["issues"]})
 
     def test_missing_character_raises_file_not_found(self):

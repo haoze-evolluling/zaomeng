@@ -2,6 +2,7 @@
 
 # Core
 PyYAML>=6.0
+requests>=2.31.0,<3.0.0
 
 # Optional token tooling
 # tiktoken improves token estimation, but the runtime already falls back to a heuristic counter.
