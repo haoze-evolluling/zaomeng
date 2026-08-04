@@ -621,6 +621,135 @@ class DialogueService:
         self._write_json(self._session_file(run_id, session_id), session)
         return self._serialize_session(run_id, session)
 
+    @with_session_lock
+    def add_temporary_npc(
+        self,
+        run_id: str,
+        session_id: str,
+        npc: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate and add one plugin-generated NPC to the current session."""
+        session = self._read_json(self._session_file(run_id, session_id))
+        if dict(session.get("pending_turn", {}) or {}):
+            raise ValueError("当前回复尚未完成，暂时不能让新 NPC 入场。")
+
+        def clean(key: str, limit: int) -> str:
+            return _text_utils.trim_summary_text(
+                str(dict(npc or {}).get(key, "")).strip(), limit
+            )
+
+        name = clean("name", 40)
+        if not name or "\n" in name or "\r" in name:
+            raise ValueError("临时 NPC 必须有有效名称。")
+        reserved = {
+            "user",
+            "你",
+            "旁白",
+            "场景提示",
+            "模型推理",
+            "system",
+            "assistant",
+        }
+        if name.casefold() in reserved:
+            raise ValueError("临时 NPC 不能使用系统保留名称。")
+        participants = [
+            str(item).strip()
+            for item in list(session.get("participants", []) or [])
+            if str(item).strip()
+        ]
+        if name.casefold() in {item.casefold() for item in participants}:
+            raise ValueError(f"当前会话已经存在名为“{name}”的角色。")
+
+        role = clean("role", 100) or "临时来客"
+        appearance = clean("appearance", 240)
+        personality = clean("personality", 240)
+        speech_style = clean("speech_style", 240)
+        motive = clean("motive", 240)
+        entrance = clean("entrance", 500) or f"{name}来到了现场。"
+        opening_line = clean("opening_line", 500)
+        if not opening_line:
+            raise ValueError("临时 NPC 必须有一句入场台词。")
+
+        now = _utc_now()
+        turn_id = f"npc-{uuid4().hex[:10]}"
+        record = {
+            "name": name,
+            "role": role,
+            "appearance": appearance,
+            "personality": personality,
+            "speech_style": speech_style,
+            "motive": motive,
+            "entrance": entrance,
+            "opening_line": opening_line,
+            "introduced_at": now,
+            "status": "active",
+            "source": "plugin",
+        }
+        catalogue = dict(session.get("temporary_npcs", {}) or {})
+        catalogue[name] = record
+        participants.append(name)
+        session["participants"] = participants
+        session["temporary_npcs"] = catalogue
+        session.setdefault("history", []).extend(
+            [
+                {
+                    "speaker": "场景提示",
+                    "message": entrance,
+                    "target": "",
+                    "ts": now,
+                    "turn_id": turn_id,
+                    "source": "temporary_npc_plugin",
+                },
+                {
+                    "speaker": name,
+                    "message": opening_line,
+                    "target": "",
+                    "ts": now,
+                    "turn_id": turn_id,
+                    "source": "temporary_npc_plugin",
+                },
+            ]
+        )
+
+        progress = self._session_scene_progress(session)
+        present = [
+            str(item).strip()
+            for item in list(progress.get("present_participants", []) or [])
+            if str(item).strip()
+        ]
+        if name not in present:
+            present.append(name)
+        progress["present_participants"] = present
+        progress["offstage_participants"] = [
+            item
+            for item in list(progress.get("offstage_participants", []) or [])
+            if str(item).strip() != name
+        ]
+        progress["updated_at"] = now
+        self._set_session_scene_progress(session, progress)
+
+        event_signals = self._session_event_signals(session)
+        recent = [
+            dict(item or {})
+            for item in list(event_signals.get("recent", []) or [])
+            if isinstance(item, dict)
+        ]
+        recent.append(
+            {
+                "turn_id": turn_id,
+                "kind": "cast_enter",
+                "actor": name,
+                "target": "",
+                "cue": entrance,
+                "updated_at": now,
+            }
+        )
+        event_signals["recent"] = recent[-20:]
+        self._set_session_event_signals(session, event_signals)
+        session["updated_at"] = now
+        self._write_json(self._session_file(run_id, session_id), session)
+        return self._serialize_session(run_id, session)
+
     def search_session_transcript(
         self,
         run_id: str,
@@ -1027,6 +1156,11 @@ class DialogueService:
         )
         branch_id = str(branch.get("session_id", "")).strip()
         payload = self._read_json(self._session_file(run_id, branch_id))
+        if list(checkpoint.get("participants", []) or []):
+            payload["participants"] = list(checkpoint.get("participants", []) or [])
+        payload["temporary_npcs"] = dict(
+            checkpoint.get("temporary_npcs", {}) or {}
+        )
         payload["history"] = history
         payload["scene_card"] = scene_card
         payload["scene_card_id"] = str(
@@ -1200,6 +1334,13 @@ class DialogueService:
         branch_id = str(branch.get("session_id", "")).strip()
         branch_payload = self._read_json(self._session_file(run_id, branch_id))
         checkpoint_before = dict(turn_payload.get("checkpoint_before", {}) or {})
+        if list(checkpoint_before.get("participants", []) or []):
+            branch_payload["participants"] = list(
+                checkpoint_before.get("participants", []) or []
+            )
+        branch_payload["temporary_npcs"] = dict(
+            checkpoint_before.get("temporary_npcs", {}) or {}
+        )
         branch_payload["relation_locks"] = dict(
             checkpoint_before.get("relation_locks", {})
             or source.get("relation_locks", {})
@@ -1808,6 +1949,8 @@ class DialogueService:
             return None
 
         for key in (
+            "participants",
+            "temporary_npcs",
             "history",
             "scene_card",
             "scene_card_id",
@@ -2079,6 +2222,13 @@ class DialogueService:
                     ).strip(),
                 },
             }
+        self._register_temporary_npc_speakers(
+            session,
+            clean_responses,
+            pending_payload,
+        )
+        if not clean_responses:
+            raise ValueError("No valid responses provided after speaker validation.")
         context_usage = self._build_context_usage(pending_payload)
         consistency_report = _consistency.evaluate_turn_consistency(
             pending_payload,
@@ -2227,23 +2377,50 @@ class DialogueService:
             for event in self._build_session_event_excerpt(session)
             if str(dict(event or {}).get("turn_id", "")).strip() == pending_turn_id
         ]
+        temporary_names = {
+            str(name).strip()
+            for name in dict(session.get("temporary_npcs", {}) or {})
+            if str(name).strip()
+        }
+        world_events = [
+            event
+            for event in current_turn_events
+            if not self._event_mentions_temporary_npc(event, temporary_names)
+        ]
+        world_knowledge = [
+            item
+            for item in list(
+                session.get("consistency_monitor", {}).get("knowledge_ledger", [])
+                or []
+            )
+            if not self._knowledge_mentions_temporary_npc(item, temporary_names)
+        ]
+        world_title = str(pending.get("user_message", "")).strip()[:160]
+        if any(name in world_title for name in temporary_names):
+            world_title = "临时人物互动"
         self._world_memory.sync_completed_turn(
             run_id,
             session_id=session_id,
             turn_id=str(pending.get("turn_id", "")).strip(),
-            title=str(pending.get("user_message", "")).strip()[:160],
-            participants=list(session.get("participants", []) or []),
-            events=current_turn_events,
+            title=world_title,
+            participants=[
+                name
+                for name in list(session.get("participants", []) or [])
+                if str(name).strip() not in temporary_names
+            ],
+            events=world_events,
             location=str(dict(pending_payload.get("scene_progress", {}) or {}).get("location", "")),
             time_hint="",
             consistency_status=str(consistency_report.get("status", "pass")),
-            knowledge_ledger=list(session.get("consistency_monitor", {}).get("knowledge_ledger", []) or []),
+            knowledge_ledger=world_knowledge,
             updated_at=completed_at,
         )
         return self._serialize_session(run_id, session)
 
     def _build_turn_checkpoint(self, session: dict[str, Any]) -> dict[str, Any]:
         return {
+            "participants": list(session.get("participants", []) or []),
+            "temporary_npcs": dict(session.get("temporary_npcs", {}) or {}),
             "history": [dict(item or {}) for item in list(session.get("history", []) or [])],
             "scene_card": dict(session.get("scene_card", {}) or {}),
             "scene_card_id": str(session.get("scene_card_id", "")).strip(),
@@ -2321,6 +2498,32 @@ class DialogueService:
         )
         character_index = self._character_index(run_manifest)
         persona_map = {item["name"]: item for item in character_index}
+        temporary_npcs = dict(session.get("temporary_npcs", {}) or {})
+        for name in participants:
+            if name in persona_map or name not in temporary_npcs:
+                continue
+            npc = dict(temporary_npcs.get(name, {}) or {})
+            role = str(npc.get("role", "")).strip() or "Temporary NPC"
+            personality = str(npc.get("personality", "")).strip()
+            persona_map[name] = {
+                "name": name,
+                "preview": {
+                    "display_name": name,
+                    "core_identity": role,
+                    "appearance_feature": str(npc.get("appearance", "")).strip(),
+                    "speech_style": str(npc.get("speech_style", "")).strip(),
+                },
+                "profile": {
+                    "display_name": name,
+                    "core_identity": "；".join(
+                        item for item in (role, personality) if item
+                    ),
+                    "story_role": role,
+                    "appearance_feature": str(npc.get("appearance", "")).strip(),
+                    "speech_style": str(npc.get("speech_style", "")).strip(),
+                    "soul_goal": str(npc.get("motive", "")).strip(),
+                },
+            }
         relation_graph = dict(
             run_manifest.get("artifact_index", {}).get("relation_graph", {}) or {}
         )
@@ -2453,6 +2656,11 @@ class DialogueService:
                 f"The user directly addressed {', '.join(mention_targets)} with @. Every mentioned character is present and must reply in this turn before optional unmentioned cast members."
                 if mention_targets
                 else ""
+            ),
+            "temporary_npc_rule": (
+                "When the scene genuinely needs a brief third-party intervention, you may introduce one named temporary NPC and give them a short in-character reply. "
+                "Use a specific role-bearing name such as '店小二' or '巡夜人'; do not invent a protagonist, secret backstory, or a second NPC. "
+                "Once introduced, that NPC remains available for later in-scene interaction until they leave."
             ),
         }
         include_inner_thoughts = bool(include_inner_thoughts)
@@ -2655,6 +2863,112 @@ class DialogueService:
         # Never end up with an empty speaker pool.
         fallback = [name for name in deduped if not (mode == "act" and name == speaker)]
         return fallback or deduped[:1]
+
+    @staticmethod
+    def _register_temporary_npc_speakers(
+        session: dict[str, Any],
+        responses: list[dict[str, Any]],
+        pending_payload: dict[str, Any],
+    ) -> list[str]:
+        """Promote generated walk-on speakers into this session's cast only."""
+        participants = [
+            str(item).strip()
+            for item in list(session.get("participants", []) or [])
+            if str(item).strip()
+        ]
+        known = set(participants)
+        input_payload = dict(pending_payload.get("input", {}) or {})
+        narrative_speakers = {"旁白", "场景提示"}
+        forbidden_speakers = {
+            "User",
+            "你",
+            "模型推理",
+            "system",
+            "assistant",
+            str(session.get("controlled_character", "")).strip(),
+            str(input_payload.get("speaker", "")).strip(),
+        }
+        forbidden_speakers = {
+            name.casefold() for name in forbidden_speakers if name
+        }
+        catalogue = dict(session.get("temporary_npcs", {}) or {})
+        added: list[str] = []
+        accepted: list[dict[str, Any]] = []
+        for response in responses:
+            name = str(response.get("speaker", "")).strip()
+            normalized_name = name.casefold()
+            if (
+                not name
+                or len(name) > 40
+                or "\n" in name
+                or "\r" in name
+            ):
+                continue
+            if name in known or name in narrative_speakers:
+                accepted.append(response)
+                continue
+            if normalized_name in forbidden_speakers or added:
+                continue
+            participants.append(name)
+            known.add(name)
+            added.append(name)
+            accepted.append(response)
+            catalogue[name] = {
+                "name": name,
+                "introduced_at": _utc_now(),
+                "status": "active",
+            }
+        responses[:] = accepted
+        if not added:
+            return []
+
+        session["participants"] = participants
+        session["temporary_npcs"] = catalogue
+        input_payload["participants"] = list(participants)
+        active = [
+            str(item).strip()
+            for item in list(input_payload.get("active_participants", []) or [])
+            if str(item).strip()
+        ]
+        input_payload["active_participants"] = [*active, *added]
+        pending_payload["input"] = input_payload
+        return added
+
+    @staticmethod
+    def _event_mentions_temporary_npc(
+        event: dict[str, Any], temporary_names: set[str]
+    ) -> bool:
+        if not temporary_names:
+            return False
+        fields = (
+            str(event.get("actor", "")).strip(),
+            str(event.get("target", "")).strip(),
+            str(event.get("cue", "")).strip(),
+        )
+        return any(
+            name and any(name in field for field in fields)
+            for name in temporary_names
+        )
+
+    @staticmethod
+    def _knowledge_mentions_temporary_npc(
+        item: dict[str, Any], temporary_names: set[str]
+    ) -> bool:
+        if not temporary_names:
+            return False
+        holders = {
+            str(name).strip()
+            for key in ("holders", "knowers")
+            for name in list(dict(item or {}).get(key, []) or [])
+            if str(name).strip()
+        }
+        summary = str(
+            dict(item or {}).get("secret", "")
+            or dict(item or {}).get("summary", "")
+        ).strip()
+        return bool(holders & temporary_names) or any(
+            name in summary for name in temporary_names
+        )
 
     def _merge_scene_progress_state(self, session: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
         return _scene_progress.merge_scene_progress_state(
@@ -3689,6 +4003,8 @@ class DialogueService:
                 },
             }
         return {
+            "participants": list(source.get("participants", []) or []),
+            "temporary_npcs": dict(source.get("temporary_npcs", {}) or {}),
             "history": history,
             "scene_card": dict(state_source.get("scene_card", {}) or source.get("scene_card", {}) or {}),
             "scene_card_id": str(state_source.get("scene_card_id", source.get("scene_card_id", ""))).strip(),

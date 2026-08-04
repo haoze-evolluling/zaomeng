@@ -9,6 +9,7 @@ from src.web.path_safety import resolve_storage_child, validate_storage_id
 
 DIALOGUE_ASSOCIATION_MAX_TOKENS = 768
 DIALOGUE_SUGGESTION_MAX_TOKENS = 512
+TEMPORARY_NPC_SPEAKER = "__temporary_npc__"
 
 
 def load_pending_turn_payload(
@@ -67,6 +68,19 @@ def generate_dialogue_responses_for_run(
         str(item.get("name", "")).strip() for item in payload.get("responder_hints", [])
     ]
     allowed_speakers.extend(["旁白", "场景提示"])
+    # The parser accepts this sentinel as permission to retain a named,
+    # temporary in-scene NPC. The service registers it before committing.
+    allowed_speakers.append(TEMPORARY_NPC_SPEAKER)
+    input_payload = dict(payload.get("input", {}) or {})
+    forbidden_speakers = [
+        str(input_payload.get("controlled_character", "")).strip(),
+        str(input_payload.get("speaker", "")).strip(),
+    ]
+    allowed_speakers.extend(
+        f"__forbidden_speaker__:{name}"
+        for name in forbidden_speakers
+        if name
+    )
     completions: list[dict[str, Any]] = []
     attempt_index = 0
 

@@ -851,6 +851,7 @@ def build_dialogue_llm_messages(
         str(instructions.get("response_count_rule", "")).strip(),
         str(instructions.get("group_chat_rule", "")).strip(),
         str(instructions.get("mention_rule", "")).strip(),
+        str(instructions.get("temporary_npc_rule", "")).strip(),
     ]
     speaker_plan = dict(payload.get("speaker_plan", {}) or {})
     responder_hints = raw_responder_hints
@@ -1549,7 +1550,11 @@ def _canonical_speaker_name(speaker: str, alias_map: dict[str, str]) -> str:
 
 
 def parse_dialogue_responses(
-    content: str, allowed_speakers: list[str]
+    content: str,
+    allowed_speakers: list[str],
+    *,
+    forbidden_speakers: list[str] | None = None,
+    max_temporary_npcs: int = 1,
 ) -> list[dict[str, str]]:
     text = str(content or "").strip()
     if not text:
@@ -1564,7 +1569,24 @@ def parse_dialogue_responses(
     if not isinstance(parsed, list):
         raise ValueError("Model reply is not a response list.")
 
+    forbidden_prefix = "__forbidden_speaker__:"
     allowed = {name for name in allowed_speakers if name}
+    allow_temporary_npc = "__temporary_npc__" in allowed
+    allowed.discard("__temporary_npc__")
+    forbidden = {
+        str(name).strip().casefold()
+        for name in list(forbidden_speakers or [])
+        if str(name).strip()
+    }
+    forbidden.update(
+        name.removeprefix(forbidden_prefix).strip().casefold()
+        for name in list(allowed)
+        if name.startswith(forbidden_prefix)
+        and name.removeprefix(forbidden_prefix).strip()
+    )
+    allowed = {name for name in allowed if not name.startswith(forbidden_prefix)}
+    forbidden.update({"user", "你", "模型推理", "system", "assistant"})
+    temporary_speakers: set[str] = set()
     alias_map = _build_speaker_alias_map(allowed)
     clean_responses: list[dict[str, str]] = []
     for item in parsed:
@@ -1574,11 +1596,26 @@ def parse_dialogue_responses(
         message = str(item.get("message", "")).strip()
         if not speaker or not message:
             continue
-        if allowed:
+        if allowed or allow_temporary_npc:
             canonical = _canonical_speaker_name(speaker, alias_map)
             if not canonical:
-                continue
-            speaker = canonical
+                normalized_speaker = speaker.casefold()
+                if (
+                    not allow_temporary_npc
+                    or normalized_speaker in forbidden
+                    or len(speaker) > 40
+                    or "\n" in speaker
+                    or "\r" in speaker
+                ):
+                    continue
+                if normalized_speaker not in temporary_speakers:
+                    if len(temporary_speakers) >= max(
+                        0, int(max_temporary_npcs)
+                    ):
+                        continue
+                    temporary_speakers.add(normalized_speaker)
+            else:
+                speaker = canonical
         inner_thought = _trim_text(str(item.get("inner_thought", "")).strip(), 50)
         clean_responses.append(
             {

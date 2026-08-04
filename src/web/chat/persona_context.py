@@ -55,8 +55,9 @@ def build_persona_contexts(
 
 
 def load_persona_profile(meta: dict[str, Any]) -> tuple[dict[str, Any], Path]:
-    profile_path = Path(str(meta.get("profile_file", "")))
-    normalized: dict[str, Any] = {}
+    profile_path_text = str(meta.get("profile_file", "")).strip()
+    profile_path = Path(profile_path_text) if profile_path_text else Path("__missing_profile__")
+    normalized: dict[str, Any] = dict(meta.get("profile", {}) or {})
     if profile_path.exists():
         normalized = load_profile_source(profile_path)
     return normalized, profile_path
