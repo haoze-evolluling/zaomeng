@@ -62,6 +62,50 @@ def build_runtime_parts(config: Any) -> Any:
 
 
 class DialogueServiceMixin:
+    def get_original_knowledge(self, run_id: str) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        manifest = self._require_manifest(run_id)
+        current = self.dialogue.get_original_knowledge(run_id)
+        if not current.get("entries"):
+            current = self.dialogue.rebuild_original_knowledge(manifest)
+        return current
+
+    def rebuild_original_knowledge(self, run_id: str) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        return self.dialogue.rebuild_original_knowledge(manifest)
+
+    def search_original_knowledge(
+        self,
+        run_id: str,
+        *,
+        query: str,
+        participants: list[str],
+        limit: int = 6,
+    ) -> list[dict[str, Any]]:
+        manifest = self._require_manifest(run_id)
+        return self.dialogue.search_original_knowledge(
+            manifest,
+            query=query,
+            participants=participants,
+            limit=limit,
+        )
+
+    def update_original_knowledge_boundary(
+        self,
+        run_id: str,
+        entry_id: str,
+        *,
+        visibility: str,
+        knowers: list[str],
+    ) -> dict[str, Any]:
+        self._ensure_run_exists(run_id)
+        return self.dialogue.update_original_knowledge_boundary(
+            run_id,
+            entry_id,
+            visibility=visibility,
+            knowers=knowers,
+        )
+
     def list_dialogue_sessions(self, run_id: str) -> list[dict[str, Any]]:
         self._ensure_run_exists(run_id)
         return self.dialogue.list_sessions(run_id)
@@ -101,6 +145,14 @@ class DialogueServiceMixin:
                 **resolved_self_profile,
                 "self_card_id": str(card.get("card_id", "")).strip(),
             }
+        # Build the local source index before the user starts chatting so a first
+        # reply never pays the one-time indexing cost. Failure remains non-fatal:
+        # legacy runs without a readable source keep their existing chat behavior.
+        try:
+            if not self.dialogue.get_original_knowledge(run_id).get("entries"):
+                self.dialogue.rebuild_original_knowledge(manifest)
+        except (FileNotFoundError, OSError, UnicodeError, ValueError):
+            pass
         return create_dialogue_session_payload(
             run_id=run_id,
             manifest=manifest,

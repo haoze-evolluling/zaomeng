@@ -35,6 +35,7 @@ import src.web.chat.scene_signals as _scene_signals
 import src.web.chat.speaker_balance as _speaker_balance
 import src.web.chat.story_recap as _story_recap
 from src.web.chat.session_storage import SessionFileStore, with_session_lock
+from src.web.chat.original_knowledge import OriginalKnowledgeStore
 from src.web.chat.world_memory import WorldMemoryStore
 import src.web.chat.session_views as _session_views
 import src.web.chat.state_utils as _state_utils
@@ -104,6 +105,7 @@ class DialogueService:
         self._memory_store_resolver = memory_store_resolver
         self._memory_stores: dict[str, MarkdownSessionStore] = {}
         self._world_memory = WorldMemoryStore(self.runs_root)
+        self._original_knowledge = OriginalKnowledgeStore(self.runs_root)
 
     def get_world_memory(self, run_id: str) -> dict[str, Any]:
         return self._world_memory.get(run_id)
@@ -113,6 +115,48 @@ class DialogueService:
 
     def delete_world_fact(self, run_id: str, fact_id: str) -> dict[str, str]:
         return self._world_memory.delete_fact(run_id, fact_id)
+
+    def get_original_knowledge(self, run_id: str) -> dict[str, Any]:
+        return self._original_knowledge.get(run_id)
+
+    def rebuild_original_knowledge(
+        self, run_manifest: dict[str, Any]
+    ) -> dict[str, Any]:
+        names = [item.get("name", "") for item in self._character_index(run_manifest)]
+        return self._original_knowledge.ensure(
+            run_manifest, character_names=names, force=True
+        )
+
+    def search_original_knowledge(
+        self,
+        run_manifest: dict[str, Any],
+        *,
+        query: str,
+        participants: list[str],
+        limit: int = 6,
+    ) -> list[dict[str, Any]]:
+        return self._original_knowledge.search(
+            run_manifest,
+            query=query,
+            participants=participants,
+            active_participants=participants,
+            limit=limit,
+        )
+
+    def update_original_knowledge_boundary(
+        self,
+        run_id: str,
+        entry_id: str,
+        *,
+        visibility: str,
+        knowers: list[str],
+    ) -> dict[str, Any]:
+        return self._original_knowledge.update_entry(
+            run_id,
+            entry_id,
+            visibility=visibility,
+            knowers=knowers,
+        )
 
     @classmethod
     def _empty_session_state(cls) -> dict[str, Any]:
@@ -1995,6 +2039,15 @@ class DialogueService:
         session_store = (
             self._resolve_memory_store(run_id) if remember_turn_memory else None
         )
+        pending_payload = self._read_pending_turn_payload(
+            run_id, session_id, pending
+        )
+        original_entries = list(
+            dict(pending_payload.get("original_source_context", {}) or {}).get(
+                "entries", []
+            )
+            or []
+        )
         clean_responses = []
         for item in responses:
             speaker = str(item.get("speaker", "")).strip()
@@ -2012,9 +2065,6 @@ class DialogueService:
             )
         if not clean_responses:
             raise ValueError("No valid responses provided.")
-        pending_payload = self._read_pending_turn_payload(
-            run_id, session_id, pending
-        )
         if not pending_payload:
             pending_payload = {
                 "turn_id": str(pending.get("turn_id", "")).strip(),
@@ -2151,6 +2201,18 @@ class DialogueService:
             "responses": clean_responses,
             "consistency_report": consistency_report,
             "context_usage": context_usage,
+            "source_trace": {
+                "retrieved": [
+                    {
+                        "source_id": str(item.get("source_id", "")).strip(),
+                        "title": str(item.get("title", "")).strip(),
+                        "location": dict(item.get("location", {}) or {}),
+                        "visibility": str(item.get("visibility", "")).strip(),
+                    }
+                    for item in original_entries
+                ],
+                "tracking_mode": "retrieved_context_only",
+            },
             "checkpoint": self._build_turn_checkpoint(session),
             "updated_at": completed_at,
         }
@@ -2319,6 +2381,12 @@ class DialogueService:
             scene_card=scene_card,
             scene_progress=scene_progress,
         )
+        original_source_context = self._build_original_source_context(
+            run_manifest,
+            message=message,
+            participants=participants,
+            active_participants=active_participants,
+        )
         controlled_character_name = str(session.get("controlled_character", "")).strip()
         response_limit_hint = self._choose_response_limit_hint(
             mode=mode,
@@ -2441,6 +2509,7 @@ class DialogueService:
             "history": latest_history,
             "scene_card": scene_card,
             "memory_context": memory_context,
+            "original_source_context": original_source_context,
             "knowledge_context": list(
                 dict(session.get("consistency_monitor", {}) or {}).get(
                     "knowledge_ledger", []
@@ -2919,6 +2988,36 @@ class DialogueService:
         )
         return context
 
+    def _build_original_source_context(
+        self,
+        run_manifest: dict[str, Any],
+        *,
+        message: str,
+        participants: list[str],
+        active_participants: list[str],
+    ) -> dict[str, Any]:
+        try:
+            entries = self._original_knowledge.search(
+                run_manifest,
+                query=message,
+                participants=participants,
+                active_participants=active_participants,
+                limit=3,
+            )
+        except (FileNotFoundError, OSError, UnicodeError, ValueError):
+            entries = []
+        return {
+            "entries": entries,
+            "policy": {
+                "grounding": "Prefer explicit source evidence over model prior knowledge.",
+                "character_boundary": (
+                    "A character may assert a passage only when listed in allowed_characters. "
+                    "Passages with visibility=uncertain are narration-only and must not become character knowledge."
+                ),
+                "citation": "Track retrieved context internally; never expose source text in replies.",
+            },
+        }
+
     @staticmethod
     def _build_context_usage(payload: dict[str, Any]) -> dict[str, Any]:
         memory_context = dict(payload.get("memory_context", {}) or {})
@@ -2926,6 +3025,10 @@ class DialogueService:
         controlled = list(memory_context.get("controlled_memories", []) or [])
         retrieved = list(memory_context.get("retrieved_memories", []) or [])
         knowledge = list(payload.get("knowledge_context", []) or [])
+        original_entries = list(
+            dict(payload.get("original_source_context", {}) or {}).get("entries", [])
+            or []
+        )
         relation_delta = dict(memory_context.get("relation_delta", {}) or {})
         character_snapshots = dict(
             memory_context.get("character_snapshots", {}) or {}
@@ -2966,6 +3069,15 @@ class DialogueService:
                 "kind": "knowledge",
                 "label": "知识边界",
                 "count": len(knowledge),
+            },
+            {
+                "kind": "original_source",
+                "label": "原作动态检索",
+                "count": len(original_entries),
+                "items": [
+                    str(item.get("title", "")).strip()
+                    for item in original_entries[:6]
+                ],
             },
             {
                 "kind": "summary",

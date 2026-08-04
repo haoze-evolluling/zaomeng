@@ -408,3 +408,14 @@ class SaveWorldFactRequest(BaseModel):
     time_hint: str = Field(default="", max_length=80)
     locked: bool = Field(default=False)
     active: bool = Field(default=True)
+
+
+class SearchOriginalKnowledgeRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+    participants: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=6, ge=1, le=10)
+
+
+class UpdateOriginalKnowledgeBoundaryRequest(BaseModel):
+    visibility: str = Field(..., min_length=1, max_length=20)
+    knowers: list[str] = Field(default_factory=list, max_length=20)

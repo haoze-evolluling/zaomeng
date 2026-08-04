@@ -766,6 +766,51 @@ def build_dialogue_llm_messages(
         for item in list(payload.get("knowledge_context", []) or [])[-12:]
         if isinstance(item, dict) and str(item.get("fact", "")).strip()
     ]
+    raw_responder_hints = list(payload.get("responder_hints", []) or [])
+    possible_responders = {
+        str(item.get("name", "")).strip()
+        for item in raw_responder_hints
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+    if not possible_responders:
+        possible_responders = set(active_participants or participants)
+
+    def source_entry_is_safe_for_shared_generation(item: dict[str, Any]) -> bool:
+        visibility = str(item.get("visibility", "uncertain")).strip()
+        if visibility == "public":
+            return True
+        allowed = {
+            str(name).strip()
+            for name in list(item.get("allowed_characters", []) or [])
+            if str(name).strip()
+        }
+        return (
+            visibility in {"scene", "private"}
+            and bool(possible_responders)
+            and possible_responders.issubset(allowed)
+        )
+
+    original_source_entries = [
+        {
+            "excerpt": _trim_text(str(item.get("excerpt", "")).strip(), 320),
+            "visibility": str(item.get("visibility", "uncertain")).strip(),
+            "allowed_characters": [
+                str(name).strip()
+                for name in list(item.get("allowed_characters", []) or [])
+                if str(name).strip()
+            ],
+        }
+        for item in list(
+            dict(payload.get("original_source_context", {}) or {}).get(
+                "entries", []
+            )
+            or []
+        )[:3]
+        if isinstance(item, dict)
+        and str(item.get("source_id", "")).strip()
+        and str(item.get("excerpt", "")).strip()
+        and source_entry_is_safe_for_shared_generation(item)
+    ]
     correction_context = dict(payload.get("correction_context", {}) or {})
     instructions = dict(payload.get("instructions", {}) or {})
     host_action = dict(payload.get("host_action", {}) or {})
@@ -808,7 +853,7 @@ def build_dialogue_llm_messages(
         str(instructions.get("mention_rule", "")).strip(),
     ]
     speaker_plan = dict(payload.get("speaker_plan", {}) or {})
-    responder_hints = list(payload.get("responder_hints", []) or [])
+    responder_hints = raw_responder_hints
     speaker_activity = list(payload.get("speaker_activity", []) or [])
     if speaker_plan:
         turn_system_parts.append(
@@ -819,6 +864,13 @@ def build_dialogue_llm_messages(
         turn_system_parts.append(
             "KNOWLEDGE_BOUNDARY 中每条 fact 只允许 holders 中的角色知晓。"
             "未列入 holders 的角色不得提及、暗示或据此行动。"
+        )
+    if original_source_entries:
+        turn_system_parts.append(
+            "ORIGINAL_SOURCE_CONTEXT 是本轮从原作动态检索出的证据。原作证据优先于模型预训练记忆；"
+            "不得用模型自带的作品知识补写检索结果中没有的事实。角色只能使用 allowed_characters 中包含自己名字的片段；"
+            "visibility=uncertain 的片段只可供旁白组织场景，角色不得将其当成自己知道的事实。"
+            "原文只用于内部约束，不要在回复中引用、复述出处或解释检索过程。"
         )
     if list(memory_context.get("controlled_memories", []) or []):
         turn_system_parts.append(
@@ -861,6 +913,7 @@ def build_dialogue_llm_messages(
         "mention_targets": list(input_block.get("mention_targets", []) or []),
         "memory_context": memory_context,
         "knowledge_boundary": knowledge_context,
+        "original_source_context": original_source_entries,
         "correction_context": correction_context,
         "response_limit": response_limit,
         "active_persona_state": active_persona_states,
