@@ -1,5 +1,6 @@
 package top.wkbin.zaomeng.feature.chat
 
+import android.content.ClipData
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -36,7 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -94,7 +95,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -109,7 +110,8 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
@@ -715,7 +717,7 @@ private fun ChatSearchResults(
                                 modifier = Modifier.align(Alignment.End),
                             ) {
                                 Icon(
-                                    Icons.Default.CallSplit,
+                                    Icons.AutoMirrored.Filled.CallSplit,
                                     contentDescription = null,
                                     modifier = Modifier.size(17.dp),
                                 )
@@ -770,7 +772,7 @@ private fun Transcript(
 ) {
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val bottomThresholdPx = with(LocalDensity.current) { 24.dp.roundToPx() }
     val transcript = session.transcript
     val latestAssistantIndex = transcript.indexOfLast { item ->
@@ -866,7 +868,13 @@ private fun Transcript(
                         actionsEnabled = actionsEnabled,
                         includeInnerThoughts = includeInnerThoughts,
                         canRegenerate = index == latestAssistantIndex && !sending,
-                        onCopy = { clipboard.setText(AnnotatedString(item.message)) },
+                        onCopy = {
+                            scrollScope.launch {
+                                clipboard.setClipEntry(
+                                    ClipEntry(ClipData.newPlainText("message", item.message)),
+                                )
+                            }
+                        },
                         onRegenerate = onRegenerate,
                         onBranch = { onBranch(item.turnId) },
                     )
@@ -1593,7 +1601,7 @@ private fun MessageContextMenu(
                     },
                 ) {
                     Icon(
-                        Icons.Default.CallSplit,
+                        Icons.AutoMirrored.Filled.CallSplit,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )
