@@ -54,6 +54,9 @@ class ZaomengPluginHost:
                 session_id=session_id,
                 option_count=option_count,
             )
+        if capability == "temporary_npc":
+            self._require("chat.context.read")
+            return self._service._generate_plugin_temporary_npc(run_id, payload)
         raise PluginPermissionError(
             f"Plugin model capability is not exposed by API v1: {capability!r}."
         )

@@ -18,6 +18,7 @@ _ACTION_ID = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 _SETTING_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 _KNOWN_PERMISSIONS = {
     "chat.context.read",
+    "chat.cast.write",
     "chat.draft.write",
     "generation.enhance",
     "model.invoke",
@@ -121,6 +122,34 @@ class GenerationEnhancer:
 
 
 @dataclass(frozen=True)
+class TemporaryNpcGenerator:
+    id: str
+    title: str
+    icon: str = ""
+
+    @classmethod
+    def parse(cls, payload: Any) -> "TemporaryNpcGenerator":
+        if not isinstance(payload, dict):
+            raise PluginError("temporaryNpcGenerators entries must be JSON objects.")
+        generator_id = str(payload.get("id", "")).strip()
+        title = str(payload.get("title", "")).strip()
+        if not _ACTION_ID.fullmatch(generator_id):
+            raise PluginError(f"Invalid temporary NPC generator id: {generator_id!r}.")
+        if not title or len(title) > 80:
+            raise PluginError(
+                "A temporary NPC generator title must contain 1-80 characters."
+            )
+        return cls(
+            id=generator_id,
+            title=title,
+            icon=str(payload.get("icon", "")).strip()[:40],
+        )
+
+    def to_dict(self) -> dict[str, str]:
+        return {"id": self.id, "title": self.title, "icon": self.icon}
+
+
+@dataclass(frozen=True)
 class PluginSetting:
     key: str
     title: str
@@ -215,6 +244,7 @@ class PluginManifest:
     permissions: tuple[str, ...]
     chat_actions: tuple[ChatAction, ...]
     generation_enhancers: tuple[GenerationEnhancer, ...]
+    temporary_npc_generators: tuple[TemporaryNpcGenerator, ...]
     settings: tuple[PluginSetting, ...]
     default_enabled: bool
 
@@ -280,6 +310,27 @@ class PluginManifest:
             raise PluginError(
                 "Plugins contributing generationEnhancers must declare generation.enhance."
             )
+        raw_npc_generators = contributes.get("temporaryNpcGenerators", []) or []
+        if not isinstance(raw_npc_generators, list):
+            raise PluginError(
+                "contributes.temporaryNpcGenerators must be a JSON array."
+            )
+        npc_generators = tuple(
+            TemporaryNpcGenerator.parse(item) for item in raw_npc_generators
+        )
+        npc_generator_ids = [item.id for item in npc_generators]
+        if len(npc_generator_ids) != len(set(npc_generator_ids)):
+            raise PluginError(
+                "Temporary NPC generator ids must be unique within a plugin."
+            )
+        if npc_generators and not {
+            "chat.context.read",
+            "chat.cast.write",
+        }.issubset(permissions):
+            raise PluginError(
+                "Plugins contributing temporaryNpcGenerators must declare "
+                "chat.context.read and chat.cast.write."
+            )
         raw_settings = raw.get("settings", []) or []
         if not isinstance(raw_settings, list):
             raise PluginError("settings must be a JSON array.")
@@ -297,6 +348,7 @@ class PluginManifest:
             permissions=permissions,
             chat_actions=actions,
             generation_enhancers=enhancers,
+            temporary_npc_generators=npc_generators,
             settings=settings,
             default_enabled=bool(raw.get("defaultEnabled", False)),
         )
@@ -313,6 +365,9 @@ class PluginManifest:
                 "chatActions": [item.to_dict() for item in self.chat_actions],
                 "generationEnhancers": [
                     item.to_dict() for item in self.generation_enhancers
+                ],
+                "temporaryNpcGenerators": [
+                    item.to_dict() for item in self.temporary_npc_generators
                 ],
             },
             "settings": [item.to_dict() for item in self.settings],
@@ -477,6 +532,12 @@ class PluginRegistry:
             execute = getattr(instance, "execute_chat_action", None)
             if record.manifest.chat_actions and not callable(execute):
                 raise PluginError("Plugin contributes chatActions but has no execute_chat_action().")
+            generate_npc = getattr(instance, "generate_temporary_npc", None)
+            if record.manifest.temporary_npc_generators and not callable(generate_npc):
+                raise PluginError(
+                    "Plugin contributes temporaryNpcGenerators but has no "
+                    "generate_temporary_npc()."
+                )
             host = self._host_factory(record.manifest.id, frozenset(record.manifest.permissions))
             activate = getattr(instance, "activate", None)
             if callable(activate):
@@ -619,6 +680,52 @@ class PluginRegistry:
                     f"Generation enhancer not found: {plugin_id}/{enhancer_id}."
                 )
             return enhancer.to_dict()
+
+    def invoke_temporary_npc_generator(
+        self, plugin_id: str, generator_id: str, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self._lock:
+            record = self._require_record(plugin_id)
+            if not record.enabled or record.instance is None:
+                raise PluginError(f"Plugin is disabled: {plugin_id!r}.")
+            if generator_id not in {
+                item.id for item in record.manifest.temporary_npc_generators
+            }:
+                raise PluginError(
+                    f"Temporary NPC generator not found: {plugin_id}/{generator_id}."
+                )
+            instance = record.instance
+            record.active_calls += 1
+        try:
+            payload = dict(request)
+            payload["config"] = self.get_config(plugin_id)
+            result = instance.generate_temporary_npc(generator_id, payload)
+        except Exception as exc:
+            self.record_event(
+                plugin_id,
+                "error",
+                "temporary_npc_generator_failed",
+                str(exc),
+                details={
+                    "generatorId": generator_id,
+                    "traceback": traceback.format_exc(),
+                },
+            )
+            raise
+        finally:
+            with self._lock:
+                record.active_calls -= 1
+                self._condition.notify_all()
+        if not isinstance(result, dict):
+            raise PluginError("Temporary NPC generator result must be a JSON object.")
+        self.record_event(
+            plugin_id,
+            "info",
+            "temporary_npc_generator_completed",
+            "临时 NPC 生成完成。",
+            details={"generatorId": generator_id},
+        )
+        return result
 
     def invoke_generation_enhancer(
         self, plugin_id: str, enhancer_id: str, request: dict[str, Any]

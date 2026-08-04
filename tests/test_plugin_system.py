@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.plugin_system import (
     PluginError,
@@ -37,6 +37,17 @@ class _Host:
                     {"label": "继续追问", "suggestion": "然后呢？"},
                 ]
             }
+        if capability == "temporary_npc":
+            return {
+                "name": "巡夜人",
+                "role": "巡夜人",
+                "appearance": "提着一盏湿灯笼",
+                "personality": "多疑",
+                "speech_style": "短句盘问",
+                "motive": "寻找逃走的人",
+                "entrance": "门被推开，雨水顺着灯笼滴下。",
+                "opening_line": "方才是谁从后门出去的？",
+            }
         return f"{capability}:{payload['run_id']}"
 
 
@@ -66,6 +77,18 @@ class _EnhancerDialogue:
         self.session = {"plugin_enhancer_states": states}
         return dict(self.session)
 
+
+class _NpcDialogue:
+    def __init__(self) -> None:
+        self.last_npc = {}
+
+    def add_temporary_npc(self, run_id, session_id, npc):
+        self.last_npc = dict(npc)
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            "participants": [npc["name"]],
+        }
 
 def _write_plugin(root: Path, *, result: str = "v1", permissions=None) -> Path:
     plugin_root = root / "demo"
@@ -234,6 +257,107 @@ class PluginSystemTests(unittest.TestCase):
         self.assertIn("时间压力", host.last_context_request["direction"])
         self.assertIn("只返回一段简短", host.last_context_request["direction"])
 
+    def test_builtin_random_npc_uses_dedicated_contribution_and_updates_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = _Host()
+            registry = PluginRegistry(
+                [Path("src/builtin_plugins")],
+                host_factory=lambda _plugin_id, _permissions: host,
+                state_path=Path(tmp) / "plugin-state.json",
+                config_path=Path(tmp) / "plugin-config.json",
+            )
+            dialogue = _NpcDialogue()
+            service = _PluginService(registry, dialogue)
+            plugin = next(
+                item
+                for item in registry.list_plugins()
+                if item["id"] == "com.zaomeng.random-npc"
+            )
+
+            result = service.invoke_plugin_temporary_npc_generator(
+                "com.zaomeng.random-npc",
+                "generate-npc",
+                run_id="run-1",
+                session_id="session-1",
+            )
+
+        self.assertEqual(
+            plugin["contributes"]["temporaryNpcGenerators"][0]["title"],
+            "随机 NPC",
+        )
+        self.assertEqual(host.last_capability, "temporary_npc")
+        self.assertEqual(dialogue.last_npc["name"], "巡夜人")
+        self.assertEqual(result["session"]["participants"], ["巡夜人"])
+
+    def test_temporary_npc_model_capability_retries_invalid_json_once(self):
+        service = _PluginService(None)
+        service.runs_root = Path("runs")
+        service._build_runtime_config_for_run = lambda **_kwargs: {
+            "llm.max_tokens": 900
+        }
+        llm = Mock()
+        llm.chat_completion = Mock(
+            side_effect=[
+                {"content": "not json"},
+                {
+                    "content": json.dumps(
+                        {
+                            "name": "巡夜人",
+                            "role": "巡夜人",
+                            "appearance": "湿灯笼",
+                            "personality": "多疑",
+                            "speech_style": "短句",
+                            "motive": "找人",
+                            "entrance": "门开了。",
+                            "opening_line": "谁从这里出去的？",
+                        },
+                        ensure_ascii=False,
+                    )
+                },
+            ]
+        )
+        service._build_runtime_parts = lambda _config: type(
+            "Parts", (), {"llm": llm}
+        )()
+
+        npc = service._generate_plugin_temporary_npc(
+            "run-1",
+            {
+                "input": {"participants": ["甲"]},
+                "history": [{"speaker": "甲", "message": "谁在那里？"}],
+            },
+        )
+
+        self.assertEqual(npc["name"], "巡夜人")
+        self.assertEqual(llm.chat_completion.call_count, 2)
+        self.assertEqual(llm.chat_completion.call_args.kwargs["max_tokens"], 700)
+
+    def test_temporary_npc_contribution_requires_cast_write_permission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "plugin.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "id": "com.example.npc",
+                        "name": "NPC",
+                        "version": "1.0.0",
+                        "apiVersion": "1",
+                        "entry": "main.py",
+                        "permissions": ["chat.context.read", "model.invoke"],
+                        "contributes": {
+                            "temporaryNpcGenerators": [
+                                {"id": "create", "title": "Create"}
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(PluginError, "chat.cast.write"):
+                PluginManifest.load(manifest_path)
+
     def test_inner_thoughts_enhancer_has_per_chat_state_and_respects_plugin_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry = PluginRegistry(
@@ -302,6 +426,11 @@ class PluginSystemTests(unittest.TestCase):
         self.assertIn(
             "/api/web/runs/{run_id}/dialogue/sessions/{session_id}"
             "/plugins/{plugin_id}/enhancers/{enhancer_id}/state",
+            paths,
+        )
+        self.assertIn(
+            "/api/web/runs/{run_id}/dialogue/sessions/{session_id}"
+            "/plugins/{plugin_id}/npc-generators/{generator_id}",
             paths,
         )
 
@@ -493,6 +622,11 @@ class PluginSystemTests(unittest.TestCase):
         self.assertIn('Text(if (pluginActionBusy) "插件运行中…" else "插件")', chat_screen)
         self.assertIn("state.pluginActions.forEach", chat_screen)
         self.assertIn("state.generationEnhancers.forEach", chat_screen)
+        chat_view_model = Path(
+            "android/app/src/main/java/top/wkbin/zaomeng/feature/chat/ChatViewModel.kt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("temporaryNpcGenerators", chat_view_model)
+        self.assertIn("invokePluginTemporaryNpcGenerator", chat_view_model)
         self.assertNotIn('contentDescription = "一键生成续写建议"', chat_screen)
         self.assertNotIn('Text(if (state.includeInnerThoughts) "关闭读心"', chat_screen)
 

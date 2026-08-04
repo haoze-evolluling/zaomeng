@@ -8,6 +8,7 @@ from .runtime import (
     PluginManifest,
     PluginPermissionError,
     PluginRegistry,
+    TemporaryNpcGenerator,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "PluginManifest",
     "PluginPermissionError",
     "PluginRegistry",
+    "TemporaryNpcGenerator",
 ]

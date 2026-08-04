@@ -43,6 +43,7 @@ data class ChatPluginAction(
     val actionId: String,
     val title: String,
     val icon: String = "",
+    val contribution: String = "chat_action",
 )
 
 data class ChatGenerationEnhancer(
@@ -341,6 +342,20 @@ class ChatViewModel(
                             )
                         }
                 }
+                .plus(
+                    plugins.asSequence().flatMap { plugin ->
+                        plugin.contributes.temporaryNpcGenerators.asSequence().map { generator ->
+                            ChatPluginAction(
+                                pluginId = plugin.id,
+                                pluginName = plugin.name,
+                                actionId = generator.id,
+                                title = generator.title,
+                                icon = generator.icon,
+                                contribution = "temporary_npc_generator",
+                            )
+                        }
+                    }
+                )
                 .filter { action -> action.pluginId.isNotBlank() && action.actionId.isNotBlank() }
                 .toList()
             val enhancers = plugins.asSequence()
@@ -1076,6 +1091,23 @@ class ChatViewModel(
     fun invokePluginAction(action: ChatPluginAction) {
         val current = state.value
         runTool("plugin:${action.pluginId}:${action.actionId}") {
+            if (action.contribution == "temporary_npc_generator") {
+                val result = repository.invokePluginTemporaryNpcGenerator(
+                    runId = runId,
+                    sessionId = sessionId,
+                    pluginId = action.pluginId,
+                    generatorId = action.actionId,
+                )
+                updateState {
+                    it.copy(
+                        session = result.session,
+                        notice = result.notice.ifBlank {
+                            "「${action.title}」已让一名临时角色加入场景。"
+                        },
+                    )
+                }
+                return@runTool
+            }
             val result = repository.invokePluginChatAction(
                 runId = runId,
                 sessionId = sessionId,

@@ -82,6 +82,22 @@ return {"suggestion": suggestion}
 
 宿主负责模型配置、密钥、提示词协议、重试和输出解析。插件不应该自行复制这些逻辑。
 
+## 生成临时 NPC
+
+临时 NPC 使用独立的 `temporaryNpcGenerators` 贡献点，并声明 `chat.context.read`、`chat.cast.write`；需要模型时再声明 `model.invoke`。实例实现：
+
+```python
+def generate_temporary_npc(self, generator_id, request):
+    context = self.host.read_dialogue_context(
+        run_id=request["run_id"],
+        session_id=request["session_id"],
+    )
+    npc = self.host.invoke_model("temporary_npc", context)
+    return {"npc": npc}
+```
+
+插件只生成结构化人物，不能直接读写会话文件。宿主校验后将 NPC、入场描写和首句台词写入当前会话。标准字段为 `name`、`role`、`appearance`、`personality`、`speech_style`、`motive`、`entrance`、`opening_line`。
+
 ## 校验、打包与安装
 
 在仓库根目录执行：
@@ -125,6 +141,7 @@ GET  /api/web/plugins/{plugin_id}/logs
 GET  /api/web/plugins/{plugin_id}/config
 PUT  /api/web/plugins/{plugin_id}/config
 POST /api/web/runs/{run_id}/dialogue/sessions/{session_id}/plugins/{plugin_id}/actions/{action_id}
+POST /api/web/runs/{run_id}/dialogue/sessions/{session_id}/plugins/{plugin_id}/npc-generators/{generator_id}
 PUT  /api/web/runs/{run_id}/dialogue/sessions/{session_id}/plugins/{plugin_id}/enhancers/{enhancer_id}/state
 ```
 

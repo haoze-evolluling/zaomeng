@@ -10,6 +10,7 @@ from src.web.api.schemas import (
     InspectPluginPackageRequest,
     InstallPluginPackageRequest,
     InvokePluginChatActionRequest,
+    InvokeTemporaryNpcGeneratorRequest,
     SetGenerationEnhancerStateRequest,
     UpdatePluginConfigRequest,
 )
@@ -150,6 +151,32 @@ def invoke_plugin_chat_action(
             run_id=run_id,
             session_id=session_id,
             seed_text=payload.seed_text,
+            direction=payload.direction,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+    except (PluginError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/api/web/runs/{run_id}/dialogue/sessions/{session_id}"
+    "/plugins/{plugin_id}/npc-generators/{generator_id}"
+)
+def invoke_plugin_temporary_npc_generator(
+    run_id: str,
+    session_id: str,
+    plugin_id: str,
+    generator_id: str,
+    payload: InvokeTemporaryNpcGeneratorRequest,
+    run_service: WebRunService = Depends(get_run_service),
+) -> dict[str, Any]:
+    try:
+        return run_service.invoke_plugin_temporary_npc_generator(
+            plugin_id,
+            generator_id,
+            run_id=run_id,
+            session_id=session_id,
             direction=payload.direction,
         )
     except FileNotFoundError as exc:

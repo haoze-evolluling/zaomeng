@@ -11,6 +11,7 @@
   function permissionLabel(permission) {
     return {
       "chat.context.read": "读取聊天上下文",
+      "chat.cast.write": "向当前会话加入临时角色",
       "chat.draft.write": "写入聊天草稿",
       "generation.enhance": "增强回复生成",
       "model.invoke": "调用模型",

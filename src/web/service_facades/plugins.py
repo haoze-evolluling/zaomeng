@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -252,6 +253,180 @@ class PluginServiceMixin:
             )
         except LLMRequestError as exc:
             raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+
+    def invoke_plugin_temporary_npc_generator(
+        self,
+        plugin_id: str,
+        generator_id: str,
+        *,
+        run_id: str,
+        session_id: str,
+        direction: str = "",
+    ) -> dict[str, Any]:
+        manifest = self._require_manifest(run_id)
+        try:
+            result = self.plugins.invoke_temporary_npc_generator(
+                plugin_id,
+                generator_id,
+                {
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "direction": direction,
+                },
+            )
+        except LLMRequestError as exc:
+            raise ValueError(friendly_dialogue_llm_error(exc)) from exc
+        npc = dict(result.get("npc", {}) or {})
+        if not npc:
+            raise PluginError("临时 NPC 生成器没有返回 npc 对象。")
+        npc_name = str(npc.get("name", "")).strip()
+        official_names = {
+            str(item.get("name", "")).strip().casefold()
+            for item in list(
+                dict(manifest.get("artifact_index", {}) or {}).get("characters", [])
+                if isinstance(manifest, dict)
+                else []
+            )
+            if isinstance(item, dict) and str(item.get("name", "")).strip()
+        }
+        if npc_name.casefold() in official_names:
+            raise PluginError(f"“{npc_name}”是正式角色，不能作为临时 NPC 加入。")
+        session = self.dialogue.add_temporary_npc(run_id, session_id, npc)
+        name = str(npc.get("name", "")).strip() or "新角色"
+        return {
+            "npc": npc,
+            "session": session,
+            "notice": f"{name}已加入当前场景。",
+        }
+
+    def _generate_plugin_temporary_npc(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> dict[str, str]:
+        run_dir = self.runs_root / run_id
+        config = self._build_runtime_config_for_run(run_dir=run_dir)
+        parts = self._build_runtime_parts(config)
+        if not hasattr(parts.llm, "chat_completion"):
+            raise ValueError("Configured model does not support chat generation.")
+        input_payload = dict(payload.get("input", {}) or {})
+        compact_context = {
+            "mode": str(payload.get("mode", "observe")),
+            "participants": list(input_payload.get("participants", []) or []),
+            "active_participants": list(
+                input_payload.get("active_participants", []) or []
+            ),
+            "scene": dict(payload.get("scene_progress", {}) or {}),
+            "recent_history": [
+                {
+                    "speaker": str(dict(item or {}).get("speaker", ""))[:40],
+                    "message": str(dict(item or {}).get("message", ""))[:500],
+                }
+                for item in list(payload.get("history", []) or [])[-8:]
+                if isinstance(item, dict)
+            ],
+            "characters": [
+                {
+                    "name": str(dict(item or {}).get("name", ""))[:40],
+                    "identity": str(
+                        dict(dict(item or {}).get("preview", {}) or {}).get(
+                            "core_identity", ""
+                        )
+                    )[:240],
+                }
+                for item in list(payload.get("persona_contexts", []) or [])[:8]
+                if isinstance(item, dict)
+            ],
+            "style": str(payload.get("npc_style", "mixed"))[:40],
+            "direction": str(payload.get("direction", ""))[:240],
+        }
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你为当前角色扮演场景随机创造一名临时 NPC。角色必须符合当前世界观、"
+                    "地点和人物认知边界，不能与已有角色重名，不能成为主角，也不能凭空掌握"
+                    "不该知道的秘密。让角色有鲜明但简洁的外观、性格、说话方式和当下动机，"
+                    "其入场必须立刻制造可互动的钩子。只返回一个 JSON 对象，不要 Markdown。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "context": compact_context,
+                        "output": {
+                            "name": "具体且符合场景的名字或身份称呼",
+                            "role": "在当前世界中的身份",
+                            "appearance": "一个鲜明外观特征",
+                            "personality": "简短性格",
+                            "speech_style": "说话方式",
+                            "motive": "此刻出现的真实目的",
+                            "entrance": "一至两句入场描写",
+                            "opening_line": "第一句可互动台词",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        configured_limit = int(config.get("llm.max_tokens", 0) or 0)
+        max_tokens = min(configured_limit, 700) if configured_limit > 0 else 700
+        last_error: Exception | None = None
+        for attempt in range(2):
+            attempt_messages = list(messages)
+            if attempt:
+                attempt_messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "上一次输出不是有效人物 JSON。重新生成，只返回一个完整 JSON 对象，"
+                            "必须包含 name 和 opening_line。"
+                        ),
+                    }
+                )
+            result = parts.llm.chat_completion(
+                attempt_messages,
+                temperature=0.9,
+                max_tokens=max_tokens,
+            )
+            try:
+                return self._parse_plugin_temporary_npc(
+                    str(dict(result or {}).get("content", ""))
+                )
+            except ValueError as exc:
+                last_error = exc
+        raise ValueError(str(last_error or "模型没有返回有效的临时 NPC。"))
+
+    @staticmethod
+    def _parse_plugin_temporary_npc(content: str) -> dict[str, str]:
+        text = str(content or "").strip()
+        decoder = json.JSONDecoder()
+        parsed: Any = None
+        for index, character in enumerate(text):
+            if character != "{":
+                continue
+            try:
+                candidate, _end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                parsed = candidate
+                break
+        if not isinstance(parsed, dict):
+            raise ValueError("模型没有返回有效的临时 NPC JSON。")
+        fields = (
+            "name",
+            "role",
+            "appearance",
+            "personality",
+            "speech_style",
+            "motive",
+            "entrance",
+            "opening_line",
+        )
+        npc = {key: str(parsed.get(key, "")).strip() for key in fields}
+        if not npc["name"] or not npc["opening_line"]:
+            raise ValueError("模型生成的临时 NPC 缺少名称或入场台词。")
+        return npc
 
     @staticmethod
     def _generation_enhancer_key(plugin_id: str, enhancer_id: str) -> str:

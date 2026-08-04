@@ -63,9 +63,10 @@
 | 权限 | 含义 | v1 状态 |
 |---|---|---|
 | `chat.context.read` | 读取宿主裁剪后的当前聊天上下文 | 已实现 |
+| `chat.cast.write` | 通过专用贡献点向当前会话加入临时角色 | 已实现；不能创建人物档案或写入作品级记忆 |
 | `chat.draft.write` | 返回可写入输入框的动作结果 | 已实现并作为聊天动作必需声明 |
 | `generation.enhance` | 在回复生成前返回受限的生成选项 | 已实现；用于有状态生成增强贡献点 |
-| `model.invoke` | 通过宿主代理调用允许的模型能力 | 已实现；当前开放 `dialogue_suggestion`、`dialogue_reply_variants` |
+| `model.invoke` | 通过宿主代理调用允许的模型能力 | 已实现；当前开放 `dialogue_suggestion`、`dialogue_reply_variants`、`temporary_npc` |
 | `storage.read` | 读取插件名字空间存储 | 已保留，尚未开放宿主方法 |
 | `storage.write` | 写入插件名字空间存储 | 已保留，尚未开放宿主方法 |
 | `network.access` | 访问清单声明的外部域名 | 已保留；v1 不提供网络代理 |
@@ -138,6 +139,25 @@ def execute_chat_action(self, action_id: str, request: dict) -> dict:
 ```
 
 插件实例必须实现 `enhance_generation(enhancer_id, request)` 并返回 JSON 对象。宿主负责保存聊天级开关、合并允许的生成选项，并在插件失败时退回普通生成。
+
+## 6.2 临时 NPC 生成契约
+
+需要让角色直接加入当前场景时，使用 `temporaryNpcGenerators`，不得伪装成普通聊天动作：
+
+```json
+{
+  "permissions": ["chat.context.read", "chat.cast.write", "model.invoke"],
+  "contributes": {
+    "temporaryNpcGenerators": [
+      {"id": "random-npc", "title": "随机 NPC", "icon": "person-add"}
+    ]
+  }
+}
+```
+
+插件实现 `generate_temporary_npc(generator_id, request)`，返回 `{"npc": {...}}`。NPC 对象使用 `name`、`role`、`appearance`、`personality`、`speech_style`、`motive`、`entrance` 和 `opening_line` 字段。宿主负责名称冲突、保留名称、字段长度和会话状态校验，并把入场描写和首句台词写入当前会话。
+
+临时 NPC 不创建人物档案，不进入作品级世界记忆；剧情分支只继承目标检查点当时已经入场的临时 NPC。
 
 ## 7. 错误、并发与兼容性
 

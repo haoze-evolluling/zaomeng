@@ -41,6 +41,8 @@ import top.wkbin.zaomeng.data.api.PersonaReviewDto
 import top.wkbin.zaomeng.data.api.PluginDto
 import top.wkbin.zaomeng.data.api.PluginChatActionRequest
 import top.wkbin.zaomeng.data.api.PluginChatActionResponse
+import top.wkbin.zaomeng.data.api.PluginTemporaryNpcGeneratorRequest
+import top.wkbin.zaomeng.data.api.PluginTemporaryNpcGeneratorResponse
 import top.wkbin.zaomeng.data.api.InspectPluginPackageRequest
 import top.wkbin.zaomeng.data.api.InstallPluginPackageRequest
 import top.wkbin.zaomeng.data.api.PluginPackageInspectionDto
@@ -209,6 +211,22 @@ class ZaomengRepository(
             throw ApiRequestException("插件没有返回可写入输入框的内容。")
         }
         result
+    }
+
+    suspend fun invokePluginTemporaryNpcGenerator(
+        runId: String,
+        sessionId: String,
+        pluginId: String,
+        generatorId: String,
+        direction: String = "",
+    ): PluginTemporaryNpcGeneratorResponse = request {
+        backend.requireApi().invokePluginTemporaryNpcGenerator(
+            runId,
+            sessionId,
+            pluginId,
+            generatorId,
+            PluginTemporaryNpcGeneratorRequest(direction = direction),
+        )
     }
 
     suspend fun setGenerationEnhancerState(

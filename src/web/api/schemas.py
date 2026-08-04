@@ -301,6 +301,10 @@ class InvokePluginChatActionRequest(BaseModel):
     direction: str = Field(default="", max_length=240)
 
 
+class InvokeTemporaryNpcGeneratorRequest(BaseModel):
+    direction: str = Field(default="", max_length=240)
+
+
 class SetGenerationEnhancerStateRequest(BaseModel):
     enabled: bool
 

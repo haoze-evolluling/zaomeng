@@ -170,6 +170,8 @@ data class PluginContributionsDto(
     @SerialName("chatActions") val chatActions: List<PluginChatActionDto> = emptyList(),
     @SerialName("generationEnhancers")
     val generationEnhancers: List<PluginGenerationEnhancerDto> = emptyList(),
+    @SerialName("temporaryNpcGenerators")
+    val temporaryNpcGenerators: List<PluginTemporaryNpcGeneratorDto> = emptyList(),
 )
 
 @Serializable
@@ -187,6 +189,13 @@ data class PluginGenerationEnhancerDto(
     val description: String = "",
     val icon: String = "",
     @SerialName("defaultActive") val defaultActive: Boolean = false,
+)
+
+@Serializable
+data class PluginTemporaryNpcGeneratorDto(
+    val id: String = "",
+    val title: String = "",
+    val icon: String = "",
 )
 
 @Serializable
@@ -782,6 +791,17 @@ data class PluginSuggestionOptionDto(
 data class PluginChatActionResponse(
     val suggestion: String = "",
     val suggestions: List<PluginSuggestionOptionDto> = emptyList(),
+)
+
+@Serializable
+data class PluginTemporaryNpcGeneratorRequest(
+    val direction: String = "",
+)
+
+@Serializable
+data class PluginTemporaryNpcGeneratorResponse(
+    val session: DialogueSessionDto = DialogueSessionDto(),
+    val notice: String = "",
 )
 
 @Serializable

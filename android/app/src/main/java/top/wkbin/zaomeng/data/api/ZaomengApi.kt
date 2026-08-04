@@ -91,6 +91,15 @@ interface ZaomengApi {
         @Body request: PluginChatActionRequest,
     ): PluginChatActionResponse
 
+    @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/plugins/{pluginId}/npc-generators/{generatorId}")
+    suspend fun invokePluginTemporaryNpcGenerator(
+        @Path("runId") runId: String,
+        @Path("sessionId") sessionId: String,
+        @Path("pluginId") pluginId: String,
+        @Path("generatorId") generatorId: String,
+        @Body request: PluginTemporaryNpcGeneratorRequest,
+    ): PluginTemporaryNpcGeneratorResponse
+
     @PUT("api/web/runs/{runId}/dialogue/sessions/{sessionId}/plugins/{pluginId}/enhancers/{enhancerId}/state")
     suspend fun setGenerationEnhancerState(
         @Path("runId") runId: String,
