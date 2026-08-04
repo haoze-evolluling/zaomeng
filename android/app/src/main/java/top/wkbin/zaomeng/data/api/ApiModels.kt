@@ -13,6 +13,7 @@ data class ModelSettingsDto(
     val model: String = "",
     @SerialName("base_url") val baseUrl: String = "",
     @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("reasoning_effort") val reasoningEffort: String = "auto",
     @SerialName("api_key_configured") val apiKeyConfigured: Boolean = false,
     val configured: Boolean = false,
     @SerialName("active_profile_id") val activeProfileId: String = "",
@@ -27,6 +28,7 @@ data class ModelProfileDto(
     val model: String = "",
     @SerialName("base_url") val baseUrl: String = "",
     @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("reasoning_effort") val reasoningEffort: String = "auto",
     @SerialName("api_key_configured") val apiKeyConfigured: Boolean = false,
     val configured: Boolean = false,
 )
@@ -38,6 +40,7 @@ data class SaveModelSettingsRequest(
     @SerialName("base_url") val baseUrl: String = "",
     @SerialName("api_key") val apiKey: String = "",
     @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("reasoning_effort") val reasoningEffort: String = "auto",
     @SerialName("profile_id") val profileId: String = "",
     @SerialName("profile_name") val profileName: String = "",
     @SerialName("create_profile") val createProfile: Boolean = false,
@@ -51,6 +54,7 @@ data class TestModelSettingsRequest(
     @SerialName("base_url") val baseUrl: String = "",
     @SerialName("api_key") val apiKey: String = "",
     @SerialName("max_tokens") val maxTokens: Int = 0,
+    @SerialName("reasoning_effort") val reasoningEffort: String = "auto",
     @SerialName("profile_id") val profileId: String = "",
 )
 
@@ -752,6 +756,7 @@ data class DialogueReplyRequest(
     @SerialName("message_kind") val messageKind: String = "dialogue",
     @SerialName("suppress_transcript_message") val suppressTranscriptMessage: Boolean = false,
     @SerialName("include_inner_thoughts") val includeInnerThoughts: Boolean = false,
+    @SerialName("include_model_reasoning") val includeModelReasoning: Boolean = false,
     @SerialName("operation_id") val operationId: String = "",
 )
 

@@ -84,13 +84,6 @@ fun SettingsHomeScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsHomeRow(
-                        title = "聊天显示",
-                        subtitle = "调整消息字号和对话显示密度。",
-                        icon = Icons.Outlined.Chat,
-                        onClick = onOpenChatDisplay,
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    SettingsHomeRow(
                         title = "插件",
                         subtitle = "管理聊天扩展、权限与运行状态。",
                         icon = Icons.Outlined.Extension,
@@ -107,6 +100,13 @@ fun SettingsHomeScreen(
                         icon = Icons.Outlined.Palette,
                         value = preferences.themeMode.displayName,
                         onClick = onOpenAppearance,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsHomeRow(
+                        title = "聊天显示",
+                        subtitle = "调整消息字号、显示密度和推理内容。",
+                        icon = Icons.Outlined.Chat,
+                        onClick = onOpenChatDisplay,
                     )
                 }
             }

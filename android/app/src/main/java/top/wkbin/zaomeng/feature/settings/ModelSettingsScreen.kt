@@ -145,6 +145,7 @@ fun ModelProfileEditorScreen(
     var showCatalogSheet by remember { mutableStateOf(false) }
     var showModelSheet by remember { mutableStateOf(false) }
     var showMaxTokensSheet by remember { mutableStateOf(false) }
+    var showReasoningEffortSheet by remember { mutableStateOf(false) }
     var maxTokensDraft by remember { mutableStateOf("") }
 
     LaunchedEffect(state.completed) {
@@ -214,6 +215,17 @@ fun ModelProfileEditorScreen(
             onConfirm = {
                 viewModel.updateMaxTokens(maxTokensDraft)
                 showMaxTokensSheet = false
+            },
+        )
+    }
+    if (showReasoningEffortSheet) {
+        ReasoningEffortSheet(
+            selected = state.reasoningEffort,
+            options = modelReasoningEfforts(state.provider, state.baseUrl, state.model),
+            onDismiss = { showReasoningEffortSheet = false },
+            onSelect = {
+                viewModel.updateReasoningEffort(it)
+                showReasoningEffortSheet = false
             },
         )
     }
@@ -325,6 +337,18 @@ fun ModelProfileEditorScreen(
                                     Icon(if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (showApiKey) "隐藏 API Key" else "显示 API Key")
                                 }
                             },
+                        )
+                    }
+                }
+            }
+            if (supportsReasoningControls(state)) {
+                item {
+                    EditorSection("模型推理") {
+                        SelectionRow(
+                            title = "推理强度",
+                            subtitle = "关闭会跳过推理，优先生成回复。",
+                            value = reasoningEffortLabel(state.reasoningEffort),
+                            onClick = { showReasoningEffortSheet = true },
                         )
                     }
                 }
@@ -535,6 +559,57 @@ private fun MaxTokensSheet(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onDismiss) { Text("取消") }
                 Button(onClick = onConfirm) { Text("确认") }
+            }
+        }
+    }
+}
+
+private fun supportsReasoningControls(state: ModelProfileEditorUiState): Boolean =
+    modelReasoningEfforts(state.provider, state.baseUrl, state.model).size > 1
+
+private fun reasoningEffortLabel(value: String): String = when (value) {
+    "off" -> "关闭"
+    "low" -> "低"
+    "medium" -> "中"
+    "high" -> "高"
+    "xhigh" -> "极高"
+    else -> "自动"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReasoningEffortSheet(
+    selected: String,
+    options: List<String>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 32.dp),
+        ) {
+            item {
+                Text("推理强度", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "模型不支持所选档位时，连接测试会返回服务商的具体错误。",
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            items(
+                options,
+                key = { it },
+            ) { effort ->
+                SheetChoiceRow(
+                    title = reasoningEffortLabel(effort),
+                    selected = effort == selected,
+                    onClick = { onSelect(effort) },
+                )
             }
         }
     }

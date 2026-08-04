@@ -385,6 +385,7 @@ interface ZaomengApi {
     suspend fun recoverDialogueSession(
         @Path("runId") runId: String,
         @Path("sessionId") sessionId: String,
+        @Query("force") force: Boolean = false,
     ): DialogueSessionDto
 
     @POST("api/web/runs/{runId}/dialogue/sessions/{sessionId}/reply")

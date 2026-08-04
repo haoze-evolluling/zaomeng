@@ -727,8 +727,12 @@ class ZaomengRepository(
         ).items
     }
 
-    suspend fun recoverSession(runId: String, sessionId: String): DialogueSessionDto = request {
-        backend.requireApi().recoverDialogueSession(runId, sessionId)
+    suspend fun recoverSession(
+        runId: String,
+        sessionId: String,
+        force: Boolean = false,
+    ): DialogueSessionDto = request {
+        backend.requireApi().recoverDialogueSession(runId, sessionId, force)
     }
 
     suspend fun reply(
@@ -758,6 +762,7 @@ class ZaomengRepository(
         operationId: String,
         suppressTranscriptMessage: Boolean = messageKind == "plot",
         includeInnerThoughts: Boolean = false,
+        includeModelReasoning: Boolean = false,
     ): Flow<DialogueStreamEvent> = flow {
         try {
             val response = backend.requireApi().streamDialogueReply(
@@ -769,6 +774,7 @@ class ZaomengRepository(
                     messageKind = messageKind,
                     suppressTranscriptMessage = suppressTranscriptMessage,
                     includeInnerThoughts = includeInnerThoughts,
+                    includeModelReasoning = includeModelReasoning,
                     operationId = operationId,
                 ),
             )

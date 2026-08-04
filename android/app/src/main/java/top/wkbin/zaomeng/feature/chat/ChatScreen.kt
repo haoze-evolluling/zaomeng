@@ -172,7 +172,7 @@ fun ChatScreen(
     }
 
     LaunchedEffect(runId, sessionId) {
-        viewModel.load(runId, sessionId)
+        viewModel.load(runId, sessionId, force = true)
     }
     DisposableEffect(lifecycleOwner, runId, sessionId) {
         val observer = LifecycleEventObserver { _, event ->
@@ -336,6 +336,9 @@ fun ChatScreen(
                         avatarBytes = state.avatarBytes,
                         sending = state.sending,
                         streamStatus = state.streamStatus,
+                        modelReasoning = state.modelReasoning.takeIf {
+                            state.chatDisplay.showModelReasoning
+                        }.orEmpty(),
                         streamingReplies = state.streamingReplies,
                         pendingUserMessage = state.pendingUserMessage,
                         displayPreferences = state.chatDisplay,
@@ -751,6 +754,7 @@ private fun Transcript(
     avatarBytes: Map<String, ByteArray>,
     sending: Boolean,
     streamStatus: String,
+    modelReasoning: String,
     streamingReplies: List<StreamingReplyPart>,
     pendingUserMessage: PendingUserMessage?,
     displayPreferences: ChatDisplayPreferences,
@@ -772,11 +776,13 @@ private fun Transcript(
     val latestAssistantIndex = transcript.indexOfLast { item ->
         item.role != "user" && item.role != "scene" && item.role != "director"
     }
+    val latestUserIndex = transcript.indexOfLast { item -> item.role == "user" }
     var followNewMessages by remember(session.sessionId) { mutableStateOf(true) }
     var unseenMessages by remember(session.sessionId) { mutableIntStateOf(0) }
     var previousVisibleCount by remember(session.sessionId) {
         mutableIntStateOf(
             transcript.size + streamingReplies.size +
+                (if (modelReasoning.isBlank()) 0 else 1) +
                 if (pendingUserMessage == null) 0 else 1,
         )
     }
@@ -802,10 +808,12 @@ private fun Transcript(
     }
 
     val visibleCount = transcript.size + streamingReplies.size +
+        (if (sending && modelReasoning.isNotBlank()) 1 else 0) +
         if (pendingUserMessage == null) 0 else 1
     val lastContentIndex = (visibleCount - 1).coerceAtLeast(0)
     val contentSignature = transcript.lastOrNull()?.message.orEmpty() +
         streamingReplies.joinToString(separator = "|") { it.text } +
+        modelReasoning +
         pendingUserMessage?.let { "${it.operationId}|${it.status}|${it.statusText}" }.orEmpty()
     LaunchedEffect(visibleCount, contentSignature, sending) {
         val added = (visibleCount - previousVisibleCount).coerceAtLeast(0)
@@ -830,7 +838,10 @@ private fun Transcript(
                 if (displayPreferences.compactMode) 3.dp else 8.dp,
             ),
         ) {
-            if (transcript.isEmpty() && streamingReplies.isEmpty() && pendingUserMessage == null) {
+            if (
+                transcript.isEmpty() && streamingReplies.isEmpty() &&
+                modelReasoning.isBlank() && pendingUserMessage == null
+            ) {
                 item {
                     Text(
                         "这一幕还没有留下台词。写下第一句话，让故事继续。",
@@ -847,17 +858,22 @@ private fun Transcript(
                         "-$index"
                 },
             ) { index, item ->
-                TranscriptBubble(
-                    item = item,
-                    avatarBytes = avatarBytes,
-                    displayPreferences = displayPreferences,
-                    actionsEnabled = actionsEnabled,
-                    includeInnerThoughts = includeInnerThoughts,
-                    canRegenerate = index == latestAssistantIndex && !sending,
-                    onCopy = { clipboard.setText(AnnotatedString(item.message)) },
-                    onRegenerate = onRegenerate,
-                    onBranch = { onBranch(item.turnId) },
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TranscriptBubble(
+                        item = item,
+                        avatarBytes = avatarBytes,
+                        displayPreferences = displayPreferences,
+                        actionsEnabled = actionsEnabled,
+                        includeInnerThoughts = includeInnerThoughts,
+                        canRegenerate = index == latestAssistantIndex && !sending,
+                        onCopy = { clipboard.setText(AnnotatedString(item.message)) },
+                        onRegenerate = onRegenerate,
+                        onBranch = { onBranch(item.turnId) },
+                    )
+                    if (!sending && index == latestUserIndex && modelReasoning.isNotBlank()) {
+                        ModelReasoningBlock(modelReasoning, streaming = false)
+                    }
+                }
             }
 
             pendingUserMessage?.let { pending ->
@@ -869,6 +885,15 @@ private fun Transcript(
                         onReconcile = onPendingReconcile,
                         onRecover = onPendingRecover,
                         requiresRecovery = session.status != "ready",
+                    )
+                }
+            }
+
+            if (sending && modelReasoning.isNotBlank()) {
+                item(key = "model-reasoning") {
+                    ModelReasoningBlock(
+                        modelReasoning,
+                        streaming = streamingReplies.none { it.text.isNotBlank() },
                     )
                 }
             }
@@ -1237,6 +1262,50 @@ private suspend fun LazyListState.scrollToBottom(itemIndex: Int, animated: Boole
             animateScrollBy(overflow.toFloat())
         } else {
             scrollBy(overflow.toFloat())
+        }
+    }
+}
+
+@Composable
+private fun ModelReasoningBlock(text: String, streaming: Boolean) {
+    var expanded by remember { mutableStateOf(streaming) }
+    LaunchedEffect(streaming) {
+        expanded = streaming
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !streaming) { expanded = !expanded },
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (streaming) "模型推理 · 生成中" else "模型推理",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (!streaming && !expanded) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = "展开模型推理",
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+            if (streaming || expanded) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.86f),
+                )
+            }
         }
     }
 }

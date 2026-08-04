@@ -30,6 +30,7 @@ data class ModelProfileEditorUiState(
     val apiKey: String = "",
     val apiKeyConfigured: Boolean = false,
     val maxTokens: String = "0",
+    val reasoningEffort: String = "auto",
     val message: String = "",
     val error: String = "",
     val completed: Boolean = false,
@@ -38,7 +39,8 @@ data class ModelProfileEditorUiState(
     val isDirty: Boolean
         get() = original?.let {
             profileName != it.profileName || selectedCatalogId != it.selectedCatalogId || provider != it.provider ||
-                model != it.model || baseUrl != it.baseUrl || maxTokens != it.maxTokens || apiKey.isNotBlank()
+                model != it.model || baseUrl != it.baseUrl || maxTokens != it.maxTokens ||
+                reasoningEffort != it.reasoningEffort || apiKey.isNotBlank()
         } ?: false
 }
 
@@ -49,6 +51,7 @@ data class EditorSnapshot(
     val model: String,
     val baseUrl: String,
     val maxTokens: String,
+    val reasoningEffort: String,
 )
 
 class ModelProfileEditorViewModel(
@@ -63,20 +66,48 @@ class ModelProfileEditorViewModel(
     }
 
     fun selectCatalog(catalog: ModelCatalog) = update {
+        val selectedModel = catalog.models.firstOrNull()?.id.orEmpty()
         copy(
             selectedCatalogId = catalog.id,
             provider = catalog.provider,
-            model = catalog.models.firstOrNull()?.id.orEmpty(),
+            model = selectedModel,
             baseUrl = catalog.baseUrl,
+            reasoningEffort = reasoningEffort.takeIf {
+                it in modelReasoningEfforts(catalog.provider, catalog.baseUrl, selectedModel)
+            } ?: "auto",
         )
     }
 
     fun updateProfileName(value: String) = update { copy(profileName = value) }
-    fun updateProvider(value: String) = update { copy(provider = value, selectedCatalogId = "custom") }
-    fun updateModel(value: String) = update { copy(model = value) }
-    fun updateBaseUrl(value: String) = update { copy(baseUrl = value, selectedCatalogId = "custom") }
+    fun updateProvider(value: String) = update {
+        copy(
+            provider = value,
+            selectedCatalogId = "custom",
+            reasoningEffort = reasoningEffort.takeIf {
+                it in modelReasoningEfforts(value, baseUrl, model)
+            } ?: "auto",
+        )
+    }
+    fun updateModel(value: String) = update {
+        copy(
+            model = value,
+            reasoningEffort = reasoningEffort.takeIf {
+                it in modelReasoningEfforts(provider, baseUrl, value)
+            } ?: "auto",
+        )
+    }
+    fun updateBaseUrl(value: String) = update {
+        copy(
+            baseUrl = value,
+            selectedCatalogId = "custom",
+            reasoningEffort = reasoningEffort.takeIf {
+                it in modelReasoningEfforts(provider, value, model)
+            } ?: "auto",
+        )
+    }
     fun updateApiKey(value: String) = update { copy(apiKey = value) }
     fun updateMaxTokens(value: String) = update { copy(maxTokens = value.filter(Char::isDigit).take(5)) }
+    fun updateReasoningEffort(value: String) = update { copy(reasoningEffort = value) }
 
     fun testConnection() {
         val request = validatedRequest() ?: return
@@ -90,6 +121,7 @@ class ModelProfileEditorViewModel(
                         baseUrl = request.baseUrl,
                         apiKey = request.apiKey,
                         maxTokens = request.maxTokens,
+                        reasoningEffort = request.reasoningEffort,
                         profileId = request.profileId,
                     ),
                 )
@@ -174,6 +206,9 @@ class ModelProfileEditorViewModel(
             baseUrl = current.baseUrl.trim(),
             apiKey = current.apiKey.trim(),
             maxTokens = maxTokens,
+            reasoningEffort = current.reasoningEffort.takeIf {
+                it in modelReasoningEfforts(current.provider, current.baseUrl, current.model)
+            } ?: "auto",
             profileId = current.profileId,
             profileName = current.profileName.trim(),
             createProfile = current.isNew,
@@ -199,12 +234,56 @@ private fun ModelProfileDto.toEditorState(activeProfileId: String, profileCount:
         baseUrl = baseUrl,
         apiKeyConfigured = apiKeyConfigured,
         maxTokens = maxTokens.toString(),
+        reasoningEffort = reasoningEffort,
     )
 
-private fun ModelProfileEditorUiState.snapshot() = EditorSnapshot(profileName, selectedCatalogId, provider, model, baseUrl, maxTokens)
+private fun ModelProfileEditorUiState.snapshot() = EditorSnapshot(
+    profileName,
+    selectedCatalogId,
+    provider,
+    model,
+    baseUrl,
+    maxTokens,
+    reasoningEffort,
+)
 
 private fun editorCatalogFor(provider: String, baseUrl: String, model: String): ModelCatalog? =
     modelCatalogs.firstOrNull { catalog ->
         catalog.models.any { it.id == model } && catalog.provider == provider &&
             catalog.baseUrl.trimEnd('/') == baseUrl.trimEnd('/')
     }
+
+internal fun modelReasoningEfforts(
+    provider: String,
+    baseUrl: String,
+    model: String,
+): List<String> {
+    val normalizedModel = model.trim().lowercase()
+    if (normalizedModel.startsWith("deepseek-v4-")) {
+        return if (baseUrl.contains("api.deepseek.com", ignoreCase = true)) {
+            listOf("auto", "off", "low", "medium", "high", "xhigh")
+        } else {
+            listOf("auto", "low", "medium", "high")
+        }
+    }
+    if (provider in setOf("openai", "openai-compatible")) {
+        if (normalizedModel.startsWith("gpt-5")) {
+            return if (provider == "openai") {
+                listOf("auto", "off", "low", "medium", "high", "xhigh")
+            } else {
+                listOf("auto", "low", "medium", "high")
+            }
+        }
+        if (listOf("o1", "o3", "o4").any(normalizedModel::startsWith)) {
+            return listOf("auto", "low", "medium", "high")
+        }
+    }
+    if (
+        provider == "openai-compatible" &&
+        baseUrl.contains("dashscope.aliyuncs.com", ignoreCase = true) &&
+        normalizedModel.startsWith("qwen")
+    ) {
+        return listOf("auto", "off")
+    }
+    return listOf("auto")
+}

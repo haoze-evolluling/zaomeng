@@ -42,6 +42,7 @@ enum class ThemeMode(val storageValue: String) {
 data class ChatDisplayPreferences(
     val fontSize: ChatFontSize = ChatFontSize.STANDARD,
     val compactMode: Boolean = false,
+    val showModelReasoning: Boolean = false,
 )
 
 data class AppPreferences(
@@ -71,6 +72,7 @@ class AppPreferencesRepository(
                 chatDisplay = ChatDisplayPreferences(
                     fontSize = ChatFontSize.fromStorageValue(values[CHAT_FONT_SIZE]),
                     compactMode = values[CHAT_COMPACT_MODE] ?: false,
+                    showModelReasoning = values[CHAT_SHOW_MODEL_REASONING] ?: false,
                 ),
                 themeMode = ThemeMode.fromStorageValue(values[THEME_MODE]),
             )
@@ -155,10 +157,15 @@ class AppPreferencesRepository(
         dataStore.edit { values -> values[CHAT_COMPACT_MODE] = enabled }
     }
 
+    suspend fun setShowModelReasoning(enabled: Boolean) {
+        dataStore.edit { values -> values[CHAT_SHOW_MODEL_REASONING] = enabled }
+    }
+
     suspend fun saveChatDisplayPreferences(preferences: ChatDisplayPreferences) {
         dataStore.edit { values ->
             values[CHAT_FONT_SIZE] = preferences.fontSize.storageValue
             values[CHAT_COMPACT_MODE] = preferences.compactMode
+            values[CHAT_SHOW_MODEL_REASONING] = preferences.showModelReasoning
         }
     }
 
@@ -178,6 +185,7 @@ class AppPreferencesRepository(
         val LAST_SESSION_ID = stringPreferencesKey("last_session_id")
         val CHAT_FONT_SIZE = stringPreferencesKey("chat_font_size")
         val CHAT_COMPACT_MODE = booleanPreferencesKey("chat_compact_mode")
+        val CHAT_SHOW_MODEL_REASONING = booleanPreferencesKey("chat_show_model_reasoning")
         val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }

@@ -67,6 +67,8 @@ private data class LoadedChatPlugins(
 
 private const val INNER_THOUGHTS_ENHANCER_KEY =
     "com.zaomeng.inner-thoughts/inner-thoughts"
+private const val MODEL_REASONING_DISPLAY_LIMIT = 16_000
+private const val MODEL_REASONING_UPDATE_INTERVAL_NANOS = 100_000_000L
 
 data class StreamingReplyPart(
     val index: Int,
@@ -104,6 +106,7 @@ data class ChatUiState(
     val failedMessage: String = "",
     val failedMessageKind: String = "dialogue",
     val streamStatus: String = "",
+    val modelReasoning: String = "",
     val streamingReplies: List<StreamingReplyPart> = emptyList(),
     val pendingUserMessage: PendingUserMessage? = null,
     val continuousObserveEnabled: Boolean = false,
@@ -245,7 +248,7 @@ class ChatViewModel(
         cancelToolRequest()
         val targetChanged = current.runId != normalizedRunId ||
             current.sessionId != normalizedSessionId
-        if (targetChanged) {
+        if (targetChanged || force) {
             sendJob?.cancel()
             stopContinuousObserve(notice = "")
             searchJob?.cancel()
@@ -265,13 +268,23 @@ class ChatViewModel(
                     loading = it.session == null,
                     refreshing = it.session != null,
                     toolBusy = "",
+                    modelReasoning = "",
                     error = "",
                 )
             }
         }
         loadJob = viewModelScope.launch {
             try {
-                val session = repository.getSession(normalizedRunId, normalizedSessionId)
+                val loadedSession = repository.getSession(normalizedRunId, normalizedSessionId)
+                val session = if (loadedSession.status == "ready") {
+                    loadedSession
+                } else {
+                    repository.recoverSession(
+                        normalizedRunId,
+                        normalizedSessionId,
+                        force = true,
+                    )
+                }
                 val avatars = loadAvatars(normalizedRunId, session)
                 val plugins = loadChatPlugins()
                 updateLoadState(requestId, normalizedRunId, normalizedSessionId) {
@@ -636,6 +649,33 @@ class ChatViewModel(
     ) {
         sendJob?.cancel()
         sendJob = viewModelScope.launch {
+            val reasoningBuffer = StringBuilder()
+            var reasoningTruncated = false
+            var reasoningFinalized = false
+            var lastReasoningUpdateAt = 0L
+
+            fun flushReasoning(force: Boolean = false) {
+                if (reasoningBuffer.isEmpty() && !reasoningTruncated) return
+                val now = System.nanoTime()
+                if (!force && now - lastReasoningUpdateAt < MODEL_REASONING_UPDATE_INTERVAL_NANOS) {
+                    return
+                }
+                lastReasoningUpdateAt = now
+                val displayText = buildString {
+                    append(reasoningBuffer)
+                    if (reasoningTruncated) append("\n...")
+                }
+                updateSendState(snapshot, operationId) { current ->
+                    current.copy(
+                        streamStatus = "模型正在思考并组织回应...",
+                        modelReasoning = displayText,
+                        pendingUserMessage = current.pendingUserMessage?.copy(
+                            statusText = "模型正在思考",
+                        ),
+                    )
+                }
+            }
+
             mutableState.update { current ->
                 if (
                     current.runId != snapshot.runId ||
@@ -647,6 +687,7 @@ class ChatViewModel(
                     draft = "",
                     error = "",
                     streamStatus = "正在连接模型…",
+                    modelReasoning = "",
                     streamingReplies = emptyList(),
                     sendOutcomeUnknown = false,
                     failedOperationId = operationId,
@@ -682,6 +723,7 @@ class ChatViewModel(
                     operationId = operationId,
                     suppressTranscriptMessage = suppressTranscriptMessage,
                     includeInnerThoughts = snapshot.includeInnerThoughts,
+                    includeModelReasoning = snapshot.chatDisplay.showModelReasoning,
                 ).collect { event ->
                     when (event) {
                         is DialogueStreamEvent.Status -> updateSendState(snapshot, operationId) {
@@ -691,44 +733,69 @@ class ChatViewModel(
                                 pendingUserMessage = it.pendingUserMessage?.copy(statusText = status),
                             )
                         }
-                        is DialogueStreamEvent.Delta -> updateSendState(snapshot, operationId) { current ->
-                            val existing = current.streamingReplies
-                                .firstOrNull { it.index == event.index }
-                            val updated = if (event.field == "inner_thought") {
-                                StreamingReplyPart(
-                                    index = event.index,
-                                    speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
-                                    role = event.role.ifBlank { existing?.role ?: "character" },
-                                    text = existing?.text.orEmpty(),
-                                    innerThought = existing?.innerThought.orEmpty() + event.text,
-                                )
-                            } else {
-                                StreamingReplyPart(
-                                    index = event.index,
-                                    speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
-                                    role = event.role.ifBlank { existing?.role ?: "character" },
-                                    text = existing?.text.orEmpty() + event.text,
-                                    innerThought = existing?.innerThought.orEmpty(),
+                        is DialogueStreamEvent.Delta -> {
+                            if (event.field == "model_reasoning") {
+                                val remaining = MODEL_REASONING_DISPLAY_LIMIT - reasoningBuffer.length
+                                if (remaining > 0) {
+                                    reasoningBuffer.append(event.text.take(remaining))
+                                }
+                                if (event.text.length > remaining.coerceAtLeast(0)) {
+                                    reasoningTruncated = true
+                                }
+                                flushReasoning()
+                                return@collect
+                            }
+                            if (event.field != "inner_thought" && !reasoningFinalized) {
+                                flushReasoning(force = true)
+                                reasoningFinalized = true
+                            }
+                            updateSendState(snapshot, operationId) { current ->
+                                val existing = current.streamingReplies
+                                    .firstOrNull { it.index == event.index }
+                                val updated = if (event.field == "inner_thought") {
+                                    StreamingReplyPart(
+                                        index = event.index,
+                                        speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
+                                        role = event.role.ifBlank { existing?.role ?: "character" },
+                                        text = existing?.text.orEmpty(),
+                                        innerThought = existing?.innerThought.orEmpty() + event.text,
+                                    )
+                                } else {
+                                    StreamingReplyPart(
+                                        index = event.index,
+                                        speaker = event.speaker.ifBlank { existing?.speaker.orEmpty() },
+                                        role = event.role.ifBlank { existing?.role ?: "character" },
+                                        text = existing?.text.orEmpty() + event.text,
+                                        innerThought = existing?.innerThought.orEmpty(),
+                                    )
+                                }
+                                current.copy(
+                                    streamStatus = "回复正在生成…",
+                                    pendingUserMessage = current.pendingUserMessage?.copy(
+                                        statusText = "正在生成回复",
+                                    ),
+                                    streamingReplies = current.streamingReplies
+                                        .filterNot { it.index == event.index }
+                                        .plus(updated)
+                                        .sortedBy(StreamingReplyPart::index),
                                 )
                             }
-                            current.copy(
-                                streamStatus = "回复正在生成…",
-                                pendingUserMessage = current.pendingUserMessage?.copy(
-                                    statusText = "正在生成回复",
-                                ),
-                                streamingReplies = current.streamingReplies
-                                    .filterNot { it.index == event.index }
-                                    .plus(updated)
-                                    .sortedBy(StreamingReplyPart::index),
-                            )
                         }
-                        is DialogueStreamEvent.Reset -> updateSendState(snapshot, operationId) {
-                            it.copy(
-                                streamStatus = event.message,
-                                streamingReplies = emptyList(),
-                            )
+                        is DialogueStreamEvent.Reset -> {
+                            reasoningBuffer.setLength(0)
+                            reasoningTruncated = false
+                            reasoningFinalized = false
+                            lastReasoningUpdateAt = 0L
+                            updateSendState(snapshot, operationId) {
+                                it.copy(
+                                    streamStatus = event.message,
+                                    modelReasoning = "",
+                                    streamingReplies = emptyList(),
+                                )
+                            }
                         }
                         is DialogueStreamEvent.Complete -> {
+                            if (!reasoningFinalized) flushReasoning(force = true)
                             updateSendState(snapshot, operationId) {
                                 it.copy(
                                     sending = false,
@@ -884,7 +951,11 @@ class ChatViewModel(
                 it.copy(refreshing = false, recovering = true, error = "")
             }
             try {
-                val recovered = repository.recoverSession(snapshot.runId, snapshot.sessionId)
+                val recovered = repository.recoverSession(
+                    snapshot.runId,
+                    snapshot.sessionId,
+                    force = true,
+                )
                 val responseWasCommitted = snapshot.sendBaselineTranscript?.let { baseline ->
                     recovered.status == "ready" && hasCommittedReply(baseline, recovered.transcript)
                 } == true

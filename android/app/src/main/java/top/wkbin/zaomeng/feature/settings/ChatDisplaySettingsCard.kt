@@ -114,6 +114,30 @@ fun ChatDisplaySettingsCard(
                     enabled = !saving,
                 )
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("显示模型推理", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "在聊天中显示模型返回的推理文本，默认关闭。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = preferences.showModelReasoning,
+                    onCheckedChange = { enabled ->
+                        persist { preferencesRepository.setShowModelReasoning(enabled) }
+                    },
+                    enabled = !saving,
+                )
+            }
             if (error.isNotBlank()) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text(
