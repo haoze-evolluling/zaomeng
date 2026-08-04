@@ -14,14 +14,16 @@ from src.web.chat.runtime import generate_dialogue_responses_for_run
 
 
 class _StreamResponse:
-    def __init__(self, lines, *, status_code=200, reason="OK"):
+    def __init__(
+        self, lines, *, status_code=200, reason="OK", encoding="utf-8"
+    ):
         self._lines = [
             line if isinstance(line, bytes) else str(line).encode("utf-8")
             for line in lines
         ]
         self.status_code = status_code
         self.reason = reason
-        self.encoding = "utf-8"
+        self.encoding = encoding
         self.text = "".join(
             line.decode("utf-8", errors="replace") for line in self._lines
         )
@@ -150,6 +152,35 @@ class LLMClientStreamingTests(unittest.TestCase):
         request_payload = post.call_args.kwargs["json"]
         self.assertTrue(request_payload["stream"])
         self.assertEqual(request_payload["stream_options"], {"include_usage": True})
+
+    def test_openai_stream_decodes_utf8_and_ignores_empty_sse_fields(self):
+        client = self._make_client("openai-compatible")
+        response = _StreamResponse(
+            [
+                b"data:\n",
+                b"x-provider-heartbeat: active\n",
+                _sse(
+                    {
+                        "choices": [
+                            {
+                                "delta": {"content": "你好世界"},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    }
+                ),
+                _sse("[DONE]"),
+            ],
+            encoding="ISO-8859-1",
+        )
+
+        with patch("src.core.llm_client.requests.post", return_value=response):
+            result = client.chat_completion_stream(
+                [{"role": "user", "content": "请回复中文"}]
+            )
+
+        self.assertEqual(result["content"], "你好世界")
+        self.assertEqual(result["finish_reason"], "stop")
 
     def test_anthropic_stream_emits_text_and_preserves_cache_usage(self):
         client = self._make_client("anthropic")

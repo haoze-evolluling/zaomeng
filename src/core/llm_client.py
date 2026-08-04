@@ -1385,11 +1385,9 @@ class LLMClient:
                         raise requests.HTTPError(
                             f"{resp.status_code} {resp.reason}", response=resp
                         )
-                    for raw_line in resp.iter_lines(decode_unicode=True):
+                    for raw_line in resp.iter_lines(decode_unicode=False):
                         if isinstance(raw_line, bytes):
-                            line = raw_line.decode(
-                                resp.encoding or "utf-8", errors="replace"
-                            )
+                            line = raw_line.decode("utf-8-sig", errors="replace")
                         else:
                             line = str(raw_line)
                         line = line.rstrip("\r\n")
@@ -1401,8 +1399,11 @@ class LLMClient:
                                 ("event:", "id:", "retry:")
                             ):
                                 continue
-                            if line.startswith("data:"):
-                                data_text = line[5:].lstrip()
+                            if not line.startswith("data:"):
+                                continue
+                            data_text = line[5:].lstrip()
+                            if not data_text:
+                                continue
                         if data_text == "[DONE]":
                             return event_count
                         data = json.loads(data_text)
