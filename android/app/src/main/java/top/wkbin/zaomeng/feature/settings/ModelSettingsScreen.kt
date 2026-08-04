@@ -350,7 +350,7 @@ fun ModelProfileEditorScreen(
                     EditorSection("模型推理") {
                         SelectionRow(
                             title = "推理强度",
-                            subtitle = "关闭会跳过推理，优先生成回复。",
+                            subtitle = "选项取决于模型接口；没有“关闭”时，服务商不支持关闭推理。",
                             value = reasoningEffortLabel(state.reasoningEffort),
                             onClick = { showReasoningEffortSheet = true },
                         )
@@ -689,6 +689,7 @@ private fun ProviderLogo(catalogId: String) {
         "deepseek" -> Image(painterResource(R.drawable.ic_provider_deepseek), null, Modifier.height(24.dp))
         "qwen" -> Image(painterResource(R.drawable.ic_provider_qwen), null, Modifier.height(24.dp))
         "mimo" -> Image(painterResource(R.drawable.ic_provider_mimo), null, Modifier.height(24.dp))
+        "stepfun" -> Image(painterResource(R.drawable.ic_provider_jieyue), null, Modifier.height(24.dp))
         "anthropic" -> Image(painterResource(R.drawable.ic_provider_anthropic), null, Modifier.height(24.dp))
         "openai" -> Image(painterResource(R.drawable.ic_provider_openai), null, Modifier.height(24.dp))
         "ollama" -> Image(painterResource(R.drawable.ic_provider_ollama), null, Modifier.height(24.dp))

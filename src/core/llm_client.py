@@ -40,6 +40,10 @@ def _reasoning_efforts_for_model(
     *, provider: str, base_url: str, model: str
 ) -> tuple[str, ...]:
     normalized = str(model or "").strip().lower()
+    if provider == "openai-compatible" and normalized.startswith("step-"):
+        if normalized == "step-3.5-flash-2603":
+            return ("auto", "low", "high")
+        return ("auto", "low", "medium", "high")
     if normalized.startswith("deepseek-v4-"):
         if "api.deepseek.com" in str(base_url or "").lower():
             return ("auto", "off", "low", "medium", "high", "xhigh")
@@ -75,6 +79,9 @@ def _apply_reasoning_controls(
     if reasoning_effort not in supported_efforts:
         return
     is_deepseek_v4 = normalized_model.startswith("deepseek-v4-")
+    is_stepfun_reasoning = (
+        provider == "openai-compatible" and normalized_model.startswith("step-")
+    )
     is_direct_deepseek_v4 = (
         is_deepseek_v4 and "api.deepseek.com" in str(base_url or "").lower()
     )
@@ -97,7 +104,7 @@ def _apply_reasoning_controls(
         return
     if not reasoning_effort or reasoning_effort == "auto":
         return
-    if is_openai_reasoning:
+    if is_openai_reasoning or is_stepfun_reasoning:
         payload["reasoning_effort"] = reasoning_effort
         return
     if not is_deepseek_v4:

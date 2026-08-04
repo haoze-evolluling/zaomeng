@@ -65,6 +65,13 @@ val modelCatalogs = listOf(
         ),
     ),
     ModelCatalog(
+        "stepfun", "阶跃星辰", "openai-compatible", "https://api.stepfun.com/v1",
+        listOf(
+            ModelChoice("step-3.7-flash", "Step 3.7 Flash"),
+            ModelChoice("step-3.5-flash", "Step 3.5 Flash")
+        ),
+    ),
+    ModelCatalog(
         "anthropic", "Anthropic", "anthropic", "",
         listOf(
             ModelChoice("claude-sonnet-4-20250514", "Claude Sonnet"),

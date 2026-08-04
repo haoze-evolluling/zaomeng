@@ -301,6 +301,42 @@ class LLMClientStreamingTests(unittest.TestCase):
 
         self.assertNotIn("reasoning_effort", post.call_args.kwargs["payload"])
 
+    def test_stepfun_custom_model_applies_supported_reasoning_controls(self):
+        client = self._make_client("openai-compatible")
+        response = {"choices": [{"message": {"content": "完成"}}]}
+
+        for effort, expected in (("auto", None), ("off", None), ("high", "high")):
+            with self.subTest(effort=effort):
+                client.llm_config.update(
+                    {
+                        "model": "step-3.5-flash",
+                        "reasoning_effort": effort,
+                    }
+                )
+                with patch.object(client, "_post_json", return_value=response) as post:
+                    client.chat_completion([{"role": "user", "content": "继续"}])
+
+                payload = post.call_args.kwargs["payload"]
+                if expected is None:
+                    self.assertNotIn("reasoning_effort", payload)
+                else:
+                    self.assertEqual(payload["reasoning_effort"], expected)
+
+    def test_stepfun_2603_omits_unsupported_medium_reasoning_effort(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update(
+            {
+                "model": "step-3.5-flash-2603",
+                "reasoning_effort": "medium",
+            }
+        )
+        response = {"choices": [{"message": {"content": "完成"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "继续"}])
+
+        self.assertNotIn("reasoning_effort", post.call_args.kwargs["payload"])
+
     def test_direct_deepseek_flash_uses_low_reasoning_effort(self):
         client = self._make_client("openai-compatible")
         client.llm_config.update(

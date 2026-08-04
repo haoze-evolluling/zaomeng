@@ -23,8 +23,59 @@ class ModelReasoningCapabilitiesTest {
             ),
         )
         assertEquals(
+            listOf("auto", "low", "medium", "high"),
+            modelReasoningEfforts(
+                "openai-compatible",
+                "https://api.stepfun.com/v1",
+                "step-3.5-flash",
+            ),
+        )
+        assertEquals(
+            listOf("auto", "low", "high"),
+            modelReasoningEfforts(
+                "openai-compatible",
+                "https://api.stepfun.com/v1",
+                "step-3.5-flash-2603",
+            ),
+        )
+        assertEquals(
             listOf("auto"),
             modelReasoningEfforts("openai", "", "gpt-4.1"),
+        )
+    }
+
+    @Test
+    fun stepFunIsAvailableAsBuiltInCatalog() {
+        val catalog = modelCatalogs.first { it.id == "stepfun" }
+
+        assertEquals("阶跃星辰", catalog.title)
+        assertEquals("openai-compatible", catalog.provider)
+        assertEquals("https://api.stepfun.com/v1", catalog.baseUrl)
+        assertEquals(
+            listOf("step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"),
+            catalog.models.map { it.id },
+        )
+    }
+
+    @Test
+    fun unsupportedReasoningValueFallsBackToModelDefault() {
+        assertEquals(
+            "auto",
+            normalizedReasoningEffort(
+                "openai-compatible",
+                "https://api.stepfun.com/v1",
+                "step-3.7-flash",
+                "off",
+            ),
+        )
+        assertEquals(
+            "off",
+            normalizedReasoningEffort(
+                "openai-compatible",
+                "https://api.deepseek.com",
+                "deepseek-v4-pro",
+                "unsupported",
+            ),
         )
     }
 }

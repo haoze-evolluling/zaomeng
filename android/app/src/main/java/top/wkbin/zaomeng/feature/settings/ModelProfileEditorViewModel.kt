@@ -72,9 +72,12 @@ class ModelProfileEditorViewModel(
             provider = catalog.provider,
             model = selectedModel,
             baseUrl = catalog.baseUrl,
-            reasoningEffort = reasoningEffort.takeIf {
-                it in modelReasoningEfforts(catalog.provider, catalog.baseUrl, selectedModel)
-            } ?: "auto",
+            reasoningEffort = normalizedReasoningEffort(
+                catalog.provider,
+                catalog.baseUrl,
+                selectedModel,
+                reasoningEffort,
+            ),
         )
     }
 
@@ -83,26 +86,20 @@ class ModelProfileEditorViewModel(
         copy(
             provider = value,
             selectedCatalogId = "custom",
-            reasoningEffort = reasoningEffort.takeIf {
-                it in modelReasoningEfforts(value, baseUrl, model)
-            } ?: "auto",
+            reasoningEffort = normalizedReasoningEffort(value, baseUrl, model, reasoningEffort),
         )
     }
     fun updateModel(value: String) = update {
         copy(
             model = value,
-            reasoningEffort = reasoningEffort.takeIf {
-                it in modelReasoningEfforts(provider, baseUrl, value)
-            } ?: "auto",
+            reasoningEffort = normalizedReasoningEffort(provider, baseUrl, value, reasoningEffort),
         )
     }
     fun updateBaseUrl(value: String) = update {
         copy(
             baseUrl = value,
             selectedCatalogId = "custom",
-            reasoningEffort = reasoningEffort.takeIf {
-                it in modelReasoningEfforts(provider, value, model)
-            } ?: "auto",
+            reasoningEffort = normalizedReasoningEffort(provider, value, model, reasoningEffort),
         )
     }
     fun updateApiKey(value: String) = update { copy(apiKey = value) }
@@ -206,9 +203,12 @@ class ModelProfileEditorViewModel(
             baseUrl = current.baseUrl.trim(),
             apiKey = current.apiKey.trim(),
             maxTokens = maxTokens,
-            reasoningEffort = current.reasoningEffort.takeIf {
-                it in modelReasoningEfforts(current.provider, current.baseUrl, current.model)
-            } ?: "auto",
+            reasoningEffort = normalizedReasoningEffort(
+                current.provider,
+                current.baseUrl,
+                current.model,
+                current.reasoningEffort,
+            ),
             profileId = current.profileId,
             profileName = current.profileName.trim(),
             createProfile = current.isNew,
@@ -234,7 +234,7 @@ private fun ModelProfileDto.toEditorState(activeProfileId: String, profileCount:
         baseUrl = baseUrl,
         apiKeyConfigured = apiKeyConfigured,
         maxTokens = maxTokens.toString(),
-        reasoningEffort = reasoningEffort,
+        reasoningEffort = normalizedReasoningEffort(provider, baseUrl, model, reasoningEffort),
     )
 
 private fun ModelProfileEditorUiState.snapshot() = EditorSnapshot(
@@ -259,6 +259,16 @@ internal fun modelReasoningEfforts(
     model: String,
 ): List<String> {
     val normalizedModel = model.trim().lowercase()
+    if (
+        provider == "openai-compatible" &&
+        normalizedModel.startsWith("step-")
+    ) {
+        return if (normalizedModel == "step-3.5-flash-2603") {
+            listOf("auto", "low", "high")
+        } else {
+            listOf("auto", "low", "medium", "high")
+        }
+    }
     if (normalizedModel.startsWith("deepseek-v4-")) {
         return if (baseUrl.contains("api.deepseek.com", ignoreCase = true)) {
             listOf("auto", "off", "low", "medium", "high", "xhigh")
@@ -286,4 +296,16 @@ internal fun modelReasoningEfforts(
         return listOf("auto", "off")
     }
     return listOf("auto")
+}
+
+internal fun normalizedReasoningEffort(
+    provider: String,
+    baseUrl: String,
+    model: String,
+    current: String,
+): String {
+    val supported = modelReasoningEfforts(provider, baseUrl, model)
+    return current.takeIf(supported::contains)
+        ?: "off".takeIf(supported::contains)
+        ?: "auto"
 }
