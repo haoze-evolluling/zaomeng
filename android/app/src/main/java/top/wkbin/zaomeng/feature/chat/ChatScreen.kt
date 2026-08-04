@@ -1,8 +1,11 @@
 package top.wkbin.zaomeng.feature.chat
 
 import android.content.ClipData
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -34,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -113,6 +117,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
@@ -121,7 +127,6 @@ import top.wkbin.zaomeng.data.api.DialogueSessionDto
 import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.TranscriptItemDto
 import top.wkbin.zaomeng.data.preferences.ChatDisplayPreferences
-import top.wkbin.zaomeng.ui.components.ChatBackgroundImage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.contentOrNull
@@ -132,6 +137,31 @@ private data class MessageKindOption(
     val value: String,
     val label: String,
 )
+
+@Composable
+fun ChatBackgroundImage(
+    imageUri: String,
+    opacity: Float,
+    blurRadius: Float,
+    modifier: Modifier = Modifier,
+) {
+    if (imageUri.isBlank()) return
+    val context = LocalContext.current
+    val bitmap = remember(imageUri) {
+        runCatching {
+            context.contentResolver.openInputStream(Uri.parse(imageUri))?.use(BitmapFactory::decodeStream)
+        }.getOrNull()
+    } ?: return
+    Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        alpha = opacity.coerceIn(0.1f, 1f),
+        modifier = modifier
+            .fillMaxSize()
+            .blur(blurRadius.coerceIn(0f, 32f).dp),
+    )
+}
 
 private val messageKindOptions = listOf(
     MessageKindOption("dialogue", "对话"),

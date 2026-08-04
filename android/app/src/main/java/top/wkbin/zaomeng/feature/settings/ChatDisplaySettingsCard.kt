@@ -42,7 +42,7 @@ import org.koin.compose.koinInject
 import top.wkbin.zaomeng.data.preferences.AppPreferencesRepository
 import top.wkbin.zaomeng.data.preferences.ChatDisplayPreferences
 import top.wkbin.zaomeng.data.preferences.ChatFontSize
-import top.wkbin.zaomeng.ui.components.ChatBackgroundImage
+import top.wkbin.zaomeng.feature.chat.ChatBackgroundImage
 
 @Composable
 fun ChatDisplaySettingsCard(
