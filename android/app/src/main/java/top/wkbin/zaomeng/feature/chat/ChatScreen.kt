@@ -91,6 +91,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -120,6 +121,7 @@ import top.wkbin.zaomeng.data.api.DialogueSessionDto
 import top.wkbin.zaomeng.data.api.ChatSearchResultDto
 import top.wkbin.zaomeng.data.api.TranscriptItemDto
 import top.wkbin.zaomeng.data.preferences.ChatDisplayPreferences
+import top.wkbin.zaomeng.ui.components.ChatBackgroundImage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.contentOrNull
@@ -262,98 +264,121 @@ fun ChatScreen(
         )
     }
 
-    Scaffold(
+    val hasChatBackground = state.chatDisplay.backgroundImageUri.isNotBlank()
+    val chromeMaskColor = MaterialTheme.colorScheme.surface.copy(
+        alpha = if (hasChatBackground) 0.82f else 1f,
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface),
+    ) {
+        ChatBackgroundImage(
+            imageUri = state.chatDisplay.backgroundImageUri,
+            opacity = state.chatDisplay.backgroundOpacity,
+            blurRadius = state.chatDisplay.backgroundBlurRadius,
+        )
+        Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
-            if (searchOpen) {
-                ChatSearchTopBar(
-                    query = state.searchQuery,
-                    searchFocusRequester = searchFocusRequester,
-                    onQueryChange = viewModel::updateSearchQuery,
-                    onClose = closeSearch,
-                )
-            } else {
-                ChatTopBar(
-                    session = state.session,
-                    refreshing = state.refreshing,
-                    refreshEnabled = state.canRefresh,
-                    toolsEnabled = state.canUseTools,
-                    onBack = onBack,
-                    onRefresh = viewModel::refresh,
-                    onOpenTools = { toolsOpen = true },
-                    onOpenSearch = { searchOpen = true },
-                )
-            }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            if (state.session != null) {
-                ChatComposer(
-                    state = state,
-                    avatarBytes = state.avatarBytes,
-                    onDraftChange = viewModel::updateDraft,
-                    onMessageKindChange = viewModel::selectMessageKind,
-                    onInvokePluginAction = viewModel::invokePluginAction,
-                    onOpenDirector = { directorOpen = true },
-                    onSend = viewModel::send,
-                    onToggleContinuousObserve = viewModel::toggleContinuousObserve,
-                    onToggleGenerationEnhancer = viewModel::toggleGenerationEnhancer,
-                    onRecover = viewModel::recoverPending,
-                    onReconcile = viewModel::reconcileUnknownSend,
-                    onRetry = viewModel::retryLastSend,
-                    onDiscardRetry = viewModel::discardFailedSend,
-                )
-            }
-        },
-    ) { innerPadding ->
-        when {
-            state.loading -> ChatLoading(Modifier.padding(innerPadding))
-            state.session == null -> MissingChat(
-                error = state.error,
-                onRetry = viewModel::refresh,
-                modifier = Modifier.padding(innerPadding),
-            )
-            else -> Column(Modifier.padding(innerPadding).fillMaxSize()) {
-                if (searchOpen && state.searchQuery.isNotBlank()) {
-                    ChatSearchResults(
+            Surface(color = chromeMaskColor) {
+                if (searchOpen) {
+                    ChatSearchTopBar(
                         query = state.searchQuery,
-                        searching = state.searching,
-                        results = state.searchResults,
-                        actionsEnabled = state.canUseTools,
-                        onBranch = viewModel::branchFromTurn,
-                        modifier = Modifier.weight(1f),
+                        searchFocusRequester = searchFocusRequester,
+                        onQueryChange = viewModel::updateSearchQuery,
+                        onClose = closeSearch,
                     )
                 } else {
-                    val session = requireNotNull(state.session)
-                    val hasConsistencyIssue = session.consistencyMonitor.consistencyInsight()
-                        ?.issueCount
-                        ?.let { it > 0 } == true
-                    if (hasConsistencyIssue) {
-                        ChatContextStrip(
+                    ChatTopBar(
+                        session = state.session,
+                        refreshing = state.refreshing,
+                        refreshEnabled = state.canRefresh,
+                        toolsEnabled = state.canUseTools,
+                        onBack = onBack,
+                        onRefresh = viewModel::refresh,
+                        onOpenTools = { toolsOpen = true },
+                        onOpenSearch = { searchOpen = true },
+                    )
+                }
+            }
+        },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            if (state.session != null) {
+                Surface(color = chromeMaskColor) {
+                    ChatComposer(
+                        state = state,
+                        avatarBytes = state.avatarBytes,
+                        onDraftChange = viewModel::updateDraft,
+                        onMessageKindChange = viewModel::selectMessageKind,
+                        onInvokePluginAction = viewModel::invokePluginAction,
+                        onOpenDirector = { directorOpen = true },
+                        onSend = viewModel::send,
+                        onToggleContinuousObserve = viewModel::toggleContinuousObserve,
+                        onToggleGenerationEnhancer = viewModel::toggleGenerationEnhancer,
+                        onRecover = viewModel::recoverPending,
+                        onReconcile = viewModel::reconcileUnknownSend,
+                        onRetry = viewModel::retryLastSend,
+                        onDiscardRetry = viewModel::discardFailedSend,
+                    )
+                }
+            }
+        },
+        ) { innerPadding ->
+            when {
+                state.loading -> ChatLoading(Modifier.padding(innerPadding))
+                state.session == null -> MissingChat(
+                    error = state.error,
+                    onRetry = viewModel::refresh,
+                    modifier = Modifier.padding(innerPadding),
+                )
+
+                else -> Column(Modifier
+                    .padding(innerPadding)
+                    .fillMaxSize()) {
+                    if (searchOpen && state.searchQuery.isNotBlank()) {
+                        ChatSearchResults(
+                            query = state.searchQuery,
+                            searching = state.searching,
+                            results = state.searchResults,
+                            actionsEnabled = state.canUseTools,
+                            onBranch = viewModel::branchFromTurn,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        val session = requireNotNull(state.session)
+                        val hasConsistencyIssue = session.consistencyMonitor.consistencyInsight()
+                            ?.issueCount
+                            ?.let { it > 0 } == true
+                        if (hasConsistencyIssue) {
+                            ChatContextStrip(
+                                session = session,
+                                onOpenTools = { toolsOpen = true },
+                            )
+                        }
+                        Transcript(
                             session = session,
-                            onOpenTools = { toolsOpen = true },
+                            avatarBytes = state.avatarBytes,
+                            sending = state.sending,
+                            streamStatus = state.streamStatus,
+                            modelReasoning = state.modelReasoning.takeIf {
+                                state.chatDisplay.showModelReasoning
+                            }.orEmpty(),
+                            streamingReplies = state.streamingReplies,
+                            pendingUserMessage = state.pendingUserMessage,
+                            displayPreferences = state.chatDisplay,
+                            actionsEnabled = state.canUseTools,
+                            includeInnerThoughts = state.includeInnerThoughts,
+                            onRegenerate = viewModel::correctLatest,
+                            onBranch = viewModel::branchFromTurn,
+                            onPendingRetry = viewModel::retryLastSend,
+                            onPendingEdit = viewModel::discardFailedSend,
+                            onPendingReconcile = viewModel::reconcileUnknownSend,
+                            onPendingRecover = viewModel::recoverPending,
+                            modifier = Modifier.weight(1f),
                         )
                     }
-                    Transcript(
-                        session = session,
-                        avatarBytes = state.avatarBytes,
-                        sending = state.sending,
-                        streamStatus = state.streamStatus,
-                        modelReasoning = state.modelReasoning.takeIf {
-                            state.chatDisplay.showModelReasoning
-                        }.orEmpty(),
-                        streamingReplies = state.streamingReplies,
-                        pendingUserMessage = state.pendingUserMessage,
-                        displayPreferences = state.chatDisplay,
-                        actionsEnabled = state.canUseTools,
-                        includeInnerThoughts = state.includeInnerThoughts,
-                        onRegenerate = viewModel::correctLatest,
-                        onBranch = viewModel::branchFromTurn,
-                        onPendingRetry = viewModel::retryLastSend,
-                        onPendingEdit = viewModel::discardFailedSend,
-                        onPendingReconcile = viewModel::reconcileUnknownSend,
-                        onPendingRecover = viewModel::recoverPending,
-                        modifier = Modifier.weight(1f),
-                    )
                 }
             }
         }
@@ -378,7 +403,10 @@ private fun ChatContextStrip(session: DialogueSessionDto, onOpenTools: () -> Uni
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
                 Text(
                     "${summary.mode} · ${summary.scene}",
                     style = MaterialTheme.typography.labelLarge,
@@ -478,10 +506,15 @@ private fun ChatTopBar(
     onOpenSearch: () -> Unit,
 ) {
     TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent,
+        ),
         title = {
             Column {
                 Text(
-                    text = session?.participants?.joinToString("、")?.ifBlank { "人物会话" } ?: "人物会话",
+                    text = session?.participants?.joinToString("、")?.ifBlank { "人物会话" }
+                        ?: "人物会话",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -575,7 +608,9 @@ private fun ChatToolOptionsDialog(
         title = { Text(title.ifBlank { "选择一个方案" }) },
         text = {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(options, key = { "${it.label}-${it.value}" }) { option ->
@@ -660,12 +695,14 @@ private fun ChatSearchResults(
         searching -> Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
+
         results.isEmpty() -> Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
                 "没有找到相关聊天记录",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
         else -> LazyColumn(
             modifier = modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -690,7 +727,9 @@ private fun ChatSearchResults(
                     ),
                 ) {
                     Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -784,8 +823,8 @@ private fun Transcript(
     var previousVisibleCount by remember(session.sessionId) {
         mutableIntStateOf(
             transcript.size + streamingReplies.size +
-                (if (modelReasoning.isBlank()) 0 else 1) +
-                if (pendingUserMessage == null) 0 else 1,
+                    (if (modelReasoning.isBlank()) 0 else 1) +
+                    if (pendingUserMessage == null) 0 else 1,
         )
     }
     val isAtBottom by remember(listState, bottomThresholdPx) {
@@ -793,10 +832,10 @@ private fun Transcript(
             val layout = listState.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()
             layout.totalItemsCount == 0 || (
-                lastVisible?.index == layout.totalItemsCount - 1 &&
-                    lastVisible.offset + lastVisible.size <=
-                    layout.viewportEndOffset + bottomThresholdPx
-                )
+                    lastVisible?.index == layout.totalItemsCount - 1 &&
+                            lastVisible.offset + lastVisible.size <=
+                            layout.viewportEndOffset + bottomThresholdPx
+                    )
         }
     }
 
@@ -810,13 +849,13 @@ private fun Transcript(
     }
 
     val visibleCount = transcript.size + streamingReplies.size +
-        (if (sending && modelReasoning.isNotBlank()) 1 else 0) +
-        if (pendingUserMessage == null) 0 else 1
+            (if (sending && modelReasoning.isNotBlank()) 1 else 0) +
+            if (pendingUserMessage == null) 0 else 1
     val lastContentIndex = (visibleCount - 1).coerceAtLeast(0)
     val contentSignature = transcript.lastOrNull()?.message.orEmpty() +
-        streamingReplies.joinToString(separator = "|") { it.text } +
-        modelReasoning +
-        pendingUserMessage?.let { "${it.operationId}|${it.status}|${it.statusText}" }.orEmpty()
+            streamingReplies.joinToString(separator = "|") { it.text } +
+            modelReasoning +
+            pendingUserMessage?.let { "${it.operationId}|${it.status}|${it.statusText}" }.orEmpty()
     LaunchedEffect(visibleCount, contentSignature, sending) {
         val added = (visibleCount - previousVisibleCount).coerceAtLeast(0)
         previousVisibleCount = visibleCount
@@ -828,7 +867,7 @@ private fun Transcript(
         }
     }
 
-    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
+    Box(modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -847,7 +886,9 @@ private fun Transcript(
                 item {
                     Text(
                         "这一幕还没有留下台词。写下第一句话，让故事继续。",
-                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -857,7 +898,7 @@ private fun Transcript(
                 items = transcript,
                 key = { index, item ->
                     item.turnId.ifBlank { "$index-${item.speaker}-${item.message.hashCode()}" } +
-                        "-$index"
+                            "-$index"
                 },
             ) { index, item ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -939,7 +980,9 @@ private fun Transcript(
                         listState.scrollToBottom(lastContentIndex, animated = true)
                     }
                 },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(14.dp),
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 icon = {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
@@ -1128,7 +1171,10 @@ private fun PendingNarrationMessageCard(
                             color = MaterialTheme.colorScheme.error,
                         )
                         if (requiresRecovery) {
-                            TextButton(onClick = onRecover, modifier = Modifier.align(Alignment.End)) {
+                            TextButton(
+                                onClick = onRecover,
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
                                 Text("恢复会话")
                             }
                         } else {
@@ -1172,7 +1218,10 @@ private fun PendingDirectorInstructionCard(
             color = androidx.compose.ui.graphics.Color.Transparent,
             shape = RoundedCornerShape(0.dp),
         ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 androidx.compose.material3.HorizontalDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -1191,7 +1240,9 @@ private fun PendingDirectorInstructionCard(
                 }
                 ParentheticalMessageText(
                     text = pending.message,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     baseColor = MaterialTheme.colorScheme.onSurface,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1222,7 +1273,10 @@ private fun PendingDirectorInstructionCard(
                             color = MaterialTheme.colorScheme.error,
                         )
                         if (requiresRecovery) {
-                            TextButton(onClick = onRecover, modifier = Modifier.align(Alignment.End)) {
+                            TextButton(
+                                onClick = onRecover,
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
                                 Text("恢复会话")
                             }
                         } else {
@@ -1357,7 +1411,9 @@ private fun TranscriptBubble(
                 ) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = verticalPadding)) {
                         Text(
-                            text = "旁白${item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}",
+                            text = "旁白${
+                                item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()
+                            }",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                             fontWeight = FontWeight.SemiBold,
@@ -1411,7 +1467,10 @@ private fun TranscriptBubble(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                text = "导演${item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}",
+                                text = "导演${
+                                    item.speaker.takeIf(String::isNotBlank)?.let { " · $it" }
+                                        .orEmpty()
+                                }",
                                 modifier = Modifier.padding(start = 5.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1420,7 +1479,9 @@ private fun TranscriptBubble(
                         }
                         ParentheticalMessageText(
                             text = item.message,
-                            modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 3.dp),
                             style = messageStyle,
                             baseColor = MaterialTheme.colorScheme.onSurface,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1463,78 +1524,78 @@ private fun TranscriptBubble(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        Box {
-            Surface(
-                modifier = Modifier
-                    .widthIn(max = 340.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = { if (!streaming) menuExpanded = true },
+            Box {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(max = 340.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { if (!streaming) menuExpanded = true },
+                        ),
+                    color = if (isUser) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    shape = RoundedCornerShape(
+                        topStart = 18.dp,
+                        topEnd = 18.dp,
+                        bottomStart = if (isUser) 18.dp else 4.dp,
+                        bottomEnd = if (isUser) 4.dp else 18.dp,
                     ),
-                color = if (isUser) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                },
-                shape = RoundedCornerShape(
-                    topStart = 18.dp,
-                    topEnd = 18.dp,
-                    bottomStart = if (isUser) 18.dp else 4.dp,
-                    bottomEnd = if (isUser) 4.dp else 18.dp,
-                ),
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = verticalPadding)) {
-                    if (isUser) Text(
-                        text = "你 · ${item.speaker}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    ParentheticalMessageText(
-                        text = item.message,
-                        modifier = Modifier.padding(top = 3.dp),
-                        style = messageStyle,
-                        baseColor = if (isUser) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                    )
-                    if (includeInnerThoughts && item.innerThought.isNotBlank() && !isUser) {
-                        androidx.compose.material3.HorizontalDivider(
-                            modifier = Modifier.padding(top = 6.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
-                        Text(
-                            text = "内心独白：${item.innerThought}",
-                            modifier = Modifier.padding(top = 6.dp),
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontStyle = FontStyle.Italic,
-                            ),
-                            color = MaterialTheme.colorScheme.tertiary,
-                        )
-                    }
-                    if (streaming) {
-                        Text(
-                            "正在生成",
-                            modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = verticalPadding)) {
+                        if (isUser) Text(
+                            text = "你 · ${item.speaker}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                            fontWeight = FontWeight.SemiBold,
                         )
+                        ParentheticalMessageText(
+                            text = item.message,
+                            modifier = Modifier.padding(top = 3.dp),
+                            style = messageStyle,
+                            baseColor = if (isUser) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                        if (includeInnerThoughts && item.innerThought.isNotBlank() && !isUser) {
+                            androidx.compose.material3.HorizontalDivider(
+                                modifier = Modifier.padding(top = 6.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                            )
+                            Text(
+                                text = "内心独白：${item.innerThought}",
+                                modifier = Modifier.padding(top = 6.dp),
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontStyle = FontStyle.Italic,
+                                ),
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                        if (streaming) {
+                            Text(
+                                "正在生成",
+                                modifier = Modifier.padding(top = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
+                MessageContextMenu(
+                    expanded = menuExpanded,
+                    onDismiss = { menuExpanded = false },
+                    actionsEnabled = actionsEnabled,
+                    canRegenerate = canRegenerate,
+                    canBranch = canBranch,
+                    onCopy = onCopy,
+                    onRegenerate = onRegenerate,
+                    onBranch = onBranch,
+                )
             }
-            MessageContextMenu(
-                expanded = menuExpanded,
-                onDismiss = { menuExpanded = false },
-                actionsEnabled = actionsEnabled,
-                canRegenerate = canRegenerate,
-                canBranch = canBranch,
-                onCopy = onCopy,
-                onRegenerate = onRegenerate,
-                onBranch = onBranch,
-            )
-        }
         }
     }
 }
@@ -1664,7 +1725,13 @@ private fun ParentheticalMessageText(
             append(text.substring(cursor))
         }
     }
-    Text(text = annotated, modifier = modifier, style = style, color = baseColor, textAlign = textAlign)
+    Text(
+        text = annotated,
+        modifier = modifier,
+        style = style,
+        color = baseColor,
+        textAlign = textAlign
+    )
 }
 
 @Composable
@@ -1706,7 +1773,7 @@ private fun ChatComposer(
             .distinct()
     }
     val inputEnabled = !state.sending && !state.recovering &&
-        !state.sendOutcomeUnknown && state.failedOperationId.isBlank()
+            !state.sendOutcomeUnknown && state.failedOperationId.isBlank()
     val pluginActionBusy = state.toolBusy.startsWith("plugin:")
     val draftInputEnabled = inputEnabled && state.toolBusy != "suggest" && !pluginActionBusy
     val mentionColor = MaterialTheme.colorScheme.primary
@@ -1736,349 +1803,365 @@ private fun ChatComposer(
                 vertical = if (state.chatDisplay.compactMode) 6.dp else 10.dp,
             ),
     ) {
-            if (participants.isNotEmpty() && mentionsOpen) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(vertical = 6.dp),
-                ) {
-                    items(participants, key = { it }) { participant ->
-                        Column(
-                            modifier = Modifier
-                                .width(60.dp)
-                                .clickable(enabled = inputEnabled) {
-                                    val next = draftValue.insertMention(participant)
-                                    draftValue = next
-                                    onDraftChange(next.text)
-                                    mentionsOpen = false
-                                },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            ChatPersonaAvatar(
-                                bytes = avatarBytes[participant],
-                                name = participant,
-                                modifier = Modifier.size(48.dp),
-                            )
-                            Text(
-                                text = participant,
-                                modifier = Modifier.padding(top = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+        if (participants.isNotEmpty() && mentionsOpen) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(vertical = 6.dp),
+            ) {
+                items(participants, key = { it }) { participant ->
+                    Column(
+                        modifier = Modifier
+                            .width(60.dp)
+                            .clickable(enabled = inputEnabled) {
+                                val next = draftValue.insertMention(participant)
+                                draftValue = next
+                                onDraftChange(next.text)
+                                mentionsOpen = false
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        ChatPersonaAvatar(
+                            bytes = avatarBytes[participant],
+                            name = participant,
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Text(
+                            text = participant,
+                            modifier = Modifier.padding(top = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
-            LazyRow(
-                modifier = Modifier.padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (participants.isNotEmpty()) {
-                    item {
-                        OutlinedButton(
-                            onClick = { mentionsOpen = !mentionsOpen },
-                            enabled = inputEnabled,
-                            modifier = Modifier.size(36.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(0.dp),
-                        ) { Text("@") }
-                    }
-                }
+        }
+        LazyRow(
+            modifier = Modifier.padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (participants.isNotEmpty()) {
                 item {
-                    Box {
-                        OutlinedButton(
-                            onClick = { pluginsOpen = true },
-                            enabled = inputEnabled && (
+                    OutlinedButton(
+                        onClick = { mentionsOpen = !mentionsOpen },
+                        enabled = inputEnabled,
+                        modifier = Modifier.size(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(0.dp),
+                    ) { Text("@") }
+                }
+            }
+            item {
+                Box {
+                    OutlinedButton(
+                        onClick = { pluginsOpen = true },
+                        enabled = inputEnabled && (
                                 state.pluginActions.isNotEmpty() ||
-                                    state.generationEnhancers.isNotEmpty()
+                                        state.generationEnhancers.isNotEmpty()
                                 ),
-                            modifier = Modifier.height(36.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                        ) {
-                            Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(if (pluginActionBusy) "插件运行中…" else "插件")
-                        }
-                        DropdownMenu(
-                            expanded = pluginsOpen,
-                            onDismissRequest = { pluginsOpen = false },
-                        ) {
-                            state.generationEnhancers.forEach { enhancer ->
-                                val active = enhancer.isActive(state.session)
-                                val busyKey = "enhancer:${enhancer.stateKey}"
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (state.toolBusy == busyKey) {
-                                                "${enhancer.title} · 保存中…"
-                                            } else {
-                                                enhancer.title
-                                            },
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            if (active) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = if (active) "已开启" else "已关闭",
-                                        )
-                                    },
-                                    enabled = state.canUseTools,
-                                    onClick = {
-                                        pluginsOpen = false
-                                        onToggleGenerationEnhancer(enhancer)
-                                    },
-                                )
-                            }
-                            state.pluginActions.forEach { action ->
-                                val busyKey = "plugin:${action.pluginId}:${action.actionId}"
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (state.toolBusy == busyKey) "${action.title} · 运行中…" else action.title,
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
-                                    },
-                                    enabled = state.canUseTools,
-                                    onClick = {
-                                        pluginsOpen = false
-                                        onInvokePluginAction(action)
-                                    },
-                                )
-                            }
-                        }
+                        modifier = Modifier.height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.AutoAwesome,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (pluginActionBusy) "插件运行中…" else "插件")
                     }
-                }
-                item {
-                    Box {
-                        OutlinedButton(
-                            onClick = { messageKindMenuOpen = true },
-                            enabled = inputEnabled,
-                            modifier = Modifier.height(36.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                        ) {
-                            Text(
-                                messageKindOptions.firstOrNull { it.value == state.messageKind }
-                                    ?.label ?: "对话",
-                            )
-                            Spacer(Modifier.size(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "切换输入模式",
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = messageKindMenuOpen,
-                            onDismissRequest = { messageKindMenuOpen = false },
-                        ) {
-                            messageKindOptions.forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option.label) },
-                                    onClick = {
-                                        onMessageKindChange(option.value)
-                                        messageKindMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-                item {
-                    Box {
-                        OutlinedButton(
-                            onClick = { toolsOpen = true },
-                            enabled = inputEnabled,
-                            modifier = Modifier.height(36.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                        ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(2.dp))
-                            Text("工具")
-                        }
-                        DropdownMenu(
-                            expanded = toolsOpen,
-                            onDismissRequest = { toolsOpen = false },
-                        ) {
+                    DropdownMenu(
+                        expanded = pluginsOpen,
+                        onDismissRequest = { pluginsOpen = false },
+                    ) {
+                        state.generationEnhancers.forEach { enhancer ->
+                            val active = enhancer.isActive(state.session)
+                            val busyKey = "enhancer:${enhancer.stateKey}"
                             DropdownMenuItem(
-                                text = { Text("剧情导演") },
-                                leadingIcon = { Icon(Icons.Outlined.Movie, contentDescription = null) },
+                                text = {
+                                    Text(
+                                        if (state.toolBusy == busyKey) {
+                                            "${enhancer.title} · 保存中…"
+                                        } else {
+                                            enhancer.title
+                                        },
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        if (active) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = if (active) "已开启" else "已关闭",
+                                    )
+                                },
                                 enabled = state.canUseTools,
                                 onClick = {
-                                    toolsOpen = false
-                                    onOpenDirector()
+                                    pluginsOpen = false
+                                    onToggleGenerationEnhancer(enhancer)
                                 },
                             )
-                            if (state.session?.mode == "observe") {
-                                DropdownMenuItem(
-                                    text = { Text(if (state.continuousObserveEnabled) "暂停旁观" else "开启旁观") },
-                                    leadingIcon = {
-                                        Icon(
-                                            if (state.continuousObserveEnabled) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                            contentDescription = null,
-                                        )
-                                    },
-                                    enabled = state.canToggleContinuousObserve,
-                                    onClick = {
-                                        toolsOpen = false
-                                        onToggleContinuousObserve()
-                                    },
-                                )
-                            }
+                        }
+                        state.pluginActions.forEach { action ->
+                            val busyKey = "plugin:${action.pluginId}:${action.actionId}"
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (state.toolBusy == busyKey) "${action.title} · 运行中…" else action.title,
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                                },
+                                enabled = state.canUseTools,
+                                onClick = {
+                                    pluginsOpen = false
+                                    onInvokePluginAction(action)
+                                },
+                            )
                         }
                     }
                 }
             }
-
-            if (state.messageKind == "plot") {
-                Text(
-                    "导演指令会引导下一拍，不会写成你的角色台词。",
-                    modifier = Modifier.padding(bottom = 6.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            Row(verticalAlignment = Alignment.Bottom) {
-                OutlinedTextField(
-                    value = draftValue,
-                    onValueChange = { next ->
-                        val resolved = normalizeMentionDeletion(
-                            previous = draftValue,
-                            next = next,
-                            participants = participants,
-                        )
-                        draftValue = resolved
-                        onDraftChange(resolved.text)
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = draftInputEnabled,
-                    visualTransformation = mentionTransformation,
-                    placeholder = {
+            item {
+                Box {
+                    OutlinedButton(
+                        onClick = { messageKindMenuOpen = true },
+                        enabled = inputEnabled,
+                        modifier = Modifier.height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                    ) {
                         Text(
-                            when (state.messageKind) {
-                                "narration" -> "描述一个场景变化…"
-                                "plot" -> "交代希望下一拍怎样发展…"
-                                else -> "写下你想说的话…"
+                            messageKindOptions.firstOrNull { it.value == state.messageKind }
+                                ?.label ?: "对话",
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "切换输入模式",
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = messageKindMenuOpen,
+                        onDismissRequest = { messageKindMenuOpen = false },
+                    ) {
+                        messageKindOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    onMessageKindChange(option.value)
+                                    messageKindMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                Box {
+                    OutlinedButton(
+                        onClick = { toolsOpen = true },
+                        enabled = inputEnabled,
+                        modifier = Modifier.height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(2.dp))
+                        Text("工具")
+                    }
+                    DropdownMenu(
+                        expanded = toolsOpen,
+                        onDismissRequest = { toolsOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("剧情导演") },
+                            leadingIcon = { Icon(Icons.Outlined.Movie, contentDescription = null) },
+                            enabled = state.canUseTools,
+                            onClick = {
+                                toolsOpen = false
+                                onOpenDirector()
                             },
                         )
-                    },
-                    minLines = 1,
-                    maxLines = 4,
-                    shape = RoundedCornerShape(24.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { if (state.canSend) onSend() }),
-                )
-                Spacer(Modifier.size(2.dp))
-                IconButton(
-                    onClick = onSend,
-                    enabled = state.canSend,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "发送",
-                        tint = if (state.canSend) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                        },
-                    )
-                }
-            }
-
-            if (state.pendingUserMessage == null && state.failedOperationId.isNotBlank() && !state.sending) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        when {
-                            state.sendOutcomeUnknown ->
-                                "连接中断，先核对本地结果；重试会沿用本次发送标识，不会重复生成。"
-                            state.session?.status != "ready" ->
-                                "回复在本机仍处于待处理状态，可重试同一次生成或恢复会话。"
-                            else ->
-                                "本次生成失败。重试会沿用原发送标识，也可以保留输入后修改。"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                        if (state.sendOutcomeUnknown || state.session?.status != "ready") {
-                            TextButton(
-                                onClick = if (state.session?.status == "ready") onReconcile else onRecover,
-                                enabled = !state.recovering,
-                            ) {
-                                Text(if (state.session?.status == "ready") "核对状态" else "恢复会话")
-                            }
-                        } else {
-                            TextButton(onClick = onDiscardRetry, enabled = !state.recovering) {
-                                Text("编辑消息")
-                            }
-                        }
-                        Button(onClick = onRetry, enabled = !state.recovering) {
-                            Icon(
-                                Icons.Default.Replay,
-                                contentDescription = null,
-                                modifier = Modifier.size(17.dp),
+                        if (state.session?.mode == "observe") {
+                            DropdownMenuItem(
+                                text = { Text(if (state.continuousObserveEnabled) "暂停旁观" else "开启旁观") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (state.continuousObserveEnabled) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                    )
+                                },
+                                enabled = state.canToggleContinuousObserve,
+                                onClick = {
+                                    toolsOpen = false
+                                    onToggleContinuousObserve()
+                                },
                             )
-                            Text("重试", modifier = Modifier.padding(start = 5.dp))
-                        }
-                    }
-                }
-            } else if (state.pendingUserMessage == null && state.sendOutcomeUnknown) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        if (state.session?.status == "ready") {
-                            "上一次发送结果尚未核对，确认前不会重复发送。"
-                        } else {
-                            "上一次发送仍处于待处理状态，可以放弃这轮并恢复会话。"
-                        },
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    TextButton(
-                        onClick = if (state.session?.status == "ready") onReconcile else onRecover,
-                        enabled = !state.sending && !state.recovering,
-                    ) {
-                        if (state.recovering) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text(if (state.session?.status == "ready") "核对结果" else "恢复会话")
-                        }
-                    }
-                }
-            } else if (state.session?.status != "ready") {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "上一次生成没有正常结束，恢复后可以继续发送。",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    TextButton(
-                        onClick = onRecover,
-                        enabled = !state.sending && !state.recovering,
-                    ) {
-                        if (state.recovering) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text("恢复会话")
                         }
                     }
                 }
             }
+        }
+
+        if (state.messageKind == "plot") {
+            Text(
+                "导演指令会引导下一拍，不会写成你的角色台词。",
+                modifier = Modifier.padding(bottom = 6.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Row(verticalAlignment = Alignment.Bottom) {
+            OutlinedTextField(
+                value = draftValue,
+                onValueChange = { next ->
+                    val resolved = normalizeMentionDeletion(
+                        previous = draftValue,
+                        next = next,
+                        participants = participants,
+                    )
+                    draftValue = resolved
+                    onDraftChange(resolved.text)
+                },
+                modifier = Modifier.weight(1f),
+                enabled = draftInputEnabled,
+                visualTransformation = mentionTransformation,
+                placeholder = {
+                    Text(
+                        when (state.messageKind) {
+                            "narration" -> "描述一个场景变化…"
+                            "plot" -> "交代希望下一拍怎样发展…"
+                            else -> "写下你想说的话…"
+                        },
+                    )
+                },
+                minLines = 1,
+                maxLines = 4,
+                shape = RoundedCornerShape(24.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { if (state.canSend) onSend() }),
+            )
+            Spacer(Modifier.size(2.dp))
+            IconButton(
+                onClick = onSend,
+                enabled = state.canSend,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "发送",
+                    tint = if (state.canSend) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    },
+                )
+            }
+        }
+
+        if (state.pendingUserMessage == null && state.failedOperationId.isNotBlank() && !state.sending) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    when {
+                        state.sendOutcomeUnknown ->
+                            "连接中断，先核对本地结果；重试会沿用本次发送标识，不会重复生成。"
+
+                        state.session?.status != "ready" ->
+                            "回复在本机仍处于待处理状态，可重试同一次生成或恢复会话。"
+
+                        else ->
+                            "本次生成失败。重试会沿用原发送标识，也可以保留输入后修改。"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                    if (state.sendOutcomeUnknown || state.session?.status != "ready") {
+                        TextButton(
+                            onClick = if (state.session?.status == "ready") onReconcile else onRecover,
+                            enabled = !state.recovering,
+                        ) {
+                            Text(if (state.session?.status == "ready") "核对状态" else "恢复会话")
+                        }
+                    } else {
+                        TextButton(onClick = onDiscardRetry, enabled = !state.recovering) {
+                            Text("编辑消息")
+                        }
+                    }
+                    Button(onClick = onRetry, enabled = !state.recovering) {
+                        Icon(
+                            Icons.Default.Replay,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp),
+                        )
+                        Text("重试", modifier = Modifier.padding(start = 5.dp))
+                    }
+                }
+            }
+        } else if (state.pendingUserMessage == null && state.sendOutcomeUnknown) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (state.session?.status == "ready") {
+                        "上一次发送结果尚未核对，确认前不会重复发送。"
+                    } else {
+                        "上一次发送仍处于待处理状态，可以放弃这轮并恢复会话。"
+                    },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                TextButton(
+                    onClick = if (state.session?.status == "ready") onReconcile else onRecover,
+                    enabled = !state.sending && !state.recovering,
+                ) {
+                    if (state.recovering) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(if (state.session?.status == "ready") "核对结果" else "恢复会话")
+                    }
+                }
+            }
+        } else if (state.session?.status != "ready") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "上一次生成没有正常结束，恢复后可以继续发送。",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                TextButton(
+                    onClick = onRecover,
+                    enabled = !state.sending && !state.recovering,
+                ) {
+                    if (state.recovering) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("恢复会话")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2111,12 +2194,14 @@ private fun ChatPersonaAvatar(
             androidx.compose.foundation.Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "人物头像",
-                modifier = Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(androidx.compose.foundation.shape.CircleShape),
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             )
         }
-        }
     }
+}
 
 private class MentionVisualTransformation(
     private val participants: List<String>,
@@ -2163,9 +2248,9 @@ internal fun normalizeMentionDeletion(
     val change = textDeletionRange(previous.text, next.text) ?: return next
     val affected = previous.text.mentionRanges(participants).filter { mention ->
         (mention.first < change.end && mention.last + 1 > change.start) ||
-            (change.start == mention.last + 1 &&
-                change.end == mention.last + 2 &&
-                previous.text.getOrNull(mention.last + 1)?.isWhitespace() == true)
+                (change.start == mention.last + 1 &&
+                        change.end == mention.last + 2 &&
+                        previous.text.getOrNull(mention.last + 1)?.isWhitespace() == true)
     }
     if (affected.isEmpty()) return next
 

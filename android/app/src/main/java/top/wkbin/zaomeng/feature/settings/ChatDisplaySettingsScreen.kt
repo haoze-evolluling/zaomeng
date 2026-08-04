@@ -1,7 +1,9 @@
 package top.wkbin.zaomeng.feature.settings
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -29,8 +31,9 @@ fun ChatDisplaySettingsScreen(onBack: () -> Unit) {
             )
         },
     ) { innerPadding ->
-        ChatDisplaySettingsCard(
-            modifier = Modifier.padding(innerPadding).padding(horizontal = 16.dp, vertical = 16.dp),
-        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        ) { item { ChatDisplaySettingsCard() } }
     }
 }

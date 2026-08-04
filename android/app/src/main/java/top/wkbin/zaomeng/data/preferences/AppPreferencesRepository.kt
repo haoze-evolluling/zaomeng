@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
@@ -43,6 +44,9 @@ data class ChatDisplayPreferences(
     val fontSize: ChatFontSize = ChatFontSize.STANDARD,
     val compactMode: Boolean = false,
     val showModelReasoning: Boolean = false,
+    val backgroundImageUri: String = "",
+    val backgroundOpacity: Float = 0.35f,
+    val backgroundBlurRadius: Float = 0f,
 )
 
 data class AppPreferences(
@@ -73,6 +77,9 @@ class AppPreferencesRepository(
                     fontSize = ChatFontSize.fromStorageValue(values[CHAT_FONT_SIZE]),
                     compactMode = values[CHAT_COMPACT_MODE] ?: false,
                     showModelReasoning = values[CHAT_SHOW_MODEL_REASONING] ?: false,
+                    backgroundImageUri = values[CHAT_BACKGROUND_IMAGE_URI].orEmpty(),
+                    backgroundOpacity = (values[CHAT_BACKGROUND_OPACITY] ?: 0.35f).coerceIn(0.1f, 1f),
+                    backgroundBlurRadius = (values[CHAT_BACKGROUND_BLUR_RADIUS] ?: 0f).coerceIn(0f, 32f),
                 ),
                 themeMode = ThemeMode.fromStorageValue(values[THEME_MODE]),
             )
@@ -161,11 +168,34 @@ class AppPreferencesRepository(
         dataStore.edit { values -> values[CHAT_SHOW_MODEL_REASONING] = enabled }
     }
 
+    suspend fun setChatBackgroundImageUri(uri: String) {
+        dataStore.edit { values ->
+            if (uri.isBlank()) values.remove(CHAT_BACKGROUND_IMAGE_URI)
+            else values[CHAT_BACKGROUND_IMAGE_URI] = uri
+        }
+    }
+
+    suspend fun setChatBackgroundOpacity(opacity: Float) {
+        dataStore.edit { values ->
+            values[CHAT_BACKGROUND_OPACITY] = opacity.coerceIn(0.1f, 1f)
+        }
+    }
+
+    suspend fun setChatBackgroundBlurRadius(radius: Float) {
+        dataStore.edit { values ->
+            values[CHAT_BACKGROUND_BLUR_RADIUS] = radius.coerceIn(0f, 32f)
+        }
+    }
+
     suspend fun saveChatDisplayPreferences(preferences: ChatDisplayPreferences) {
         dataStore.edit { values ->
             values[CHAT_FONT_SIZE] = preferences.fontSize.storageValue
             values[CHAT_COMPACT_MODE] = preferences.compactMode
             values[CHAT_SHOW_MODEL_REASONING] = preferences.showModelReasoning
+            if (preferences.backgroundImageUri.isBlank()) values.remove(CHAT_BACKGROUND_IMAGE_URI)
+            else values[CHAT_BACKGROUND_IMAGE_URI] = preferences.backgroundImageUri
+            values[CHAT_BACKGROUND_OPACITY] = preferences.backgroundOpacity.coerceIn(0.1f, 1f)
+            values[CHAT_BACKGROUND_BLUR_RADIUS] = preferences.backgroundBlurRadius.coerceIn(0f, 32f)
         }
     }
 
@@ -186,6 +216,9 @@ class AppPreferencesRepository(
         val CHAT_FONT_SIZE = stringPreferencesKey("chat_font_size")
         val CHAT_COMPACT_MODE = booleanPreferencesKey("chat_compact_mode")
         val CHAT_SHOW_MODEL_REASONING = booleanPreferencesKey("chat_show_model_reasoning")
+        val CHAT_BACKGROUND_IMAGE_URI = stringPreferencesKey("chat_background_image_uri")
+        val CHAT_BACKGROUND_OPACITY = floatPreferencesKey("chat_background_opacity")
+        val CHAT_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("chat_background_blur_radius")
         val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }

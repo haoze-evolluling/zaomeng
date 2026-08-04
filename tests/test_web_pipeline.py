@@ -964,8 +964,11 @@ class PipelineServiceTests(unittest.TestCase):
             )
 
             self.assertIsNotNone(repaired)
-            self.assertIn("- appearance_feature: 证据不足", repaired)
-            self.assertIn("- habit_action: 证据不足", repaired)
+            self.assertIn("- appearance_feature: ", repaired)
+            self.assertIn("- habit_action: ", repaired)
+            self.assertNotIn("证据不足", repaired)
+            self.assertNotIn("只见他回头看了一眼", repaired)
+            self.assertNotIn("他说完就立刻转身离开", repaired)
 
     def test_refresh_run_discovers_character_cards_and_graph_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
