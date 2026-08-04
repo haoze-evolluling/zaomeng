@@ -86,6 +86,43 @@ def _decode_partial_json_string(text: str, start: int) -> tuple[str, bool, int]:
     return "".join(chars), False, index
 
 
+def _object_bounds_containing(text: str, position: int) -> tuple[int, int]:
+    """Return the nearest JSON object containing ``position``.
+
+    The closing boundary may be the current end of a partial stream. Braces inside
+    quoted values are ignored so dialogue text cannot confuse field association.
+    """
+
+    stack: list[int] = []
+    target_start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if index == position:
+            target_start = stack[-1] if stack else -1
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            stack.append(index)
+            continue
+        if char == "}" and stack:
+            start = stack.pop()
+            if start == target_start:
+                return start, index + 1
+    if target_start >= 0:
+        return target_start, len(text)
+    return 0, len(text)
+
+
 class DialogueJsonDeltaProjector:
     """Project streamed structured JSON into readable dialogue message deltas."""
 
@@ -135,12 +172,12 @@ class DialogueJsonDeltaProjector:
             )
             if not speaker_complete or not speaker.strip():
                 continue
-            boundary = (
-                speaker_matches[item_index + 1].start()
-                if item_index + 1 < len(speaker_matches)
-                else len(self._raw)
+            object_start, object_end = _object_bounds_containing(
+                self._raw, match.start()
             )
-            message_match = _MESSAGE_KEY.search(self._raw, speaker_end, boundary)
+            message_match = _MESSAGE_KEY.search(
+                self._raw, object_start, object_end
+            )
             if message_match is None:
                 continue
             message, _complete, _message_end = _decode_partial_json_string(
@@ -149,7 +186,7 @@ class DialogueJsonDeltaProjector:
             if not message:
                 continue
             inner_thought_match = _INNER_THOUGHT_KEY.search(
-                self._raw, _message_end, boundary
+                self._raw, object_start, object_end
             )
             inner_thought = ""
             if inner_thought_match is not None:

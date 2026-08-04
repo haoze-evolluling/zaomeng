@@ -56,6 +56,26 @@ class DialogueStreamingTests(unittest.TestCase):
         self.assertTrue(encoded.startswith("event: delta\n"))
         self.assertIn("data: {", encoded)
 
+    def test_projector_accepts_message_before_speaker(self):
+        projector = DialogueJsonDeltaProjector(chunk_size=4)
+
+        first = projector.feed(
+            '{"responses":[{"message":"先说出来，再标名字","speaker":"甲"}'
+        )
+        second = projector.feed(
+            ',{"message":"括号 { 不应串到上一条","speaker":"乙"}]}'
+        )
+        events = [*first, *second]
+
+        by_speaker = {
+            speaker: "".join(
+                item["text"] for item in events if item["speaker"] == speaker
+            )
+            for speaker in ("甲", "乙")
+        }
+        self.assertEqual(by_speaker["甲"], "先说出来，再标名字")
+        self.assertEqual(by_speaker["乙"], "括号 { 不应串到上一条")
+
     def test_escaped_emoji_is_combined_and_sse_is_utf8_safe(self):
         projector = DialogueJsonDeltaProjector(chunk_size=4)
 
@@ -131,6 +151,9 @@ class DialogueStreamingTests(unittest.TestCase):
                 self.assertIsNotNone(on_attempt)
                 self.assertIsNotNone(on_delta)
                 on_attempt(0)
+                on_reasoning = getattr(on_delta, "on_reasoning", None)
+                self.assertTrue(callable(on_reasoning))
+                on_reasoning("private reasoning")
                 on_delta('{"responses":[{"speaker":"乙","message":"回复正在')
                 on_delta('逐步显示。"}]}')
                 return [{"speaker": "乙", "message": "回复正在逐步显示。"}]
@@ -160,6 +183,61 @@ class DialogueStreamingTests(unittest.TestCase):
             )
             self.assertEqual(readable_text, "回复正在逐步显示。")
             self.assertNotIn('"responses"', readable_text)
+            reasoning_statuses = [
+                payload
+                for event, payload in events
+                if event == "status" and payload.get("phase") == "reasoning"
+            ]
+            self.assertEqual(len(reasoning_statuses), 1)
+            self.assertNotIn("private reasoning", str(reasoning_statuses))
+
+    def test_forced_recovery_discards_a_late_model_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service, run_id, session_id = self._create_dialogue(tmp)
+            generation_started = threading.Event()
+            allow_generation_to_finish = threading.Event()
+            events = []
+
+            def generate(_run_id, _payload, *, on_delta=None, on_attempt=None):
+                generation_started.set()
+                self.assertTrue(allow_generation_to_finish.wait(timeout=5))
+                return [{"speaker": "乙", "message": "stale reply"}]
+
+            def consume_stream():
+                events.extend(
+                    service.stream_dialogue_reply_events(
+                        run_id,
+                        session_id=session_id,
+                        message="continue",
+                        operation_id="operation-cancelled-stream",
+                        emit_deltas=False,
+                    )
+                )
+
+            with patch.object(
+                service,
+                "_generate_dialogue_responses",
+                side_effect=generate,
+            ):
+                consumer = threading.Thread(target=consume_stream)
+                consumer.start()
+                self.assertTrue(generation_started.wait(timeout=5))
+                service.recover_dialogue_session(run_id, session_id, force=True)
+                allow_generation_to_finish.set()
+                consumer.join(timeout=5)
+
+            self.assertFalse(consumer.is_alive())
+            session = service.dialogue.get_session(run_id, session_id)
+            self.assertNotIn(
+                "stale reply",
+                [item.get("message") for item in session.get("transcript", [])],
+            )
+            operation = service.reply_operations.load(
+                run_id, session_id, "operation-cancelled-stream"
+            )
+            self.assertEqual(operation["status"], "failed")
+            self.assertTrue(operation["failure"]["retryable"])
+            self.assertTrue(any(event == "error" for event, _payload in events))
 
     def test_stream_emits_reset_before_retry_deltas_and_complete(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -199,6 +277,39 @@ class DialogueStreamingTests(unittest.TestCase):
             )
             self.assertLess(reset_index, final_delta_index)
             self.assertLess(final_delta_index, event_names.index("complete"))
+
+    def test_stream_emits_model_reasoning_only_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service, run_id, session_id = self._create_dialogue(tmp)
+
+            def generate(_run_id, _payload, *, on_delta=None, on_attempt=None):
+                on_attempt(0)
+                on_delta.on_reasoning("先判断人物关系。")
+                on_delta('{"responses":[{"speaker":"乙","message":"回答。"}]}')
+                return [{"speaker": "乙", "message": "回答。"}]
+
+            with patch.object(
+                service,
+                "_generate_dialogue_responses",
+                side_effect=generate,
+            ):
+                events = list(
+                    service.stream_dialogue_reply_events(
+                        run_id,
+                        session_id=session_id,
+                        message="请回答。",
+                        include_model_reasoning=True,
+                        operation_id="operation-stream-reasoning-visible",
+                    )
+                )
+
+            reasoning = [
+                payload
+                for event, payload in events
+                if event == "delta" and payload.get("field") == "model_reasoning"
+            ]
+            self.assertEqual([item["text"] for item in reasoning], ["先判断人物关系。"])
+            self.assertEqual(reasoning[0]["speaker"], "模型推理")
 
     def test_stream_adopts_matching_pending_turn_without_sidecar(self):
         with tempfile.TemporaryDirectory() as tmp:

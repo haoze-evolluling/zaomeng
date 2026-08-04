@@ -115,10 +115,11 @@ def search_dialogue_session(
 def recover_dialogue_session(
     run_id: str,
     session_id: str,
+    force: bool = False,
     run_service: WebRunService = Depends(get_run_service),
 ) -> dict[str, Any]:
     try:
-        return run_service.recover_dialogue_session(run_id, session_id)
+        return run_service.recover_dialogue_session(run_id, session_id, force=force)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
 
@@ -388,6 +389,7 @@ def stream_dialogue_turn(
                 message_kind=payload.message_kind,
                 suppress_transcript_message=payload.suppress_transcript_message,
                 include_inner_thoughts=payload.include_inner_thoughts,
+                include_model_reasoning=payload.include_model_reasoning,
                 operation_id=operation_id,
             )
             for event, data in events:

@@ -11,10 +11,11 @@ from src.skill_support.scene_recommendations import build_scene_opening_message
 
 DIALOGUE_SUGGESTION_COMPACT_PROMPT_CHAR_THRESHOLD = 18_000
 
-# 多角色 JSON 回复在中文下很容易超过 900 token，过低的上限会让回复被截断成
-# 无法解析的 JSON。这里给单轮对话生成兜一个下限，并为重试留出提额空间。
-DIALOGUE_RESPONSE_MIN_MAX_TOKENS = 1_600
-DIALOGUE_RESPONSE_MAX_MAX_TOKENS = 4_096
+# 推理模型会把 reasoning_content 计入单次输出预算。1600 token 常在生成实际
+# JSON 回复前耗尽，随后又触发一次完整重试。默认给足一轮预算，避免重复推理；
+# 上限与模型设置页的可配置范围保持一致。
+DIALOGUE_RESPONSE_MIN_MAX_TOKENS = 8_192
+DIALOGUE_RESPONSE_MAX_MAX_TOKENS = 16_000
 
 
 _INNER_THOUGHT_RULE = """
@@ -1851,22 +1852,35 @@ def generate_dialogue_responses(
         )
         or 0
     )
-    configured_max_tokens = int(max_tokens or 0)
-    if response_limit > 0:
+    configured_max_tokens = min(
+        max(0, int(max_tokens or 0)), DIALOGUE_RESPONSE_MAX_MAX_TOKENS
+    )
+    if configured_max_tokens > 0:
+        initial_max_tokens = configured_max_tokens
+        retry_max_tokens = configured_max_tokens
+    elif response_limit > 0:
         estimated_max_tokens = max(640, 520 + response_limit * 360)
         initial_max_tokens = min(
-            max(estimated_max_tokens, configured_max_tokens),
+            max(
+                DIALOGUE_RESPONSE_MIN_MAX_TOKENS,
+                estimated_max_tokens,
+                configured_max_tokens,
+            ),
             DIALOGUE_RESPONSE_MAX_MAX_TOKENS,
         )
+        retry_max_tokens = min(
+            initial_max_tokens * 2, DIALOGUE_RESPONSE_MAX_MAX_TOKENS
+        )
     else:
-        initial_max_tokens = max(
-            DIALOGUE_RESPONSE_MIN_MAX_TOKENS, configured_max_tokens
+        initial_max_tokens = DIALOGUE_RESPONSE_MIN_MAX_TOKENS
+        retry_max_tokens = min(
+            initial_max_tokens * 2, DIALOGUE_RESPONSE_MAX_MAX_TOKENS
         )
     attempts = (
         (build_messages(payload, False), initial_max_tokens),
         (
             build_messages(payload, True),
-            min(initial_max_tokens * 2, DIALOGUE_RESPONSE_MAX_MAX_TOKENS),
+            retry_max_tokens,
         ),
     )
     last_error: Exception | None = None

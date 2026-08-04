@@ -63,6 +63,7 @@ class SaveModelSettingsRequest(BaseModel):
     base_url: str = Field(default="")
     api_key: str = Field(default="")
     max_tokens: int = Field(default=0, ge=0, le=16000)
+    reasoning_effort: str = Field(default="auto", max_length=16)
     profile_id: str = Field(default="")
     profile_name: str = Field(default="", max_length=80)
     create_profile: bool = Field(default=False)
@@ -75,6 +76,7 @@ class TestModelSettingsRequest(BaseModel):
     base_url: str = Field(default="")
     api_key: str = Field(default="")
     max_tokens: int = Field(default=0, ge=0, le=16000)
+    reasoning_effort: str = Field(default="auto", max_length=16)
     profile_id: str = Field(default="")
 
 
@@ -286,6 +288,7 @@ class PrepareDialogueTurnRequest(BaseModel):
     suppress_transcript_message: bool = Field(default=False)
     operation_id: str = Field(default="", max_length=128)
     include_inner_thoughts: bool = Field(default=False)
+    include_model_reasoning: bool = Field(default=False)
 
 
 class SuggestDialogueTurnRequest(BaseModel):

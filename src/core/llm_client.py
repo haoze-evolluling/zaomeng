@@ -36,6 +36,78 @@ logger = logging.getLogger(__name__)
 _TIKTOKEN_FALLBACK_LOGGED = False
 
 
+def _reasoning_efforts_for_model(
+    *, provider: str, base_url: str, model: str
+) -> tuple[str, ...]:
+    normalized = str(model or "").strip().lower()
+    if normalized.startswith("deepseek-v4-"):
+        if "api.deepseek.com" in str(base_url or "").lower():
+            return ("auto", "off", "low", "medium", "high", "xhigh")
+        return ("auto", "low", "medium", "high")
+    if provider in {"openai", "openai-compatible"}:
+        if normalized.startswith("gpt-5"):
+            if provider == "openai":
+                return ("auto", "off", "low", "medium", "high", "xhigh")
+            return ("auto", "low", "medium", "high")
+        if normalized.startswith(("o1", "o3", "o4")):
+            return ("auto", "low", "medium", "high")
+    if (
+        provider == "openai-compatible"
+        and "dashscope.aliyuncs.com" in str(base_url or "").lower()
+        and normalized.startswith("qwen")
+    ):
+        return ("auto", "off")
+    return ("auto",)
+
+
+def _apply_reasoning_controls(
+    payload: Dict[str, Any],
+    *,
+    provider: str,
+    base_url: str,
+    model: str,
+    reasoning_effort: str,
+) -> None:
+    normalized_model = str(model or "").strip().lower()
+    supported_efforts = _reasoning_efforts_for_model(
+        provider=provider, base_url=base_url, model=model
+    )
+    if reasoning_effort not in supported_efforts:
+        return
+    is_deepseek_v4 = normalized_model.startswith("deepseek-v4-")
+    is_direct_deepseek_v4 = (
+        is_deepseek_v4 and "api.deepseek.com" in str(base_url or "").lower()
+    )
+    is_openai_reasoning = (
+        provider in {"openai", "openai-compatible"}
+        and normalized_model.startswith(("gpt-5", "o1", "o3", "o4"))
+    )
+    is_dashscope_qwen = (
+        provider == "openai-compatible"
+        and "dashscope.aliyuncs.com" in str(base_url or "").lower()
+        and normalized_model.startswith("qwen")
+    )
+    if reasoning_effort == "off":
+        if is_direct_deepseek_v4:
+            payload["thinking"] = {"type": "disabled"}
+        elif is_openai_reasoning:
+            payload["reasoning_effort"] = "none"
+        elif is_dashscope_qwen:
+            payload["enable_thinking"] = False
+        return
+    if not reasoning_effort or reasoning_effort == "auto":
+        return
+    if is_openai_reasoning:
+        payload["reasoning_effort"] = reasoning_effort
+        return
+    if not is_deepseek_v4:
+        return
+    payload["reasoning_effort"] = {
+        "medium": "low",
+        "xhigh": "max",
+    }.get(reasoning_effort, reasoning_effort)
+
+
 def _non_negative_int(value: Any) -> int:
     try:
         return max(0, int(value or 0))
@@ -534,6 +606,9 @@ class LLMClient:
         """Stream provider text deltas while returning a normal completion result.
 
         ``on_delta`` receives content only, never provider framing or reasoning tokens.
+        Callers which need a non-content activity signal may attach an optional
+        ``on_reasoning`` callable attribute to it. The hook receives reasoning
+        deltas, while the visible content callback remains clean.
         The returned dictionary has the same usage/content/model fields as
         :meth:`chat_completion`, so callers can keep their existing parsing and cost
         accounting. Host bridge and local-rule providers fall back to one callback.
@@ -747,6 +822,15 @@ class LLMClient:
             "messages": strip_cache_static_markers(messages),
             "temperature": self._resolve_temperature(temperature),
         }
+        _apply_reasoning_controls(
+            payload,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=str(
+                self.llm_config.get("reasoning_effort", "auto")
+            ).strip().lower(),
+        )
         resolved_max_tokens = self._resolve_max_tokens(max_tokens)
         if resolved_max_tokens:
             payload["max_tokens"] = resolved_max_tokens
@@ -793,6 +877,15 @@ class LLMClient:
             "temperature": self._resolve_temperature(temperature),
             "stream": True,
         }
+        _apply_reasoning_controls(
+            payload,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=str(
+                self.llm_config.get("reasoning_effort", "auto")
+            ).strip().lower(),
+        )
         if provider == "openai":
             payload["stream_options"] = {"include_usage": True}
         resolved_max_tokens = self._resolve_max_tokens(max_tokens)
@@ -824,8 +917,16 @@ class LLMClient:
             delta_payload = first.get("delta", {})
             if isinstance(delta_payload, dict):
                 delta = self._extract_stream_text(delta_payload.get("content", ""))
+                reasoning_delta = self._extract_stream_text(
+                    delta_payload.get("reasoning_content", "")
+                    or delta_payload.get("reasoning", "")
+                )
             else:
                 delta = ""
+                reasoning_delta = ""
+            reasoning_callback = getattr(on_delta, "on_reasoning", None)
+            if reasoning_delta and callable(reasoning_callback):
+                reasoning_callback(reasoning_delta)
             if delta:
                 content_parts.append(delta)
                 if callable(on_delta):
@@ -1366,6 +1467,9 @@ class LLMClient:
             request_headers.update(headers)
 
         timeout = float(self.llm_config.get("timeout_seconds", 120) or 120)
+        total_timeout = float(
+            self.llm_config.get("stream_total_timeout_seconds", 600) or 600
+        )
         attempts = self._retry_attempts()
         retry_status_codes = self._retry_status_codes()
         last_error: Optional[Exception] = None
@@ -1373,6 +1477,7 @@ class LLMClient:
 
         for attempt in range(1, attempts + 1):
             saw_event = False
+            attempt_started_at = time.monotonic()
             try:
                 with requests.post(
                     url,
@@ -1385,7 +1490,13 @@ class LLMClient:
                         raise requests.HTTPError(
                             f"{resp.status_code} {resp.reason}", response=resp
                         )
-                    for raw_line in resp.iter_lines(decode_unicode=False):
+                    # The requests default (512 bytes) noticeably delays short
+                    # reasoning deltas, so consume SSE/NDJSON as soon as bytes arrive.
+                    for raw_line in resp.iter_lines(chunk_size=1, decode_unicode=False):
+                        if time.monotonic() - attempt_started_at > total_timeout:
+                            raise LLMRequestError(
+                                f"LLM 流式响应超过 {total_timeout:g} 秒总时限。"
+                            )
                         if isinstance(raw_line, bytes):
                             line = raw_line.decode("utf-8-sig", errors="replace")
                         else:

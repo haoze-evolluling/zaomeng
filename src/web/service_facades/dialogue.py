@@ -138,14 +138,22 @@ class DialogueServiceMixin:
             limit=limit,
         )
 
-    def recover_dialogue_session(self, run_id: str, session_id: str) -> dict[str, Any]:
+    def recover_dialogue_session(
+        self, run_id: str, session_id: str, *, force: bool = False
+    ) -> dict[str, Any]:
         self._ensure_run_exists(run_id)
         if self.reply_operations.has_active_session_operation(run_id, session_id):
-            return self.dialogue.get_session(run_id, session_id)
+            if not force:
+                return self.dialogue.get_session(run_id, session_id)
+            self.reply_operations.cancel_active_session_operations(
+                run_id,
+                session_id,
+                message="Reply abandoned after the client left the conversation.",
+            )
         return self.dialogue.abort_pending_turn(
             run_id,
             session_id,
-            reason="client_recovery",
+            reason="client_forced_recovery" if force else "client_recovery",
         )
 
     def correct_latest_dialogue_turn(
@@ -472,6 +480,7 @@ class DialogueServiceMixin:
         message_kind: str = "dialogue",
         suppress_transcript_message: bool = False,
         include_inner_thoughts: bool = False,
+        include_model_reasoning: bool = False,
         operation_id: str,
         emit_deltas: bool = True,
     ):
@@ -530,8 +539,8 @@ class DialogueServiceMixin:
             }
             return
 
-        claimed = self.reply_operations.claim(run_id, session_id, operation_id)
-        if not claimed:
+        cancellation = self.reply_operations.claim(run_id, session_id, operation_id)
+        if cancellation is None:
             yield "status", {
                 "phase": "waiting",
                 "message": "正在等待原来的生成完成…",
@@ -702,6 +711,42 @@ class DialogueServiceMixin:
             }
             pending_payload = self._load_pending_turn_payload(run_id, session_id)
             stream_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+            reasoning_started = threading.Event()
+
+            def ensure_not_cancelled() -> None:
+                if cancellation.is_set():
+                    raise InterruptedError("Reply operation was cancelled.")
+
+            def emit_raw_delta(delta: str) -> None:
+                ensure_not_cancelled()
+                stream_queue.put(("raw_delta", delta))
+
+            def emit_reasoning_activity(_delta: str) -> None:
+                ensure_not_cancelled()
+                if not reasoning_started.is_set():
+                    reasoning_started.set()
+                    stream_queue.put(("reasoning", None))
+                if include_model_reasoning and _delta:
+                    stream_queue.put(("raw_reasoning", _delta))
+
+            def check_cancelled_delta(_delta: str) -> None:
+                ensure_not_cancelled()
+
+            def emit_attempt(index: int) -> None:
+                ensure_not_cancelled()
+                if emit_deltas:
+                    stream_queue.put(("attempt", index))
+
+            # LLMClient keeps reasoning text out of visible deltas, but recognizes
+            # this optional hook so the UI can acknowledge model activity early.
+            generation_delta_callback = (
+                emit_raw_delta if emit_deltas else check_cancelled_delta
+            )
+            setattr(
+                generation_delta_callback,
+                "on_reasoning",
+                emit_reasoning_activity if emit_deltas else check_cancelled_delta,
+            )
 
             def generate_and_commit() -> None:
                 try:
@@ -709,16 +754,8 @@ class DialogueServiceMixin:
                         generated = self._generate_dialogue_responses(
                             run_id,
                             pending_payload,
-                            on_delta=(
-                                (lambda delta: stream_queue.put(("raw_delta", delta)))
-                                if emit_deltas
-                                else None
-                            ),
-                            on_attempt=(
-                                (lambda index: stream_queue.put(("attempt", index)))
-                                if emit_deltas
-                                else None
-                            ),
+                            on_delta=generation_delta_callback,
+                            on_attempt=emit_attempt,
                         )
                     except LLMRequestError as exc:
                         raise ValueError(friendly_dialogue_llm_error(exc)) from exc
@@ -731,12 +768,7 @@ class DialogueServiceMixin:
                         responses = list(generated or [])
                         generation_cache = None
 
-                    self._evolve_relations_from_turn(
-                        run_id,
-                        pending_payload,
-                        responses,
-                        refine_with_llm=False,
-                    )
+                    ensure_not_cancelled()
                     ingest_kwargs: dict[str, Any] = {
                         "session_id": session_id,
                         "responses": responses,
@@ -748,6 +780,13 @@ class DialogueServiceMixin:
                         run_id,
                         **ingest_kwargs,
                     )
+                    self._evolve_relations_from_turn(
+                        run_id,
+                        pending_payload,
+                        responses,
+                        refine_with_llm=False,
+                    )
+                    completed = self.dialogue.get_session(run_id, session_id)
                     completed = self._refresh_dialogue_scene_progress(
                         run_id,
                         completed,
@@ -768,6 +807,17 @@ class DialogueServiceMixin:
                         )
                     )
                 except Exception as exc:
+                    if cancellation.is_set():
+                        stream_queue.put(
+                            (
+                                "error",
+                                {
+                                    "message": "Reply operation was cancelled.",
+                                    "retryable": True,
+                                },
+                            )
+                        )
+                        return
                     retryable = not isinstance(exc, ReplyOperationConflict)
                     if turn_id:
                         try:
@@ -801,7 +851,12 @@ class DialogueServiceMixin:
                         )
                     )
                 finally:
-                    self.reply_operations.release(run_id, session_id, operation_id)
+                    self.reply_operations.release(
+                        run_id,
+                        session_id,
+                        operation_id,
+                        cancellation=cancellation,
+                    )
 
             worker = threading.Thread(
                 target=generate_and_commit,
@@ -837,6 +892,24 @@ class DialogueServiceMixin:
                             "message": "正在重新整理回复格式…",
                             "operation_id": operation_id,
                         }
+                    continue
+                if event_kind == "reasoning":
+                    yield "status", {
+                        "phase": "reasoning",
+                        "message": "模型正在思考并组织回应…",
+                        "operation_id": operation_id,
+                        "turn_id": turn_id,
+                    }
+                    continue
+                if event_kind == "raw_reasoning":
+                    yield "delta", {
+                        "index": -1,
+                        "speaker": "模型推理",
+                        "role": "reasoning",
+                        "field": "model_reasoning",
+                        "text": str(event_payload or ""),
+                        "operation_id": operation_id,
+                    }
                     continue
                 if event_kind == "raw_delta":
                     for delta in projector.feed(str(event_payload or "")):
@@ -913,7 +986,12 @@ class DialogueServiceMixin:
             }
         finally:
             if not release_in_worker:
-                self.reply_operations.release(run_id, session_id, operation_id)
+                self.reply_operations.release(
+                    run_id,
+                    session_id,
+                    operation_id,
+                    cancellation=cancellation,
+                )
 
     def suggest_dialogue_turn(
         self,

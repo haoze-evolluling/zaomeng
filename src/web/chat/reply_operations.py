@@ -28,7 +28,7 @@ class ReplyOperationStore:
         self.runs_root = Path(runs_root)
         self._locks_guard = threading.Lock()
         self._locks: dict[tuple[str, str, str], threading.RLock] = {}
-        self._active: set[tuple[str, str, str]] = set()
+        self._active: dict[tuple[str, str, str], threading.Event] = {}
 
     @staticmethod
     def normalize_operation_id(operation_id: str) -> str:
@@ -74,7 +74,9 @@ class ReplyOperationStore:
         with operation_lock:
             yield
 
-    def claim(self, run_id: str, session_id: str, operation_id: str) -> bool:
+    def claim(
+        self, run_id: str, session_id: str, operation_id: str
+    ) -> threading.Event | None:
         key = (
             str(run_id).strip(),
             str(session_id).strip(),
@@ -82,18 +84,27 @@ class ReplyOperationStore:
         )
         with self._locks_guard:
             if key in self._active:
-                return False
-            self._active.add(key)
-            return True
+                return None
+            cancellation = threading.Event()
+            self._active[key] = cancellation
+            return cancellation
 
-    def release(self, run_id: str, session_id: str, operation_id: str) -> None:
+    def release(
+        self,
+        run_id: str,
+        session_id: str,
+        operation_id: str,
+        *,
+        cancellation: threading.Event | None = None,
+    ) -> None:
         key = (
             str(run_id).strip(),
             str(session_id).strip(),
             self.normalize_operation_id(operation_id),
         )
         with self._locks_guard:
-            self._active.discard(key)
+            if cancellation is None or self._active.get(key) is cancellation:
+                self._active.pop(key, None)
 
     def has_active_session_operation(
         self,
@@ -113,6 +124,36 @@ class ReplyOperationStore:
                 key[:2] == session_key and (not excluded or key[2] != excluded)
                 for key in self._active
             )
+
+    def cancel_active_session_operations(
+        self,
+        run_id: str,
+        session_id: str,
+        *,
+        message: str,
+    ) -> list[str]:
+        """Release active operations when their client explicitly abandons a turn."""
+
+        session_key = (str(run_id).strip(), str(session_id).strip())
+        with self._locks_guard:
+            active_keys = [key for key in self._active if key[:2] == session_key]
+            operation_ids = [key[2] for key in active_keys]
+            for key in active_keys:
+                self._active.pop(key).set()
+        for operation_id in operation_ids:
+            record = self.load(run_id, session_id, operation_id)
+            if str(record.get("status", "")).strip() != "pending":
+                continue
+            self.mark_failed(
+                run_id,
+                session_id,
+                operation_id,
+                fingerprint=str(record.get("request_fingerprint", "")).strip(),
+                turn_id=str(record.get("turn_id", "")).strip(),
+                message=message,
+                retryable=True,
+            )
+        return operation_ids
 
     def find_pending_owner(
         self,

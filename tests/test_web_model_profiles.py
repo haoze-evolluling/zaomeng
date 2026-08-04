@@ -23,9 +23,12 @@ class ModelProfileServiceTests(unittest.TestCase):
             model="model-a",
             api_key="key-a",
             profile_name="First",
+            reasoning_effort="high",
         )
         self.assertEqual(first["active_profile_id"], "default")
         self.assertEqual(len(first["profiles"]), 1)
+        self.assertEqual(first["reasoning_effort"], "high")
+        self.assertEqual(first["profiles"][0]["reasoning_effort"], "high")
 
         second = self.service.save_model_settings(
             provider="openai-compatible",
@@ -56,6 +59,25 @@ class ModelProfileServiceTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             self.service.delete_model_profile("default")
+
+    def test_rejects_unknown_reasoning_effort(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Reasoning effort"):
+            self.service.save_model_settings(
+                provider="ollama",
+                model="llama3",
+                reasoning_effort="maximum",
+            )
+
+    def test_accepts_disabled_reasoning_effort(self) -> None:
+        saved = self.service.save_model_settings(
+            provider="openai-compatible",
+            model="deepseek-v4-pro",
+            base_url="https://api.deepseek.com",
+            api_key="key-a",
+            reasoning_effort="off",
+        )
+
+        self.assertEqual(saved["reasoning_effort"], "off")
 
     def test_routes_create_and_activate_profiles(self) -> None:
         client = TestClient(create_app(self.service))

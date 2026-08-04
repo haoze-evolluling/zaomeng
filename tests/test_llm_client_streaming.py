@@ -28,7 +28,8 @@ class _StreamResponse:
             line.decode("utf-8", errors="replace") for line in self._lines
         )
 
-    def iter_lines(self, decode_unicode=False):
+    def iter_lines(self, chunk_size=512, decode_unicode=False):
+        self.chunk_sizes = getattr(self, "chunk_sizes", []) + [chunk_size]
         return iter(self._lines)
 
     def __enter__(self):
@@ -39,7 +40,8 @@ class _StreamResponse:
 
 
 class _FailingStreamResponse(_StreamResponse):
-    def iter_lines(self, decode_unicode=False):
+    def iter_lines(self, chunk_size=512, decode_unicode=False):
+        self.chunk_sizes = getattr(self, "chunk_sizes", []) + [chunk_size]
         yield from self._lines
         raise ConnectionResetError("connection closed after a partial response")
 
@@ -152,6 +154,8 @@ class LLMClientStreamingTests(unittest.TestCase):
         request_payload = post.call_args.kwargs["json"]
         self.assertTrue(request_payload["stream"])
         self.assertEqual(request_payload["stream_options"], {"include_usage": True})
+        self.assertNotIn("reasoning_effort", request_payload)
+        self.assertEqual(response.chunk_sizes, [1])
 
     def test_openai_stream_decodes_utf8_and_ignores_empty_sse_fields(self):
         client = self._make_client("openai-compatible")
@@ -181,6 +185,231 @@ class LLMClientStreamingTests(unittest.TestCase):
 
         self.assertEqual(result["content"], "你好世界")
         self.assertEqual(result["finish_reason"], "stop")
+
+    def test_openai_stream_reports_reasoning_activity_without_exposing_it_as_content(self):
+        client = self._make_client("openai")
+        client.llm_config.update({"model": "gpt-5-mini", "reasoning_effort": "high"})
+        response = _StreamResponse(
+            [
+                _sse(
+                    {
+                        "choices": [
+                            {
+                                "delta": {"reasoning_content": "hidden thought"},
+                                "finish_reason": None,
+                            }
+                        ]
+                    }
+                ),
+                _sse(
+                    {
+                        "choices": [
+                            {
+                                "delta": {"content": "visible"},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    }
+                ),
+                _sse("[DONE]"),
+            ]
+        )
+        visible: list[str] = []
+        reasoning: list[str] = []
+
+        def on_visible(delta: str) -> None:
+            visible.append(delta)
+
+        on_visible.on_reasoning = reasoning.append  # type: ignore[attr-defined]
+
+        with patch("src.core.llm_client.requests.post", return_value=response) as post:
+            result = client.chat_completion_stream(
+                [{"role": "user", "content": "继续"}],
+                on_delta=on_visible,
+            )
+
+        self.assertEqual(visible, ["visible"])
+        self.assertEqual(reasoning, ["hidden thought"])
+        self.assertEqual(result["content"], "visible")
+        self.assertEqual(post.call_args.kwargs["json"]["reasoning_effort"], "high")
+
+    def test_openai_non_reasoning_model_omits_stale_reasoning_effort(self):
+        client = self._make_client("openai")
+        client.llm_config.update(
+            {"model": "gpt-4.1-mini", "reasoning_effort": "high"}
+        )
+        response = {"choices": [{"message": {"content": "done"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "continue"}])
+
+        self.assertNotIn("reasoning_effort", post.call_args.kwargs["payload"])
+
+    def test_openai_compatible_gateway_forwards_supported_gpt5_effort(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update({"model": "gpt-5-mini", "reasoning_effort": "high"})
+        response = {"choices": [{"message": {"content": "done"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "continue"}])
+
+        self.assertEqual(post.call_args.kwargs["payload"]["reasoning_effort"], "high")
+
+    def test_openai_o_series_omits_unsupported_off_and_xhigh_efforts(self):
+        for effort in ("off", "xhigh"):
+            with self.subTest(effort=effort):
+                client = self._make_client("openai")
+                client.llm_config.update({"model": "o3-mini", "reasoning_effort": effort})
+                response = {"choices": [{"message": {"content": "done"}}]}
+                with patch.object(client, "_post_json", return_value=response) as post:
+                    client.chat_completion([{"role": "user", "content": "continue"}])
+                self.assertNotIn("reasoning_effort", post.call_args.kwargs["payload"])
+
+    def test_dashscope_qwen_off_disables_thinking(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update(
+            {
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "qwen-plus",
+                "reasoning_effort": "off",
+            }
+        )
+        response = {"choices": [{"message": {"content": "done"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "continue"}])
+
+        self.assertIs(post.call_args.kwargs["payload"]["enable_thinking"], False)
+
+    def test_openai_compatible_stream_omits_reasoning_effort(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config["reasoning_effort"] = "high"
+        response = _StreamResponse([_sse("[DONE]")])
+
+        with patch("src.core.llm_client.requests.post", return_value=response) as post:
+            client.chat_completion_stream([{"role": "user", "content": "继续"}])
+
+        self.assertNotIn("reasoning_effort", post.call_args.kwargs["json"])
+
+    def test_openai_compatible_non_stream_omits_reasoning_effort(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config["reasoning_effort"] = "high"
+        response = {"choices": [{"message": {"content": "完成"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "继续"}])
+
+        self.assertNotIn("reasoning_effort", post.call_args.kwargs["payload"])
+
+    def test_direct_deepseek_flash_uses_low_reasoning_effort(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update(
+            {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "reasoning_effort": "low",
+            }
+        )
+        response = _StreamResponse([_sse("[DONE]")])
+
+        with patch("src.core.llm_client.requests.post", return_value=response) as post:
+            client.chat_completion_stream([{"role": "user", "content": "继续"}])
+
+        request_payload = post.call_args.kwargs["json"]
+        self.assertEqual(request_payload["reasoning_effort"], "low")
+        self.assertNotIn("thinking", request_payload)
+
+    def test_direct_deepseek_pro_low_effort_stays_low(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update(
+            {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+                "reasoning_effort": "low",
+            }
+        )
+        response = {"choices": [{"message": {"content": "完成"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "继续"}])
+
+        request_payload = post.call_args.kwargs["payload"]
+        self.assertEqual(request_payload["reasoning_effort"], "low")
+        self.assertNotIn("thinking", request_payload)
+
+    def test_direct_deepseek_off_disables_thinking(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update(
+            {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+                "reasoning_effort": "off",
+            }
+        )
+        response = {"choices": [{"message": {"content": "完成"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "继续"}])
+
+        request_payload = post.call_args.kwargs["payload"]
+        self.assertEqual(request_payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", request_payload)
+
+    def test_openai_off_uses_none_reasoning_effort(self):
+        client = self._make_client("openai")
+        client.llm_config.update(
+            {"model": "gpt-5", "reasoning_effort": "off"}
+        )
+        response = {"choices": [{"message": {"content": "完成"}}]}
+
+        with patch.object(client, "_post_json", return_value=response) as post:
+            client.chat_completion([{"role": "user", "content": "继续"}])
+
+        self.assertEqual(
+            post.call_args.kwargs["payload"]["reasoning_effort"], "none"
+        )
+
+    def test_stream_keeps_idle_timeout_separate_from_the_total_deadline(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config["timeout_seconds"] = 1
+        client.llm_config["retry_attempts"] = 1
+        response = _StreamResponse(
+            [
+                _sse(
+                    {
+                        "choices": [
+                            {
+                                "delta": {"reasoning_content": "仍在思考"},
+                                "finish_reason": None,
+                            }
+                        ]
+                    }
+                ),
+                _sse("[DONE]"),
+            ]
+        )
+
+        with patch("src.core.llm_client.requests.post", return_value=response) as post:
+            result = client.chat_completion_stream(
+                [{"role": "user", "content": "continue"}]
+            )
+
+        self.assertEqual(result["content"], "")
+        self.assertEqual(post.call_args.kwargs["timeout"], 1)
+
+    def test_stream_enforces_the_separate_total_timeout(self):
+        client = self._make_client("openai-compatible")
+        client.llm_config.update(
+            {"timeout_seconds": 90, "stream_total_timeout_seconds": 1, "retry_attempts": 1}
+        )
+        response = _StreamResponse([_sse({"choices": []})])
+
+        with (
+            patch("src.core.llm_client.requests.post", return_value=response),
+            patch("src.core.llm_client.time.monotonic", side_effect=[0.0, 2.0]),
+        ):
+            with self.assertRaisesRegex(LLMRequestError, "超过 1 秒总时限"):
+                client.chat_completion_stream([{"role": "user", "content": "continue"}])
 
     def test_anthropic_stream_emits_text_and_preserves_cache_usage(self):
         client = self._make_client("anthropic")

@@ -21,7 +21,12 @@ def build_runtime_config_for_run(
                 "base_url": str(model_payload.get("base_url", "")).strip(),
                 "api_key": str(model_payload.get("api_key", "")).strip(),
                 "max_tokens": int(model_payload.get("max_tokens", 0) or 0),
+                "reasoning_effort": str(
+                    model_payload.get("reasoning_effort", "auto")
+                ).strip().lower()
+                or "auto",
                 "timeout_seconds": 90,
+                "stream_total_timeout_seconds": 600,
                 "parallel_chunk_workers": 6,
                 "retry_attempts": 2,
                 "retry_backoff_seconds": 0.75,

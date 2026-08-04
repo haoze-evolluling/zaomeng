@@ -162,6 +162,7 @@ class RunServiceMixin:
         base_url: str = "",
         api_key: str = "",
         max_tokens: int = 0,
+        reasoning_effort: str = "auto",
         profile_id: str = "",
         profile_name: str = "",
         create_profile: bool = False,
@@ -188,6 +189,7 @@ class RunServiceMixin:
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
             utc_now=_utc_now,
         )
         normalized["profile_id"] = requested_profile_id
@@ -234,6 +236,7 @@ class RunServiceMixin:
         base_url: str = "",
         api_key: str = "",
         max_tokens: int = 0,
+        reasoning_effort: str = "auto",
         profile_id: str = "",
     ) -> dict[str, Any]:
         document = self._load_model_settings_document()
@@ -254,6 +257,7 @@ class RunServiceMixin:
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
             utc_now=_utc_now,
         )
         config = Config()
@@ -265,6 +269,7 @@ class RunServiceMixin:
                     "base_url": payload["base_url"],
                     "api_key": payload["api_key"],
                     "max_tokens": min(max(1, int(payload["max_tokens"] or 0)), 32) or 16,
+                    "reasoning_effort": payload["reasoning_effort"],
                     "timeout_seconds": 20,
                     "retry_attempts": 0,
                 }
@@ -310,6 +315,10 @@ class RunServiceMixin:
             "model": str(profile.get("model", "")).strip(),
             "base_url": str(profile.get("base_url", "")).strip(),
             "max_tokens": max(0, int(profile.get("max_tokens", 0) or 0)),
+            "reasoning_effort": str(
+                profile.get("reasoning_effort", "auto")
+            ).strip().lower()
+            or "auto",
             "api_key_configured": bool(self._secret_store.read(secret_name)),
             "configured": self._is_model_configured_payload(
                 {**profile, "api_key": self._secret_store.read(secret_name)}

@@ -33,6 +33,7 @@ def save_model_settings(
             base_url=payload.base_url,
             api_key=payload.api_key,
             max_tokens=payload.max_tokens,
+            reasoning_effort=payload.reasoning_effort,
             profile_id=payload.profile_id,
             profile_name=payload.profile_name,
             create_profile=payload.create_profile,
@@ -54,6 +55,7 @@ def test_model_settings(
             base_url=payload.base_url,
             api_key=payload.api_key,
             max_tokens=payload.max_tokens,
+            reasoning_effort=payload.reasoning_effort,
             profile_id=payload.profile_id,
         )
     except ValueError as exc:

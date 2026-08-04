@@ -314,7 +314,7 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
         self.assertEqual(responses[0]["speaker"], "场景提示")
         self.assertIn("账本", responses[0]["message"])
 
-    def test_truncated_reply_retries_with_a_larger_token_budget(self):
+    def test_truncated_reply_does_not_exceed_an_explicit_token_budget(self):
         payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
         completion = Mock()
         completion.side_effect = [
@@ -341,8 +341,8 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
         self.assertEqual(responses[0]["message"], "我今天拉了一整天车。")
         first_budget = completion.call_args_list[0].args[2]
         second_budget = completion.call_args_list[1].args[2]
-        self.assertGreaterEqual(first_budget, 1600)
-        self.assertGreater(second_budget, first_budget)
+        self.assertEqual(first_budget, 900)
+        self.assertEqual(second_budget, 900)
 
     def test_single_reply_uses_smaller_initial_token_budget(self):
         payload = {
@@ -370,8 +370,71 @@ class DialogueTurnBehaviorTests(unittest.TestCase):
         )
 
         first_budget = completion.call_args_list[0].args[2]
-        self.assertGreaterEqual(first_budget, 640)
-        self.assertLess(first_budget, 1600)
+        self.assertEqual(first_budget, 8192)
+
+    def test_default_dialogue_budget_leaves_room_for_reasoning_before_json(self):
+        payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
+        completion = Mock(
+            return_value={
+                "content": '[{"speaker":"祁子","message":"好。"}]',
+                "finish_reason": "stop",
+            }
+        )
+
+        generate_dialogue_responses(
+            payload=payload,
+            allowed_speakers=["祁子"],
+            temperature=0.2,
+            max_tokens=0,
+            chat_completion=completion,
+            build_messages=lambda _payload, _retry: [{"role": "user", "content": "reply"}],
+            parse_responses=parse_dialogue_responses,
+        )
+
+        self.assertEqual(completion.call_args.args[2], 8192)
+
+    def test_dialogue_retry_never_reduces_a_configured_token_budget(self):
+        payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
+        completion = Mock(
+            return_value={"content": "partial", "finish_reason": "length"}
+        )
+
+        with self.assertRaises(ValueError):
+            generate_dialogue_responses(
+                payload=payload,
+                allowed_speakers=["祁子"],
+                temperature=0.2,
+                max_tokens=16000,
+                chat_completion=completion,
+                build_messages=lambda _payload, _retry: [{"role": "user", "content": "reply"}],
+                parse_responses=parse_dialogue_responses,
+            )
+
+        self.assertEqual(
+            [call.args[2] for call in completion.call_args_list], [16000, 16000]
+        )
+
+    def test_dialogue_respects_an_explicit_small_token_limit(self):
+        payload = {
+            "mode": "act",
+            "input": {"message_kind": "dialogue"},
+            "host_action": {"response_limit_hint": 1},
+        }
+        completion = Mock(
+            return_value={"content": '[{"speaker":"祁子","message":"好。"}]'}
+        )
+
+        generate_dialogue_responses(
+            payload=payload,
+            allowed_speakers=["祁子"],
+            temperature=0.2,
+            max_tokens=2048,
+            chat_completion=completion,
+            build_messages=lambda _payload, _retry: [{"role": "user", "content": "reply"}],
+            parse_responses=parse_dialogue_responses,
+        )
+
+        self.assertEqual(completion.call_args.args[2], 2048)
 
     def test_truncation_on_final_attempt_reports_the_token_limit(self):
         payload = {"mode": "act", "input": {"message_kind": "dialogue"}}
