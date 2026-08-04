@@ -30,7 +30,7 @@ data class ModelProfileEditorUiState(
     val apiKey: String = "",
     val apiKeyConfigured: Boolean = false,
     val maxTokens: String = "0",
-    val reasoningEffort: String = "auto",
+    val reasoningEffort: String = "off",
     val message: String = "",
     val error: String = "",
     val completed: Boolean = false,

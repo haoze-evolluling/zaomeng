@@ -828,7 +828,7 @@ class LLMClient:
             base_url=base_url,
             model=model,
             reasoning_effort=str(
-                self.llm_config.get("reasoning_effort", "auto")
+                self.llm_config.get("reasoning_effort", "off")
             ).strip().lower(),
         )
         resolved_max_tokens = self._resolve_max_tokens(max_tokens)
@@ -883,7 +883,7 @@ class LLMClient:
             base_url=base_url,
             model=model,
             reasoning_effort=str(
-                self.llm_config.get("reasoning_effort", "auto")
+                self.llm_config.get("reasoning_effort", "off")
             ).strip().lower(),
         )
         if provider == "openai":

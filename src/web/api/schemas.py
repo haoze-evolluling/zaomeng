@@ -63,7 +63,7 @@ class SaveModelSettingsRequest(BaseModel):
     base_url: str = Field(default="")
     api_key: str = Field(default="")
     max_tokens: int = Field(default=0, ge=0, le=16000)
-    reasoning_effort: str = Field(default="auto", max_length=16)
+    reasoning_effort: str = Field(default="off", max_length=16)
     profile_id: str = Field(default="")
     profile_name: str = Field(default="", max_length=80)
     create_profile: bool = Field(default=False)
@@ -76,7 +76,7 @@ class TestModelSettingsRequest(BaseModel):
     base_url: str = Field(default="")
     api_key: str = Field(default="")
     max_tokens: int = Field(default=0, ge=0, le=16000)
-    reasoning_effort: str = Field(default="auto", max_length=16)
+    reasoning_effort: str = Field(default="off", max_length=16)
     profile_id: str = Field(default="")
 
 

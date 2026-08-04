@@ -22,7 +22,7 @@ def build_runtime_config_for_run(
                 "api_key": str(model_payload.get("api_key", "")).strip(),
                 "max_tokens": int(model_payload.get("max_tokens", 0) or 0),
                 "reasoning_effort": str(
-                    model_payload.get("reasoning_effort", "auto")
+                    model_payload.get("reasoning_effort", "off")
                 ).strip().lower()
                 or "auto",
                 "timeout_seconds": 90,

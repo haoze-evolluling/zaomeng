@@ -162,7 +162,7 @@ class RunServiceMixin:
         base_url: str = "",
         api_key: str = "",
         max_tokens: int = 0,
-        reasoning_effort: str = "auto",
+        reasoning_effort: str = "off",
         profile_id: str = "",
         profile_name: str = "",
         create_profile: bool = False,
@@ -236,7 +236,7 @@ class RunServiceMixin:
         base_url: str = "",
         api_key: str = "",
         max_tokens: int = 0,
-        reasoning_effort: str = "auto",
+        reasoning_effort: str = "off",
         profile_id: str = "",
     ) -> dict[str, Any]:
         document = self._load_model_settings_document()
@@ -316,7 +316,7 @@ class RunServiceMixin:
             "base_url": str(profile.get("base_url", "")).strip(),
             "max_tokens": max(0, int(profile.get("max_tokens", 0) or 0)),
             "reasoning_effort": str(
-                profile.get("reasoning_effort", "auto")
+                profile.get("reasoning_effort", "off")
             ).strip().lower()
             or "auto",
             "api_key_configured": bool(self._secret_store.read(secret_name)),
