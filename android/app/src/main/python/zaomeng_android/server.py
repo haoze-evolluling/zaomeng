@@ -153,6 +153,7 @@ def start(storage_root: str, auth_token: str, model_secrets_json: str = "{}") ->
             WebRunService(root, secret_store=InMemorySecretStore(model_secrets)),
             auth_token=token,
             allow_app_update=False,
+            serve_static=False,
         )
         config = uvicorn.Config(
             app,

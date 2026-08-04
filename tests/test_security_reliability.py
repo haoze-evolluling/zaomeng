@@ -242,6 +242,21 @@ class SecurityReliabilityTests(unittest.TestCase):
 
 @unittest.skipIf(TestClient is None, "fastapi test dependencies unavailable")
 class WebAuthenticationTests(unittest.TestCase):
+    def test_web_app_mounts_static_shell_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(WebRunService(tmp)))
+
+            self.assertEqual(client.get("/").status_code, 200)
+            self.assertEqual(client.get("/web/index.html").status_code, 200)
+
+    def test_api_only_app_does_not_mount_web_static_shell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(WebRunService(tmp), serve_static=False))
+
+            self.assertEqual(client.get("/api/web/health").status_code, 200)
+            self.assertEqual(client.get("/").status_code, 404)
+            self.assertEqual(client.get("/web/index.html").status_code, 404)
+
     def test_bearer_auth(self):
         with tempfile.TemporaryDirectory() as tmp:
             client = TestClient(create_app(WebRunService(tmp), auth_token="test-token"))

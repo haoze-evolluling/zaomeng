@@ -21,6 +21,8 @@ val syncSharedPythonSources by tasks.registering(Sync::class) {
         include("src/**")
         include("rules/**")
         include("zaomeng-skill/**")
+        exclude("src/web/static/**")
+        exclude("zaomeng-skill/assets/**")
         exclude("**/__pycache__/**")
         exclude("**/*.pyc")
         exclude("**/*.pyo")

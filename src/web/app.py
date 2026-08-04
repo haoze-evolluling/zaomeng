@@ -33,6 +33,7 @@ def create_app(
     *,
     auth_token: str | None = None,
     allow_app_update: bool | None = None,
+    serve_static: bool = True,
 ) -> FastAPI:
     app = FastAPI(title="zaomeng webui", version="0.1.0")
     app.state.run_service = service or WebRunService()
@@ -81,12 +82,15 @@ def create_app(
     async def invalid_storage_identifier_handler(_request: Request, exc: InvalidStorageIdentifier) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
-    static_dir = Path(__file__).resolve().parent / "static"
-    app.mount("/web", StaticFiles(directory=static_dir, html=True), name="web")
+    if serve_static:
+        static_dir = Path(__file__).resolve().parent / "static"
+        app.mount("/web", StaticFiles(directory=static_dir, html=True), name="web")
 
-    @app.get("/")
-    def root() -> FileResponse:
-        return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
+        @app.get("/")
+        def root() -> FileResponse:
+            return FileResponse(
+                static_dir / "index.html", headers={"Cache-Control": "no-store"}
+            )
 
     for router in ROUTERS:
         app.include_router(router)
