@@ -21,8 +21,10 @@ class _Host:
     def __init__(self) -> None:
         self.last_capability = ""
         self.last_payload = {}
+        self.last_context_request = {}
 
     def read_dialogue_context(self, **kwargs):
+        self.last_context_request = dict(kwargs)
         return {"run_id": kwargs["run_id"], "mode": "act"}
 
     def invoke_model(self, capability, payload):
@@ -205,6 +207,32 @@ class PluginSystemTests(unittest.TestCase):
         self.assertEqual(polished["suggestion"], "dialogue_suggestion:run-1")
         self.assertEqual(len(variants["suggestions"]), 2)
         self.assertEqual(variants["suggestions"][0]["label"], "克制回应")
+
+    def test_builtin_plot_dice_uses_llm_with_configured_event_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = _Host()
+            registry = PluginRegistry(
+                [Path("src/builtin_plugins")],
+                host_factory=lambda _plugin_id, _permissions: host,
+                state_path=Path(tmp) / "plugin-state.json",
+                config_path=Path(tmp) / "plugin-config.json",
+            )
+
+            plugin_ids = {plugin["id"] for plugin in registry.list_plugins()}
+            self.assertIn("com.zaomeng.plot-dice", plugin_ids)
+            registry.update_config(
+                "com.zaomeng.plot-dice", {"eventType": "time_limit"}
+            )
+            result = registry.invoke_chat_action(
+                "com.zaomeng.plot-dice",
+                "roll-plot",
+                {"run_id": "run-1", "session_id": "session-1"},
+            )
+
+        self.assertEqual(result["suggestion"], "dialogue_suggestion:run-1")
+        self.assertEqual(host.last_capability, "dialogue_suggestion")
+        self.assertIn("时间压力", host.last_context_request["direction"])
+        self.assertIn("只返回一段简短", host.last_context_request["direction"])
 
     def test_inner_thoughts_enhancer_has_per_chat_state_and_respects_plugin_state(self):
         with tempfile.TemporaryDirectory() as tmp:
